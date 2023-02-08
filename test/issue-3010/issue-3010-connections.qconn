@@ -1,0 +1,18 @@
+issue-3010-user-connection = (
+    url = rests://test,
+    desc = issue 3010 test user connection,
+    timeout = 2,
+    connect_timeout = 2,
+)
+
+issue-3010-datasource-connection = (
+    url = db://pgsql:test/test@testdb,
+    desc = issue 3010 test datasource connection
+)
+
+issue-3010-remote-connection = (
+    url = qorus://testqorus,
+    desc = issue 3010 test remote connection,
+    timeout = 2,
+    connect_timeout = 2,
+)

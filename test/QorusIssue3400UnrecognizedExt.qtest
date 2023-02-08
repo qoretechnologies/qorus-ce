@@ -1,0 +1,32 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3400" + Qore::DirSep;
+    }
+
+    constructor(): Test("QorusIssue3400UnrecognizedExt", OMQ::version) {
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private oloadTest() {
+        printf("------START oload old syntax files------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir);
+        assertEq(0, result.exit_code);
+        printf("-------END oload old syntax files-------\n");
+    }
+}

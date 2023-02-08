@@ -1,0 +1,81 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-3077-job
+# class-name: Issue3077Job
+# version: 1.0
+# desc: example job with configuration items
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3077Job inherits QorusJob {
+    run() {
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3077-job-config-1": <ConfigItemInfo>{
+                "type": "hash",
+                "default_value": {
+                    "job_test_1": 1,
+                    "job_test_2": (1, 2),
+                    "job_test_3": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "description": "This is an example configuration item of type hash",
+                "strictly_local": True,
+            },
+            "issue-3077-job-config-2": <ConfigItemInfo>{
+                "type": "hash",
+                "default_value": {
+                    "job_test_1": 1,
+                    "job_test_2": "asd",
+                    "job_test_3": (1, 2),
+                    "job_test_4": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "description": "This is an example configuration item of type hash",
+                "config_group": "testGroup"
+            },
+            "issue-3077-job-config-3": <ConfigItemInfo>{
+                "type": "list",
+                "default_value": (
+                    "job_test_value_1",
+                    "job_test_value_2",
+                    "job_test_value_3"
+                ),
+                "description": "This is an example configuration item of type list",
+            },
+            "issue-3077-job-config-4": <ConfigItemInfo>{
+                "type": "*hash",
+                "description": "This is an example configuration item of type *hash",
+                "config_group": "testGroup"
+            },
+            "issue-3077-job-config-5": <ConfigItemInfo>{
+                "type": "*string",
+                "default_value": NOTHING,
+                "description": "This is an example configuration item of type *string",
+            },
+            "issue-3077-job-config-6": <ConfigItemInfo>{
+                "type": "*string",
+                "default_value": NOTHING,
+                "description": "This is an example configuration item of type *string",
+                "allowed_values": (NOTHING, "A", "B")
+            },
+            "issue-3077-job-config-7": <ConfigItemInfo>{
+                "type": "*list",
+                "description": "This is an example configuration item of type *list",
+            },
+        };
+    }
+}
+# END

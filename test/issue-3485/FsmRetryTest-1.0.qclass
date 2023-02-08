@@ -1,0 +1,11 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class FsmRetryTest {
+    string retry() {
+        UserApi::logInfo("returning RETRY");
+        return OMQ::StatRetry;
+    }
+}

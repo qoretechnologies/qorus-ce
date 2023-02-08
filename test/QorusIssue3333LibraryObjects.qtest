@@ -1,0 +1,45 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3333" + Qore::DirSep;
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:ISSUE-3333-WORKFLOW:1.0",
+            "step:issue3333step1:1.0",
+            "step:issue3333step2:1.0",
+            "class:issue3333class:1.0",
+            "constant:issue3333constant:1.0",
+        );
+    }
+
+    constructor(): Test("QorusIssue3333LibraryObjects", OMQ::version) {
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private oloadTest() {
+        printf("------START oload interfaces-------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload interfaces--------\n");
+
+        printf("---------START delete interfaces-----------\n");
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+    }
+}

@@ -1,0 +1,26 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class CrmToErpAccountSyncCode {
+    static auto get_event_id(auto ctx, hash<auto> record) {
+        return {
+            "salesforce_event_id": event_id,
+        };
+    }
+
+    static auto get_account_ids(auto ctx, hash<auto> record) {
+        return {
+            "salesforce_account_id": account_ids[0],
+        };
+    }
+
+    static auto get_message_body(auto ctx, hash<auto> record) {
+        return {
+            "lastname": static_data.Name,
+            "address": static_data.BillingAddress.Street,
+            "postalcode": static_data.BillingAddress.PostalCode,
+        };
+    }
+}

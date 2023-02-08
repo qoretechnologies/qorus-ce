@@ -1,0 +1,23 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$options = (
+    "delay-ms": "the sleep time in ms for the onetimeinit function to override the default",
+ );
+
+$workflows."RESET-TEST"."1.0" = (
+    "desc"          : "a workflow with a onetimeinit function with a delay to test resets",
+    "author"        : "Qore Technologies, s.r.o.",
+    "steps"	    : (
+        "delayed_step:1.0",
+    ),
+    #"onetimeinit"   : "delayed_onetimeinit:1.0",
+    "options"       : $options,
+    "groups"        : "test",
+    );

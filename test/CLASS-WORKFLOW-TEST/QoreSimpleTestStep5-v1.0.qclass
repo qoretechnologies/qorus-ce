@@ -1,0 +1,20 @@
+# name: QoreSimpleTestStep5
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreSimpleTestStep5 inherits QorusSubworkflowArrayStep {
+    softlist<auto> array() {
+        return "val-1";
+    }
+
+    primary(auto array_arg) {
+        logInfo("skipping subworkflow: array value: %y", array_arg);
+        skipSubworkflow();
+    }
+}
+# END

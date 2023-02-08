@@ -1,0 +1,64 @@
+# service: simple
+# serviceversion: 1.0
+# servicedesc: simple SOAP test service
+# serviceauthor: Qore Technologies, sro
+# resource: simple.wsdl
+# resource: qore-logo.gif
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+
+const DEFAULTS = (
+    "url": NOTHING,
+);
+
+*hash sub set_option($p) {
+    my hash $h;
+
+    my hash $def = DEFAULTS + (
+        "wsdl": ServiceApi::getResourceData("simple.wsdl"),
+        "logo": ServiceApi::getResourceData("qore-logo.gif"),
+    );
+
+    foreach my string $k in ($def.keyIterator()) {
+        $h.$k = exists $p.$k ? $p.$k : $def.$k;
+        # remove key if no value is set
+        if (!exists $h.$k)
+            delete $h.$k;
+    }
+
+    return $h;
+}
+
+sub init() {
+    # get options for service
+    my *hash $props = UserApi::propGet("simple");
+    our *hash $opt = set_option($props);
+    our SoapClient $sc($opt - "logo");
+    ServiceApi::registerSoapHandler(("wsdl": $opt.wsdl, "uri_path": "simple_test"));
+}
+# END
+
+# desc: soap operation
+sub getCompanyInfo(hash $cx, *hash $msg) {
+    UserApi::logInfo("getCompanyInfo(%s)", $msg.tickerSymbol);
+
+    return (
+        "body" : ("result": 99.9),
+        "docs" : "<head>testing</head><body>hi there</body>",
+        "logo" : $opt.logo,
+	);
+}
+# END
+
+# desc: soap operation
+sub setCompanyLogo(hash $cx, *hash $msg) {
+    UserApi::logInfo("setCompanyLogo(%n)", $msg);
+
+    # return format for multipart message
+    return ("body": "OK");
+}
+# END

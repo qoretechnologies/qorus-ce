@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3810OutputList {
+    auto outputList(auto ignored) {
+        return (1, "two", 3.0, 4n);
+    }
+}

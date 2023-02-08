@@ -1,0 +1,31 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Issue3520
+
+class Issue3520 inherits Test {
+    constructor(): Test("Issue3520", "1.0", \ARGV, Opts) {
+        QorusClient::init2();
+
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        qrest.put("services/info/load");
+        hash<auto> h = qrest.get("services/info");
+        assertEq("loaded", h.status);
+        *hash<auto> info = (map $1, qrest.get("services"), $1.name == "info")[0];
+        assertEq(Type::String, info.desc.type());
+    }
+}

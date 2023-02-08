@@ -1,0 +1,62 @@
+# service: async-test
+# serviceversion: 1.0
+# servicedesc: generates responses for the "async-test" queue
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the async-test service
+# empty initialization for the moment
+sub init() {
+    our bool $exit = False;
+    our hash $stats.iters = 0;
+	our QorusSystemRestHelper $qrest();
+}
+# END
+
+# desc: starts the service
+sub start() {
+    while (!$exit) {
+	# get all rows
+	my *list $q = $qrest.get("async-queues/async-test/qinfo", {"status": QS_Waiting});
+
+	foreach my hash $row in ($q) {
+	    my hash $data;
+	    for (my int $i = 0; $i < 10; $i++)
+		$data.("async-data-key-" + (rand() % 100)) = "string-" + (rand() % 1000);
+	    $data.status = (rand() % 3) ? "OK" : "ERROR";
+
+	    try {
+		# 1/3 chance of skipping the event
+		if (!(rand() % 3))
+		    $qrest.post("async-queues/async-test/cancel", {"key": $row.queuekey});
+	    	else
+		    $qrest.post("async-queues/async-test/update", {"key": $row.queuekey, "data": $data});
+		UserApi::logInfo("updated key %n", $row.queuekey);
+	    }
+	    catch ($ex) {
+		UserApi::logInfo("async-test", "%s:%d %s: %s", $ex.file, $ex.line, $ex.err, $ex.desc);
+	    }
+	}
+	# sleep 2 seconds
+	for (my int $i = 0; $i < 10 && !$exit; $i++)
+	    UserApi::sleep(1);
+	++$stats.iters;
+	#UserApi::logInfo("iteration %d", $stats.iters);
+    }
+}
+# END
+
+# desc: stops the service
+sub stop() {
+    $exit = True;
+}
+# END
+
+# desc: get info about the service
+hash sub info() {
+    return $stats;
+}
+# END

@@ -1,0 +1,33 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$events."event-test".desc = "test event type for the EVENT-TEST workflow";
+
+const eventtest = (
+    "name"         : "event_skip_test:1.0",
+    "eventtype"    : "event-test",
+    );
+
+const array_eventtest = (
+    "name"         : "array_event_skip_test:1.0",
+    "eventtype"    : "event-test",
+    "arrayname"    : "array_event_skip_test_array:1.0",
+    );
+
+$simple = (
+    eventtest,
+    array_eventtest,
+    );
+
+$workflows."EVENT-SKIP-TEST"."1.0" = (
+    "desc"          : "event skip test workflow",
+    "author"        : "Qore Technologies, s.r.o.",
+    "steps"         : $simple,
+    "groups"        : "test",
+    );

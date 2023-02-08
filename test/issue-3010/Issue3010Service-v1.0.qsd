@@ -1,0 +1,31 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3010-service
+# serviceversion: 1.0
+# servicedesc: Service simple example
+# serviceauthor: Qore Technologies, s.r.o.
+# autostart: true
+# class-name: Issue3010Service
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3010Service inherits QorusService {
+    # name: init
+    # desc: initializes the service
+    init() {
+        logInfo("Service is initialized");
+    }
+
+    # name: test
+    # desc: test method
+    test() {
+        logInfo("Test method");
+    }
+}

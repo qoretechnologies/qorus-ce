@@ -1,0 +1,14 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3816 inherits QorusJob {
+    run() {
+        int wfiid = UserApi::getConfigItemValue("wfiid");
+        UserApi::logInfo("running FSM with wfiid %d", wfiid);
+        UserApi::executeFsm("issue-3816-apicall-1", {
+            "workflow_instanceid": wfiid,
+        });
+    }
+}

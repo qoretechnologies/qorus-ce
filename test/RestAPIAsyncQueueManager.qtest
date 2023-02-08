@@ -1,0 +1,529 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires QUnit
+%requires Util
+%requires SqlUtil
+%requires QorusClientCore
+%requires uuid
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        AbstractDatasource m_omq;
+        hash m_tables = hash();
+
+        hash m_queue;
+        hash m_queue_row;
+
+        bool async_test_disabled;
+        bool array_test_disabled;
+    }
+
+    constructor() : QUnit::Test("AsyncQueueManager REST API test", "1.0") {
+        QorusClient::init2();
+
+        m_omq = omqclient.getSQLIF().omqp;
+
+        addTestCase("GET async-queues", \test_get_AsyncQueues());
+        addTestCase("POST orders/{wfiid}/async-queue/correct", \test_post_AsyncQueues_correct());
+        addTestCase("GET orders/{wfiid}/async-queue", \test_get_AsyncQueues_info());
+
+        addTestCase("GET async-queues/{queue}", \test_get_AsyncQueues_queue());
+        addTestCase("GET async-queues/{queue}/info", \test_get_AsyncQueues_queue_info());
+        addTestCase("GET async-queues/{queue}/qinfo", \test_get_AsyncQueues_queue_qinfo());
+        addTestCase("GET async-queues/{queue}/status", \test_get_AsyncQueues_queue_status());
+        addTestCase("POST async-queues/{queue}/update", \test_post_AsyncQueues_queue_update());
+        addTestCase("POST async-queues/{queue}/cancel", \test_post_AsyncQueues_queue_cancel());
+        addTestCase("PUT async-queues/{queue}/key", \test_put_AsyncQueues_queue_key());
+
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        hash sh = {
+            "where": {
+                "name": "async-test",
+            },
+        };
+        m_queue = getTable("queues").selectRow(sh);
+        m_queue.serviceid = m_queue.serviceid ?? NOTHING; # DB sometimes returns NULL, sometimes NOTHING
+
+        sh = {
+            "where": {
+                "queueid": m_queue.queueid,
+                "queue_data_status": "X",
+            },
+            "limit": 1,
+        };
+        m_queue_row = getTable("queue_data").selectRow(sh);
+
+        # disable the async-test service if running, as it can cause this test to fail
+        async_test_disabled = qrest.get("services/async-test/enabled");
+        if (async_test_disabled) {
+            qrest.put("services/async-test/disable");
+        }
+        array_test_disabled = qrest.get("workflows/ARRAYTEST/enabled");
+        if (array_test_disabled) {
+            qrest.put("workflows/ARRAYTEST/disable");
+        }
+    }
+
+    globalTearDown() {
+        if (array_test_disabled) {
+            qrest.put("workflows/ARRAYTEST/enable");
+        }
+        if (async_test_disabled) {
+            qrest.put("services/async-test/enable");
+        }
+        resetQueueRow();
+    }
+
+    private resetQueueRow() {
+        on_success m_omq.commit();
+        on_error m_omq.rollback();
+        getTable("queue_data").update(m_queue_row,
+                                      {"queueid": m_queue_row.queueid, "queuekey": m_queue_row.queuekey});
+    }
+    private updateQueueRow(hash new_data) {
+        on_success m_omq.commit();
+        on_error m_omq.rollback();
+        getTable("queue_data").update(new_data,
+                                      {"queueid": m_queue_row.queueid, "queuekey": m_queue_row.queuekey});
+    }
+
+    private cout(string msg) {
+        if (m_options.verbose) {
+            printf("%n: %s\n", now(), vsprintf(msg, argv));
+        }
+    }
+
+    private AbstractTable getTable(string table_name) {
+        if (!m_tables.hasKey(table_name)) {
+            m_tables{table_name} = new Table(m_omq, table_name).getTable();
+        }
+        return m_tables{table_name};
+    }
+
+    private string getApi() {
+        string ret = "async-queues";
+
+        foreach softstring i in (argv) {
+            ret += "/" + i;
+        }
+
+        if (m_options.verbose > 2) {
+            cout("Using API path: %s", ret);
+        }
+        return ret;
+    }
+
+    private test_get_AsyncQueues() {
+        auto ret = qrest.get(getApi());
+        on_error cout("%N", ret);
+        assertEq(True, exists ret);
+        assertEq(NT_LIST, ret.typeCode());
+        assertEq(True, ret.size() > 0);
+
+        # find the presence of our testing queue
+        hash found;
+        ListIterator it(ret);
+        while (it.next()) {
+            hash i = it.getValue();
+            if (i.name == m_queue.name && i.queueid == m_queue.queueid) {
+                found = i;
+                break;
+            }
+        }
+
+        assertEq(True, exists found);
+    }
+
+    private test_post_AsyncQueues_correct() {
+        # negative test - not existing WFIID
+        assertThrows("PARAMETER-ERROR", \qrest.post(), ("orders/0/async-queue/correct", {
+            "stepid": 0,
+            "ind": 0,
+        }));
+
+        # negative test - wrong status
+        try {
+            hash args = {
+                "stepid": m_queue_row.stepid,
+                "ind": m_queue_row.ind,
+            };
+            qrest.post("orders/" + m_queue_row.workflow_instanceid + "/async-queue/correct", args);
+            assertEq(True, False);
+        } catch (hash ex) {
+            assertEq("INVALID-STATUS", ex.err);
+        }
+
+        # negative test - already corrected
+        try {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": 1,
+                            "queue_data_status": "W",
+                           });
+
+            hash args = {
+                "stepid": m_queue_row.stepid,
+                "ind": m_queue_row.ind,
+            };
+            qrest.post("orders/" + m_queue_row.workflow_instanceid + "/async-queue/correct", args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("ALREADY-CORRECTED", ex.err);
+        }
+
+        # positive test
+        {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": NOTHING,
+                            "queue_data_status": "W",
+                           });
+
+            hash args = {
+                "stepid": m_queue_row.stepid,
+                "ind": m_queue_row.ind,
+            };
+
+            qrest.post("orders/" + m_queue_row.workflow_instanceid + "/async-queue/correct", args);
+        }
+    }
+
+    private test_get_AsyncQueues_info() {
+        # negative: non existing wfiid
+        try {
+            qrest.get("orders/-1/async-queue");
+            assertEq(True, False, "WORKFLOW-ORDER-ERROR exception is expected");
+        }
+        catch (hash ex) {
+            assertEq("WORKFLOW-ORDER-ERROR", ex.err);
+        }
+
+        # positive: get all occurrences as a list: wfiid
+        {
+            auto ret = qrest.get("orders/" + m_queue_row.workflow_instanceid + "/async-queue");
+            assertEq(True, exists ret);
+            assertEq(NT_LIST, ret.typeCode());
+            assertEq(True, ret.size() > 0);
+        }
+
+        # positive: get all occurrences as a list: wfiid, stepid
+        {
+            hash args = {
+                "stepid": m_queue_row.stepid,
+            };
+            auto ret = qrest.get("orders/" + m_queue_row.workflow_instanceid + "/async-queue", args);
+            assertEq(True, exists ret);
+            assertEq(NT_LIST, ret.typeCode());
+            assertEq(True, ret.size() > 0);
+        }
+
+        # positive: get all occurrences as a list: wfiid, stepid, ind
+        {
+            hash args = {
+                "stepid": m_queue_row.stepid,
+                "ind": m_queue_row.ind,
+            };
+            auto ret = qrest.get("orders/" + m_queue_row.workflow_instanceid + "/async-queue", args);
+            assertEq(True, exists ret);
+            assertEq(NT_LIST, ret.typeCode());
+            assertEq(True, ret.size() == 1);
+        }
+    }
+
+    private test_get_AsyncQueues_queue() {
+        auto ret = qrest.get(getApi(m_queue.name));
+        assertEq(True, exists ret);
+        assertEq(NT_HASH, ret.typeCode());
+        assertEq(m_queue.queueid, ret.queueid);
+        assertEq(m_queue.name, ret.name);
+        assertEq(m_queue.serviceid, ret.serviceid);
+    }
+
+    private test_get_AsyncQueues_queue_info() {
+        # negative test - no data
+        try {
+            qrest.get(getApi(m_queue.name, "info"));
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("ASYNC-QUEUE-ERROR", ex.err);
+        }
+
+        # negative - non existing key
+        {
+            hash args = {
+                "key": UUID::get(),
+            };
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404.*Not Found", \qrest.get(), (getApi(m_queue.name, "info"), args));
+        }
+
+        # positive
+        {
+            hash args = {
+                "key": m_queue_row.queuekey,
+            };
+            auto ret = qrest.get(getApi(m_queue.name, "info"), args);
+            assertEq(NT_HASH, ret.typeCode());
+            assertEq(m_queue_row.workflow_instanceid, ret.workflow_instanceid);
+            assertEq(m_queue_row.stepid, ret.stepid);
+            assertEq(m_queue_row.ind, ret.ind);
+            assertEq(m_queue_row.queue_data_status, ret.queue_data_status);
+        }
+    }
+
+    private test_get_AsyncQueues_queue_qinfo() {
+        # negative test - no data
+        {
+            auto ret = qrest.get(getApi(m_queue.name, "qinfo"));
+            assertEq(NT_LIST, ret.typeCode());
+        }
+
+        # negative - non existing key
+        {
+            hash args = {
+                "key": UUID::get(),
+            };
+            auto ret = qrest.get(getApi(m_queue.name, "qinfo"), args);
+            assertEq(NT_LIST, ret.typeCode());
+        }
+
+        # negative - wrong status
+        try {
+            hash args = {
+                "key": m_queue_row.queuekey,
+                "status": " ",
+            };
+            qrest.get(getApi(m_queue.name, "qinfo"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("INVALID-STATUS", ex.err);
+        }
+
+        # positive without status
+        {
+            hash args = {
+                "key": m_queue_row.queuekey,
+            };
+            auto ret = qrest.get(getApi(m_queue.name, "qinfo"), args);
+            assertEq(NT_LIST, ret.typeCode());
+        }
+
+        # positive with status
+        {
+            hash args = {
+                "key": m_queue_row.queuekey,
+                "status": m_queue_row.queue_data_status,
+            };
+            auto ret = qrest.get(getApi(m_queue.name, "qinfo"), args);
+            assertEq(NT_LIST, ret.typeCode());
+        }
+    }
+
+    private test_get_AsyncQueues_queue_status() {
+        # negative - unknown queue
+        try {
+            qrest.get(getApi(UUID::get(), "status"));
+            assertEq(True, False);
+        } catch (hash ex) {
+            assertEq("DATASTREAM-CLIENT-RECEIVE-ERROR", ex.err);
+        }
+
+        auto ret = qrest.get(getApi(m_queue.name, "status"));
+        assertEq(True, exists ret);
+        assertEq(NT_HASH, ret.typeCode());
+    }
+
+    private test_post_AsyncQueues_queue_update() {
+        # negative - non existing queue
+        try {
+            qrest.post(getApi(UUID::get(), "update"));
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("DATASTREAM-CLIENT-RECEIVE-ERROR", ex.err);
+        }
+
+        # negative - non existing key
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404", \qrest.post(), (getApi(m_queue.name, "update"), {
+            "key": UUID::get(),
+            "data": 1,
+        }));
+
+        # negative - no data key
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "400", \qrest.post(), (getApi(m_queue.name, "update"), {
+            "key": m_queue_row.queuekey,
+        }));
+
+        # negative - invalid status
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "400", \qrest.post(), (getApi(m_queue.name, "update"), {
+            "key": m_queue_row.queuekey,
+            "data": 1,
+        }));
+
+        # positive
+        {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": NOTHING,
+                            "queue_data_status": "W",
+                           });
+
+            hash args = {
+                "key": m_queue_row.queuekey,
+                "data": 1,
+            };
+
+            qrest.post(getApi(m_queue.name, "update"), args);
+        }
+    }
+
+    private test_post_AsyncQueues_queue_cancel() {
+        # negative - non existing queue
+        try {
+            qrest.post(getApi(UUID::get(), "cancel"));
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("DATASTREAM-CLIENT-RECEIVE-ERROR", ex.err);
+        }
+
+        # negative - non existing key
+        try {
+            hash args = {
+                "key": UUID::get(),
+            };
+            qrest.post(getApi(m_queue.name, "cancel"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("INVALID-KEY", ex.err);
+        }
+
+        # negative - wrong status
+        try {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": NOTHING,
+                            "queue_data_status": "R",
+                           });
+
+            hash args = {
+                "key": m_queue_row.queuekey,
+            };
+            qrest.post(getApi(m_queue.name, "cancel"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("INVALID-STATUS", ex.err);
+        }
+
+        # positive
+        {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": 1,
+                            "queue_data_status": "W",
+                           });
+
+            hash args = {
+                "key": m_queue_row.queuekey,
+            };
+            qrest.post(getApi(m_queue.name, "cancel"), args);
+        }
+    }
+
+    private test_put_AsyncQueues_queue_key() {
+        # negative - non existing queue
+        try {
+            qrest.put(getApi(UUID::get(), "key"));
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("DATASTREAM-CLIENT-RECEIVE-ERROR", ex.err);
+        }
+
+        # negative - wrong input data
+        try {
+            qrest.put(getApi(m_queue.name, "key"));
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("ASYNC-QUEUE-ERROR", ex.err);
+        }
+
+        try {
+            hash args = {
+                "oldkey": " ",
+            };
+            qrest.put(getApi(m_queue.name, "key"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("ASYNC-QUEUE-ERROR", ex.err);
+        }
+
+        try {
+            hash args = {
+                "oldkey": m_queue_row.queuekey,
+                "newkey": NOTHING,
+            };
+            qrest.put(getApi(m_queue.name, "key"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("ASYNC-QUEUE-ERROR", ex.err);
+        }
+
+        try {
+            hash args = {
+                "oldkey": m_queue_row.queuekey,
+                "newkey": m_queue_row.queuekey,
+            };
+            qrest.put(getApi(m_queue.name, "key"), args);
+            assertEq(True, False);
+        }
+        catch (hash ex) {
+            assertEq("QUEUE-KEY-UPDATE-ERROR", ex.err);
+        }
+
+        # positive test
+        {
+            on_exit {
+                resetQueueRow();
+            }
+            updateQueueRow({"corrected": NOTHING,
+                            "queue_data_status": "W",
+                           });
+
+            hash args = {
+                "oldkey": m_queue_row.queuekey,
+                "newkey": m_queue_row.queuekey,
+            };
+
+            qrest.put(getApi(m_queue.name, "key"), args);
+        }
+    }
+} # class Main

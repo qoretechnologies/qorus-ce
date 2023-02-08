@@ -1,0 +1,15 @@
+# This is a generated file, don't edit!
+type: step
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusNormalStep
+class-name: Issue3485Step2
+desc: test step class
+name: Issue3485Step2
+version: "1.0"
+steptype: NORMAL
+code: Issue3485Step2.qstep
+fsm:
+  - name: fsm2
+    triggers:
+    - method: primary

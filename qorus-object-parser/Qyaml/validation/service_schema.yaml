@@ -1,0 +1,128 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - service
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  desc:
+    type: string
+    max-length: 4000
+  servicetype:
+    type: string
+    allowed-values:
+      - USER
+      - SYSTEM
+    default: USER
+  methods:
+    type: list
+    element-type: service-method
+  code:
+    type: string
+
+optional:
+  author:
+    type: list
+    element-type: string
+  modules:
+    type: list
+    element-type: string
+  remote:
+    type: bool
+    default: true
+  autostart:
+    type: bool
+    default: false
+  class-name:
+    type: string
+    max-length: 160
+  base-class-name: # used only in the IDE
+    type: string
+    max-length: 160
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  classes:
+    type: list
+    element-type: string
+  class-prefixes: # used only in the IDE
+    type: list
+  class-connections: # used only in the IDE
+    type: hash
+  constants:
+    type: list
+    element-type: string
+  functions:
+    type: list
+    element-type: string
+  mappers:
+    type: list
+    element-type: string
+  vmaps:
+    type: list
+    element-type: string
+  define-auth-label:
+    type: hash
+    element-type: string
+  groups:
+    type: list
+    element-type: string
+  resource:
+    type: list
+    element-type: string
+  text-resource:
+    type: list
+    element-type: string
+  bin-resource:
+    type: list
+    element-type: string
+  template:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+  config-items:
+    type: list
+    element-type: config-item
+  fsm:
+    type: list
+    element-type: fsm
+  system-options:
+    type: hash
+  stateless:
+    type: bool
+    default: false
+  scaling-min-replicas:
+    type: integer
+  scaling-max-replicas:
+    type: integer
+  scaling-cpu:
+    type: integer
+  scaling-memory:
+    type: string
+  container-cpu-request:
+    type: float
+  container-memory-request:
+    type: string
+  container-cpu-limit:
+    type: float
+  container-memory-limit:
+    type: string
+  api-manager:
+    type: hash
+  events:
+    type: list
+
+include-definitions:
+  - config-item_definition.yaml
+  - fsm_definition.yaml
+  - service-method_definition.yaml

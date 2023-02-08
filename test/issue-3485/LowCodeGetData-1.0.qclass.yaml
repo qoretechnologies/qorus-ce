@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: class
+name: LowCodeGetData
+desc: returns data for the low code test
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: getData
+    type: input-output
+    method: getData
+version: '1.0'
+code: LowCodeGetData-1.0.qclass
+config-items:
+  - name: get-data
+    description: the template for retrieving data
+    config_group: Get Data Config
+    strictly_local: true

@@ -1,0 +1,44 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Processor1 inherits AbstractDataProcessor {
+    public {
+        list<hash<auto>> recs;
+
+        string pfx;
+        *hash<auto> crec;
+        *bool raise_error;
+
+        const ConfigItemPfx = "pfx";
+        const ConfigItemCrec = "crec";
+        const ConfigItemRaiseError = "raise_error";
+    }
+
+    constructor() {
+        pfx = UserApi::getConfigItemValue(ConfigItemPfx);
+        crec = UserApi::getConfigItemValue(ConfigItemCrec);
+        raise_error = UserApi::getConfigItemValue(ConfigItemRaiseError);
+        UserApi::logInfo("Issue3485Processor1 got config pfx: %y crec: %y raise_error: %y", pfx, crec, raise_error);
+    }
+
+    clear() {
+        remove recs;
+    }
+
+    private submitImpl(code enqueue, auto rec) {
+        UserApi::logInfo("Issue3485Processor1 was called: %y", rec);
+        if (raise_error) {
+            remove raise_error;
+            throw "ERROR", "error";
+        }
+        hash<auto> new_rec = (map {pfx + "-" + $1.key: $1.value}, rec.pairIterator()) + crec;
+        recs += new_rec;
+        enqueue(new_rec);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

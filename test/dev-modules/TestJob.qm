@@ -1,0 +1,92 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file TestJob.qm Qorus Integration Engine test module
+
+/* TestJob.qm Copyright (C) 2012 - 2022 Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module TestJob {
+    version = "1.0";
+    desc = "Job dev extension test module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+public namespace TestJob {
+    public class TestJob inherits QorusJob {
+        final run() {
+            logInfo("run method here");
+
+            saveInfo({
+                "config": (map {$1: getConfigItemValue($1)},
+                    ("string-test", "int-test", "float-test", "date-test")),
+                "all-config": getConfigItemHash(),
+            });
+
+            runImpl();
+        }
+
+        abstract runImpl();
+
+        private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+            return {
+                "string-test": <ConfigItemInfo>{
+                    "default_value": "test",
+                    "description": "This is a test configuration item",
+                },
+                "int-test": <ConfigItemInfo>{
+                    "type": "int",
+                    "default_value": 1,
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                },
+                "float-test": <ConfigItemInfo>{
+                    "type": "float",
+                    "default_value": 1.0,
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                },
+                "date-test": <ConfigItemInfo>{
+                    "type": "date",
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                    "default_value": now(),
+                },
+                "global-string-test": <ConfigItemInfo>{
+                    "default_value": "test",
+                    "description": "This is a test configuration item with a very long description that will take up a lot of "
+                        "space but at the same time be extremely informative to the point that the anyone reading will "
+                        "know exactly what this item is about, how it's used, and what the impact will be of changing "
+                        "it.  And in this small way, this global configuration item and its verbose but useful "
+                        "description will have made the world a slightly better place.",
+                },
+                "global-int-test": <ConfigItemInfo>{
+                    "type": "int",
+                    "default_value": 1,
+                    "description": "This is a test configuration item",
+                },
+                "global-float-test": <ConfigItemInfo>{
+                    "type": "float",
+                    "default_value": 1.0,
+                    "description": "This is a test configuration item",
+                },
+                "global-date-test": <ConfigItemInfo>{
+                    "type": "date",
+                    "description": "This is a test configuration item",
+                    "default_value": now(),
+                },
+                "job-string-test": <ConfigItemInfo>{
+                    "default_value": "job test",
+                    "description": "This is a test configuration item on the job level only",
+                    "strictly_local": True,
+                },
+            };
+        }
+    }
+}

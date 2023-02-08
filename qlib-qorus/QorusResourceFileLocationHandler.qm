@@ -1,0 +1,210 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusResourceFileLocationHandler.qm Qorus Integration System version module
+
+/*  QorusResourceFileLocationHandler.qm Copyright (C) 2012 - 2023 Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 1.13.0
+%requires FileLocationHandler
+
+%ifndef QorusServer
+%requires QorusClientBase
+%endif
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module QorusResourceFileLocationHandler {
+    version = "1.0";
+    desc = "Qorus resource:// file location handler module";
+    author = "Qore Technologies, s.r.o. <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+    init = sub () {
+%ifndef QorusServer
+        QorusClient::initFast();
+%endif
+        FileLocationHandler::tryRegisterHandler("resource", new QorusResourceFileLocationHandler());
+    };
+}
+
+#! Main public namespace for all QorusResourceFileLocationHandler declarations
+public namespace QorusResourceFileLocationHandler {
+#! File handler class for resource:// locations
+public class QorusResourceFileLocationHandler inherits FileLocationHandler::AbstractFileLocationHandler {
+    #! Retrieves a text file from the given location
+    /** @param scheme the scheme being used
+        @param location the location string without the scheme
+        @param opts read options
+
+        @return the string of the file's contents, if it can be retrieved
+
+        @throw FILE-READ-ERROR an I/O or other error occurred when reading the file
+    */
+    private string getTextFileImpl(string scheme, string location, *hash<auto> opts) {
+        return getResource(scheme, location, opts, True);
+    }
+
+    #! Retrieves a binary file from the given location
+    /** @param scheme the scheme being used
+        @param location the location string without the scheme
+        @param opts read options
+
+        @return the binary data of the file's contents, if it can be retrieved
+
+        @throw FILE-READ-ERROR an I/O or other error occurred when reading the file
+    */
+    private binary getBinaryFileImpl(string scheme, string location, *hash<auto> opts) {
+        return getResource(scheme, location, opts, False);
+    }
+
+    #! Returns a stream reader for the file's data at the given location
+    /** @param scheme the scheme being used
+        @param location the location string without the scheme
+        @param opts read options
+
+        @return a stream reader for the file's contents, if it can be retrieved
+    */
+    private Qore::StreamReader getStreamReaderImpl(string scheme, string location, *hash<auto> opts) {
+        string str = getTextFileImpl(scheme, location, opts);
+        if (opts.encoding && opts.encoding.lwr() != str.encoding().lwr()) {
+            str = convert_encoding(opts.encoding);
+        }
+        return new StreamReader(new StringInputStream(str), opts.encoding);
+    }
+
+    #! Retrieves a binary file from the given location
+    /** @param scheme the scheme being used
+        @param location the location string without the scheme
+        @param opts read options
+
+        @return an input stream of the file's contents, if it can be retrieved
+    */
+    private Qore::InputStream getBinaryStreamImpl(string scheme, string location, *hash<auto> opts) {
+        return new BinaryInputStream(getBinaryFileImpl(scheme, location, opts));
+    }
+
+    #! Throws an exception; Qorus service file resources do not support write operations
+    /** @throw RESOURCE-WRITE-ERROR Qorus service file resources do not support write operations
+    */
+    private writeFileImpl(string scheme, string location, data contents, *hash<auto> opts) {
+        throw "RESOURCE-WRITE-ERROR", "Qorus service file resources do not suport write operations";
+    }
+
+    #! Throws an exception; Qorus service resources do not support write operations
+    /** @throw RESOURCE-WRITE-ERROR Qorus service file resources do not support write operations
+    */
+    private FileLocationHandler::OutputStreamWrapper getOutputStreamImpl(string scheme, string location,
+            *hash<auto> opts) {
+        throw "RESOURCE-WRITE-ERROR", "Qorus service file resources do not suport write operations";
+    }
+
+    #! Gets supported read options
+    /** @return supported read options
+    */
+    private hash<string, hash<FileHandlerOptionInfo>> getReadOptionsImpl() {
+        return {};
+    }
+
+    #! Gets supported write options
+    /** @return supported write options
+    */
+    private hash<string, hash<FileHandlerOptionInfo>> getWriteOptionsImpl() {
+        return {};
+    }
+
+    #! Retrieves the resource according to the args
+    data getResource(string scheme, string location, *hash<auto> opts, bool text) {
+        location = scheme + "://" + location;
+
+        hash<LocationInfo> loc = parseLocation(location);
+
+        data d;
+        if (!loc.type.val()) {
+%ifdef QorusHasSvcApi
+            if (UserApi::isServiceContext()) {
+                d = ServiceApi::getResourceData(loc.path);
+            }
+%endif
+            if (!exists d) {
+                throw "LOCATION-ERROR", sprintf("no service context for resource location: %y", location);
+            }
+        } else {
+            # are we retrieving a service resource from a remote qorus instance?
+            (*string remote, *string svc) = (loc.type =~ x/^([^:]+):(.*)$/);
+            if (remote && svc) {
+                QorusSystemRestHelper rest(remote);
+                d = rest.get("services/" + svc + "/resource_files/" + loc.path).data;
+            } else {
+%ifdef QorusQsvcServer
+                # issue #3477: do not make a call to qorus-core if we are looking for a resource from the current
+                # service
+                if (loc.type == Qorus.interfaceName) {
+                    #QDBG_LOG("QorusResourceFileLocationHandler::handler() scheme: %y text: %y location: %y (svc: %y "
+                    #    "ix: %y)", scheme, text, location, loc.type, Qorus.interfaceName);
+                    d = Qorus.svc.getResourceData(loc.path);
+                } else
+%endif
+                d = UserApi::callRestApi("GET", "services/" + loc.type + "/resource_files/" + loc.path)."data";
+            }
+        }
+        return getTextOrBin(d, text, loc.opts.encoding);
+    }
+
+    static hash<LocationInfo> parseLocation(string location) {
+        if (!location.val()) {
+            throw "LOCATION-ERROR", "invalid empty location string";
+        }
+        # cannot use parse_url() with these strings
+        *list<*string> strl = (location =~ x/(\w+):\/\/(?:(.*)(?::))?([^{]*)(?:(?:{)(.*)(?:}))?/);
+        if (!strl) {
+            return <LocationInfo>{
+                "scheme": "file",
+                "path": location,
+            };
+        }
+        return <LocationInfo>{
+            "scheme": strl[0],
+            "type": strl[1],
+            "path": strl[2],
+        };
+    }
+
+    #! Helper method to return data in the expected format
+    /** @param d the file data
+        @param text a flag if the data should be returned as a string or not
+        @param encoding any encoding for string data
+
+        @return the data in the required format with the expected encoding (if applicable)
+    */
+    private static data getTextOrBin(data d, bool text, *string encoding) {
+        if (text) {
+            if (d.typeCode() == NT_BINARY) {
+                return d.toString(encoding);
+            }
+            if (encoding && d.encoding() != encoding) {
+                d = convert_encoding(d, encoding);
+            }
+            return d;
+        }
+        return d.typeCode() == NT_BINARY
+            ? d
+            : d.toBinary();
+    }
+}
+}
+
+namespace Priv {
+# private hashdecl for location info
+hashdecl LocationInfo {
+    # the location scheme
+    string scheme;
+    # any location type info
+    *string type;
+    # the path
+    string path;
+    # options, if any
+    *hash<auto> opts;
+}
+}

@@ -1,0 +1,26 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Main
+
+class Main inherits QorusWorkflowTest {
+    private {
+        const WORKFLOW_NAME = "ISSUE-3408-WORKFLOW";
+    }
+
+    constructor(): QorusWorkflowTest(WORKFLOW_NAME, "1.0", \ARGV, Opts) {
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        exec(new ExecSynchronousOrder({"name": WORKFLOW_NAME, "staticdata": {}}));
+    }
+}

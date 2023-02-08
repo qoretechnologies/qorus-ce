@@ -1,0 +1,14 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# name: regression2
+# desc: test value map
+# author: Petr Vanek (Qore Technologies, sro)
+# exception: false
+# category: default
+# valuetype: string
+# define-group: test: test interfaces
+# groups: test
+
+"key1","foo",true
+"key2","bar",false
+
+# END

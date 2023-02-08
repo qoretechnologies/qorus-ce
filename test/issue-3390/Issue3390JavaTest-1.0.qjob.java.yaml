@@ -1,0 +1,23 @@
+# This is a generated file, don't edit!
+type: job
+author:
+  - Qore Technologies, s.r.o.
+active: false
+base-class-name: QorusJob
+class-name: Issue3390JavaTest
+classes:
+  - JavaTest
+desc: "issue #3390 test job"
+groups:
+  - regression
+  - test
+lang: java
+name: Issue3390JavaTest
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+code: Issue3390JavaTest-1.0.qjob.java

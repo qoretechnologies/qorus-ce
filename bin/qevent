@@ -1,0 +1,975 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%require-our
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%exec-class event_monitor
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusClientBase
+%requires WebSocketClient
+
+const event_opts = {
+    "and"     : "A,and",
+
+    "class"   : "c,class=s@",
+    "event"   : "e,event=s@",
+    "sev"     : "y,severity=s@",
+    "usev"    : "t,user-severity=s@",
+    "uevent"  : "n,user-event=s@",
+
+    "nclass"  : "C,not-class=s@",
+    "nevent"  : "E,not-event=s@",
+    "nsev"    : "Y,not-severity=s@",
+    "nusev"   : "T,not-user-severity=s@",
+    "nuevent" : "N,not-user-event=s@",
+
+    "levent"  : "x,list-events",
+    "lsev"    : "z,list-severity",
+    "lclass"  : "l,list-classes",
+
+    "logs"    : "L,list-logs",
+    "stream"  : "S,stream-log=s",
+    "jstream" : "J,stream-json=s",
+    "pstream" : "P,perfcache=s",
+
+    "raw"     : "R,raw",
+    "hist"    : "H,history=i",
+    "url"     : "u,url=s",
+    "proxy"   : "p,proxy-url=s",
+    "remote"  : "Q,remote=s",
+    "show"    : "W,show-url",
+    "verbose" : "v,verbose:i+",
+
+    "help"    : "h,help"
+};
+
+# wait 0.005s between polling for exit from the keyboard
+const TIMEOUT = 5ms;
+
+# indefinite network timeout
+const NET_TIMEOUT = 500ms;
+
+# get the first 10 events when starting
+const DEFAULT_HIST = 10;
+
+# characters in log prefix
+const PREFIX = 32;
+
+class event_monitor {
+    public {}
+
+    private {
+        hash o;
+        hash options;
+        auto filter;
+        auto nfilter;
+
+        Queue eq();
+
+        int lastid;
+        int rows;
+        int columns;
+
+        Counter cTerminate(1); # goes to 0 in the main thread when termination is requested
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        qorus_client_init();
+
+        options = qorus_parse_options("qorus-client");
+        try {
+            process_command_line();
+        } catch(hash<ExceptionInfo> ex) {
+            if (ex.err == "TERMINATE" || ex.err == "ERROR") {
+                return;
+            } else {
+                rethrow;
+            }
+        }
+
+        if (o.remote) {
+            omqapi = omqclient.getRemote(o.remote);
+            qrest = omqclient.getRemoteRest(o.remote);
+        }
+
+        if (o.url) {
+            omqapi.setURL(o.url);
+            qrest.setURL(o.url);
+        }
+        if (o.proxy) {
+            omqapi.setProxyURL(o.proxy);
+            qrest.setProxyURL(o.proxy);
+        }
+
+        if (o.logs)
+            showLogs();
+
+        Term t();
+
+        if (o.stream)
+            stream(o.stream);
+
+        if (o.jstream)
+            jstream(o.jstream);
+
+        if (o.pstream)
+            pstream(o.pstream);
+
+        # first get last 10 messages
+        hash l;
+        try {
+            if (filter || nfilter)
+                l = o.and ? omqapi."get-last-events-and"(o.hist, filter, nfilter) : omqapi."get-last-events-or"(o.hist, filter, nfilter);
+            else
+                l = omqapi."get-last-events"(o.hist);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR") {
+                printf("cannot connect to server at %s: %s\n", omqapi.getURL(), ex.desc);
+                printf("maybe the server is down?\n");
+            } else {
+                printf("%s: %s\n", ex.err, ex.desc);
+            }
+            thread_exit;
+        }
+
+        lastid = l.lastid;
+
+        background start_event_thread();
+
+        # set initial window size
+        sig_winch(SIGWINCH);
+
+        # set window change signal handler
+        {
+            set_signal_handler(SIGWINCH, \sig_winch());
+            on_exit remove_signal_handler(SIGWINCH);
+
+            # print a message
+            stdout.printf("press any key to stop event polling...\n");
+
+            show_events(l.events);
+
+            while (True) {
+                if (stdin.isDataAvailable()) {
+                    stdin.readBinary(1);
+                    break;
+                }
+
+                auto events;
+                try {
+                    events = eq.get(TIMEOUT);
+                } catch (hash<ExceptionInfo> ex)
+                    continue;
+
+                # check if the server has shut down
+                if (!exists events)
+                    break;
+
+                show_events(events);
+            }
+
+            printf("user exit\n");
+            t.restore();
+        }
+        cTerminate.dec();
+        OMQ::wait_for_all_threads();
+    }
+
+    showLogs() {
+        hash info;
+        try {
+            list<auto> l = qrest.get("logs", NOTHING, NOTHING, \info);
+
+            map printf("%s %s\n", $1.log_url, $1.name ? "(" + $1.name + ")" : ""), l;
+        } catch (hash<auto> ex) {
+            qrest.outputRestErrorMessage(ex, info);
+        }
+        thread_exit;
+    }
+
+    stream(string log) {
+        stdout.printf("press any key to stop log streaming (URL: %s)...\n", log);
+
+        WebSocketClient ws(sub (*string str) { if (str) { print(str); flush(); }}, ("url": log, "proxy": options."proxy-url"));
+        ws.connect();
+
+        while (True) {
+            if (!ws.isOpen()) {
+                stdout.printf("server closed connection (URL: %s)\n", log);
+                break;
+            }
+            if (stdin.isDataAvailable(500ms)) {
+                ws.disconnect();
+                stdin.read(1);
+                stdout.printf("stopped log streaming on user request (URL: %s)\n", log);
+                break;
+            }
+        }
+        thread_exit;
+    }
+
+    jstream(string src) {
+        streamJson("JSON", src);
+    }
+
+    pstream(string src) {
+        string url = sprintf("%s/perfcache/%s", omqapi.getURL(), src);
+        url =~ s/^http/ws/i;
+        streamJson("perfcache", url);
+    }
+
+    private streamJson(string type, string url) {
+        stdout.printf("press any key to stop %s streaming (URL: %s)...\n", type, url);
+
+        code rcv = sub (*string str) {
+            if (str) {
+                auto jval;
+                try {
+                    jval = parse_json(str);
+                } catch (hash<ExceptionInfo> ex) {
+                    throw ex.err, sprintf("%s: JSON: %y", ex.desc, str);
+                }
+                printf("%y\n", jval);
+                flush();
+            }
+        };
+
+        WebSocketClient ws(rcv, ("url": url, "proxy": options."proxy-url", "errlog": \errlog()));
+        ws.connect();
+
+        while (True) {
+            if (!ws.isOpen()) {
+                stdout.printf("server closed connection (URL: %s)\n", url);
+                break;
+            }
+            if (stdin.isDataAvailable(500ms)) {
+                ws.disconnect();
+                stdin.read(1);
+                stdout.printf("stopped %s streaming on user request (URL: %s)\n", type, url);
+                break;
+            }
+        }
+        thread_exit;
+    }
+
+    errlog(string msg) {
+        stderr.print(msg + "\n");
+    }
+
+    start_event_thread() {
+        # notify parent thread that this thread is exiting
+        on_exit eq.push();
+
+        while (True) {
+            softint id = lastid + 1;
+
+            if (cTerminate.getCount() == 0) {
+                printf("terminated on user request...\n");
+                break;
+            }
+
+            hash h;
+            try {
+                if (exists filter)
+                    h = o.and ? omqapi."wait-for-events-and"(id, filter, NET_TIMEOUT, nfilter) : omqapi."wait-for-events-or"(id, filter, NET_TIMEOUT, nfilter);
+                else
+                    h = omqapi."wait-for-events"(id, NET_TIMEOUT);
+                #printf("DBG: h: %y\n", h);
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "HTTP-CLIENT-RECEIVE-ERROR" || ex.err == "SOCKET-TIMEOUT") {
+                    try {
+                        # try to reconnect in case the error was due to a timeout on the reply
+                        omqapi.reconnect();
+                        #printf("reconnected after %s\n", ex.desc);
+                        continue;
+                    } catch (hash<ExceptionInfo> ex1) {
+                        printf("server connection closed; cannot reconnect: %s\n", ex1.desc);
+                    }
+                } else {
+                    printf("%s: %s\n", ex.err, ex.desc);
+                }
+                break;
+            }
+
+            lastid = h.lastid;
+
+            if (h.shutdown) {
+                printf("Qorus server is shutting down...\n");
+                break;
+            }
+
+            if (!h.events)
+                continue;
+
+            eq.push(h.events);
+        }
+    }
+
+    static private usage() {
+        printf("usage: %s [options]
+EVENT FILTERING OPTIONS
+ -A,--and                    use AND logic for event filtering and OR NOT
+                             logic for negative filtering
+                             (default +OR, -AND NOT)
+ -c,--class=ARG              show event class=ARG (initial character match)
+ -e,--event=ARG              show event=ARG (regex match)
+ -y,--severity=ARG           show events with severity ARG
+ -t,--user-severity=ARG      show events with user severity ARG
+ -n,--user-event=ARG         show user events with name ARG
+ -C,--not-class=ARG          include class ARG in negative filter
+ -E,--not-event=ARG          include event ARG in negative filter
+ -Y,--not-severity=ARG       include severity ARG in negative filter
+ -T,--not-user-severity=ARG  include user severity ARG in negative filter
+ -N,--not-user-event=ARG     include user event ARG in negative filter
+ -R,--raw                    show raw event info
+
+REFERENCE INFO OPTIONS
+ -l,--list-classes           list all class codes and exit
+ -x,--list-events            list all event codes and exit
+ -z,--list-severity          list all severity levels and exit
+
+LOG OPTIONS
+ -L,--list-logs              list online log sources
+ -S,--stream-log=ARG         stream given log websocket source
+ -J,--jstream=ARG            stream given JSON websocket source
+ -P,--perfcache=ARG          stream the given perfcache events
+
+MISCELLANEOUS OPTIONS
+ -H,--history=ARG            sets the number of older messages to display on
+                             start
+ -u,--url=arg                sets Qorus URL (ex: http://host:port)
+ -p,--proxy-url=ARG          set the proxy URL (ex: http://proxy:port)
+ -Q,--remote=ARG             use the given remote Qorus connection
+ -v,--verbose                sets verbosity level (more -v's = more info)
+ -W,--show-url               show default Qorus system URL
+ -h,--help                   this help text
+", get_script_name());
+    }
+
+    private process_command_line() {
+        GetOpt g(event_opts);
+
+        try {
+            o = g.parse2(\ARGV);
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf(ex.desc + "\n");
+            throw "ERROR", ex.desc;
+        }
+
+        if (o.show) {
+            if (exists options."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+            else
+                printf("%s\n", options."client-url");
+            throw "TERMINATE";
+        }
+
+        if (o.levent) {
+            map printf("%s\n", $1), keys QE_RMAP_EVENT;
+            throw "TERMINATE";
+        }
+
+        if (o.lsev) {
+            map printf("%s\n", $1), keys ErrorSeverityOrder;
+            throw "TERMINATE";
+        }
+
+        if (o.lclass) {
+            map printf("%s\n", $1), keys QE_RMAP_CLASS;
+            throw "TERMINATE";
+        }
+
+        if (o.help) {
+            event_monitor::usage();
+            throw "TERMINATE";
+        }
+
+        # check class filter
+        foreach auto c in (\o.class) {
+            *int cc = event_monitor::get_class_code(\c);
+            if (!cc) {
+                string s = sprintf("ERROR: invalid class code %y\nHINT: %s -l to list valid class codes\n", c, get_script_name());
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+            c = cc;
+        }
+
+        # check negative class filter
+        foreach auto c in (\o.nclass) {
+            *int cc = event_monitor::get_class_code(\c);
+            if (!exists cc) {
+                string s = sprintf("ERROR: invalid class code %y\nHINT: %s -l to list valid class codes\n", c, get_script_name());
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+            c = cc;
+        }
+
+        # check event filter
+        foreach auto e in (\o.event) {
+            *int ec = event_monitor::get_event_code(\e);
+            if (!ec) {
+                string s = sprintf("ERROR: invalid event code %y\nHINT: %s -x to list valid event codes\n", e, get_script_name());
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+            e = ec;
+        }
+
+        # check negative event filter
+        foreach auto e in (\o.nevent) {
+            int ec = event_monitor::get_event_code(\e);
+            if (!ec) {
+                string s = sprintf("ERROR: invalid event code %y\nHINT: %s -x to list valid event codes\n", e, get_script_name());
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+            e = ec;
+        }
+
+        # check severity codes
+        event_monitor::check_severity(\o.sev, "severity");
+        event_monitor::check_severity(\o.usev, "user severity");
+        event_monitor::check_severity(\o.nsev, "severity");
+        event_monitor::check_severity(\o.nusev, "user severity");
+
+        # check consistency of AND filter
+        if (o.and) {
+            if (elements o.class > 1) {
+                string s = sprintf("ERROR: multiple classes for AND filtering (given: %s)\n", event_monitor::get_classes(o.class));
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+
+            if (elements o.event > 1) {
+                string s = sprintf("ERROR: multiple events for AND filtering (%d given)\n", elements o.event);
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+
+            if (elements o.sev > 1) {
+                string s = sprintf("ERROR: multiple severities for AND filtering (%d given)\n", elements o.sev);
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+
+            if (elements o.usev > 1) {
+                string s = sprintf("ERROR: multiple user severities for AND filtering (%d given)\n", elements o.usev);
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+
+            if (elements o.uevent > 1) {
+                string s = sprintf("ERROR: multiple user events for AND filtering (%d given)\n", elements o.uevent);
+                stderr.printf(s);
+                throw "TERMINATE";
+            }
+        }
+
+        # build filter structure for API calls
+        if (elements o.class || elements o.event || elements o.sev || elements o.usev || elements o.uevent) {
+            filter = ();
+            foreach auto c in (o.class)
+                filter += ( "class": c );
+            foreach auto e in (o.event)
+                filter += ( "event": e );
+            foreach auto c in (o.sev)
+                filter += ("minseverity": c);
+            foreach auto c in (o.usev)
+                filter += ("minuserseverity": c);
+            foreach auto e in (o.uevent)
+                filter += ("eventstr": e);
+        }
+
+        if (elements o.nclass || elements o.nevent || elements o.nsev || elements o.nusev || elements o.nuevent) {
+            if (o.and) {
+
+                nfilter = ();
+
+                foreach auto c in (o.nclass)
+                    nfilter += ("class": c);
+                foreach auto e in (o.nevent)
+                    nfilter += ("event": e);
+                foreach auto c in (o.nsev)
+                    nfilter += ("minseverity": c);
+                foreach auto c in (o.nusev)
+                    nfilter += ("minuserseverity": c);
+                foreach auto e in (o.nuevent)
+                    nfilter += ("eventstr": e);
+            } else {
+                foreach auto c in (o.nclass)
+                    nfilter."class" = c;
+                foreach auto e in (o.nevent)
+                    nfilter.event = e;
+                foreach auto c in (o.nsev)
+                    nfilter.minseverity = c;
+                foreach auto c in (o.nusev)
+                    nfilter.minuserseverity = c;
+                foreach auto e in (o.nuevent)
+                    nfilter.eventstr = e;
+            }
+        }
+
+        if (elements nfilter && !elements filter)
+            filter = o.and ? ( "none" : False ) : ( "all" : True );
+
+        #printf("filter: %N\nnfilter: %N\n", filter, nfilter);
+
+        if (!o.hist)
+            o.hist = DEFAULT_HIST;
+    }
+
+    static private check_severity(reference l, string sev) {
+        foreach auto c in (\l) {
+            *int v = ErrorSeverityOrder{c};
+            if (!exists v) {
+                string s = sprintf("ERROR: %s value: %n is not valid\nHINT: %s -V for valid severity codes\n", sev, c, get_script_name());
+                stderr.printf(s);
+                throw "ERROR", s;
+            }
+            c = v;
+        }
+    }
+
+    static *int get_class_code(reference c) {
+        *int cc = QE_RMAP_CLASS{c};
+        if (cc)
+            return cc;
+
+        # check for match
+        c = "^" + c;
+        foreach string cs in (keys QE_RMAP_CLASS) {
+            if (regex(cs, c, RE_Caseless)) {
+                if (cc) {
+                    string s = sprintf("ERROR: %n matches more than one class code", c);
+                    stderr.printf(s + "\n");
+                    throw "ERROR", s;
+                }
+                cc = QE_RMAP_CLASS{cs};
+            }
+        }
+        if (QE_MAP_CLASS{cc})
+            c = QE_MAP_CLASS{cc};
+        return cc;
+    }
+
+    static *int get_event_code(reference<string> e) {
+        *int ec = QE_RMAP_EVENT{e};
+        if (ec) {
+            return ec;
+        }
+
+        # check for match
+        foreach string es in (keys QE_RMAP_EVENT) {
+            if (regex(es, e, RE_Caseless)) {
+                if (ec) {
+                    string s = sprintf("ERROR: %n matches more than one event code", e);
+                    stderr.printf(s + "\n");
+                    throw "ERROR", s;
+                }
+                ec = QE_RMAP_EVENT{es};
+            }
+        }
+        # do not overwrite reference if the event does not exist
+        if (QE_MAP_EVENT{ec}) {
+            e = QE_MAP_EVENT{ec};
+        }
+        return ec;
+    }
+
+    static private string get_classes(softlist l) {
+        return foldl $1 + ", " + $2, (map QE_MAP_CLASS.$1, l);
+    }
+
+    static private string get_events(softlist l) {
+        return foldl $1 + ", " + $2, (map QE_MAP_EVENT.$1, l);
+    }
+
+    show_info(string prefix, string fmt) {
+        string str = vsprintf(fmt, argv);
+
+        string mfmt = sprintf("%%%ds%%s\n", PREFIX);
+
+        int size = 80 - PREFIX - 1;
+        do {
+            string seg = substr(str, 0, size);
+            str = splice str, 0, size;
+            stdout.printf(mfmt, prefix, seg);
+            prefix = "+ ";
+        } while (strlen(str));
+    }
+
+    static private string get_time(date time, int timeus) {
+        if (!get_microseconds(time) && timeus)
+            time += microseconds(timeus);
+        return time.format("YYYY-MM-DD HH:mm:SS.xx z");
+    }
+
+    show_events(softlist<auto> l) {
+        foreach hash<auto> e in (l) {
+            stdout.printf("%s: %05d: (%s) %s %s%s", event_monitor::get_time(e.time, e.timeus), e.id, e.severitystr, e.classstr, e.eventstr, exists e.caller.user ? sprintf(" (%s)", e.caller.user) : "");
+            if (o.raw) {
+                stdout.printf(": %y\n", e);
+                continue;
+            }
+            switch (e.event) {
+                case QEC_SYSTEM_STARTUP: {
+                    stdout.printf(": %s %s (build %s)\n", e.info.name, e.info.version, e.info.build);
+                    break;
+                }
+
+                case QEC_SYSTEM_HEALTH_CHANGED: {
+                    stdout.printf(": %s -> %s\n", e.info."old-health", e.info.health);
+                    break;
+                }
+
+                case QEC_SYSTEM_REMOTE_HEALTH_CHANGED: {
+                    stdout.printf(": %y: %s -> %s\n", e.info.name, e.info."old-health", e.info.health);
+                    break;
+                }
+
+                case QEC_SERVICE_START:
+                case QEC_SERVICE_STOP: {
+                    stdout.printf(": %s.%s v%s svcid %d\n", e.info.type, e.info.name, e.info.version, e.info.serviceid);
+                    break;
+                }
+
+                case QEC_SERVICE_ERROR: {
+                    stdout.f_printf(": %s.%s v%s svcid %d: %s\n", e.info.type, e.info.name, e.info.version, e.info.serviceid, e.info.err);
+                    if (o.verbose) {
+                        show_info("desc: ", e.info.desc);
+                        show_info("info: ", exists e.info.info ? sprintf("%N", e.info.info) : "<n/a>");
+                    }
+                    break;
+                }
+
+                case QEC_SERVICE_AUTOSTART_CHANGE: {
+                    stdout.printf(": %s.%s v%s svcid %d autostart: %y\n", e.info.type, e.info.name, e.info.version, e.info.serviceid, e.info.autostart);
+                    break;
+                }
+
+                case QEC_SERVICE_UPDATED: {
+                    stdout.printf(": %s.%s v%s svcid %d %y\n", e.info.type, e.info.name, e.info.version,
+                        e.info.serviceid, e.info.info);
+                    break;
+                }
+
+                case QEC_WORKFLOW_START: {
+                    stdout.printf(": %s v%s wfid %d mode %s, execid %d, autostart: %d\n", e.info.name, e.info.version, e.info.workflowid, e.info.mode, e.info.execid, e.info.autostart);
+                    break;
+                }
+
+                case QEC_WORKFLOW_STOP: {
+                    stdout.printf(": %s v%s wfid %d mode %s, execid %d, autostart: %d\n", e.info.name, e.info.version, e.info.workflowid, e.info.mode, e.info.execid, e.info.autostart);
+                    break;
+                }
+
+                case QEC_WORKFLOW_CACHE_RESET: {
+                    stdout.printf(": %s v%s wfid %d\n", e.info.name, e.info.version, e.info.workflowid);
+                    break;
+                }
+
+                case QEC_WORKFLOW_DATA_SUBMITTED: {
+                    stdout.printf(": %s v%s wfid %d w%d %s%s\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info.status,
+                                  exists e.info.external_order_instanceid ? sprintf(" ext id: %s", e.info.external_order_instanceid) : "");
+                    break;
+                }
+
+                case QEC_WORKFLOW_DATA_CACHED: {
+                    stdout.printf(": %s v%s wfid %d w%d %s%s%s\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info.status, e.info.business_error ? " (B)": "",
+                                  exists e.info.external_order_instanceid ? sprintf(" ext id: %s", e.info.external_order_instanceid) : "");
+                    break;
+                }
+
+                case QEC_WORKFLOW_DATA_RELEASED: {
+                    stdout.printf(": %s v%s wfid %d w%d %s%s\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info.status, e.info.business_error ? " (B)": "");
+                    break;
+                }
+
+                case QEC_WORKFLOW_INFO_CHANGED: {
+                    stdout.printf(": %s v%s wfid %d w%d\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid);
+                    break;
+                }
+
+                case QEC_WORKFLOW_STATUS_CHANGED: {
+                    stdout.printf(": %s v%s wfid %d w%d %y -> %y\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info.info.old, e.info.info."new");
+                    break;
+                }
+
+                case QEC_WORKFLOW_DATA_UPDATED: {
+                    stdout.printf(": %s v%s wfid %d w%d %s\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info."datatype");
+                    break;
+                }
+
+                case QEC_WORKFLOW_DATA_ERROR: {
+                    stdout.printf(": %s v%s wfid %d execid %d errorid %d%s: %s%s: %s\n", e.info.name, e.info.version, e.info.workflowid,
+                                  e.info.execid, e.info.error.errorid, e.info.workflow_instanceid ? e.info.workflow_instanceid : "",
+                                  e.userseveritystr, e.info.error.business_error ? " (B)" : "", e.info.error.err);
+                    break;
+                }
+
+                case QEC_WORKFLOW_PERFORMANCE: {
+                    stdout.printf(": %s v%s wfid %d w%d %y (%s): %y\n", e.info.name, e.info.version, e.info.workflowid, e.info.workflow_instanceid,
+                                  e.info.status, e.info.disposition, e.info.end - e.info.start);
+                    break;
+                }
+
+                case QEC_WORKFLOW_STATS_UPDATED: {
+                    string str;
+                    foreach hash<auto> h in (e.info.bands) {
+                        if (!l) {
+                            continue;
+                        }
+                        if (str) {
+                            str += ", ";
+                        }
+                        hash<auto> sla_ok;
+                        hash<auto> sla_nok;
+                        foreach hash<auto> slah in (h.sla) {
+                            if (slah.in_sla) {
+                                sla_ok = slah;
+                            } else {
+                                sla_nok = slah;
+                            }
+                        }
+                        str += sprintf("%s: SLA OK: %d%% (%d) {%s}", h.label, sla_ok.pct,
+                            sla_ok.count + sla_nok.count,
+                            (foldl $1 + ", " + $2, (map sprintf("%s: %d%%", $1.disposition, $1.pct), h.l)));
+                    }
+                    stdout.printf(": tag %y: %s\n", e.info.tag, str);
+                    break;
+                }
+
+                case QEC_WORKFLOW_RECOVERED: {
+                    stdout.printf(": %s v%s wfid %d (%y -> %y)\n", e.info.name, e.info.version, e.info.workflowid,
+                        e.info.old_statuses, e.info.new_status);
+                    break;
+                }
+
+                case QEC_CONFIG_ITEM_CHANGED: {
+                    stdout.printf(": %y\n", e.info);
+                    break;
+                }
+
+                case QEC_WORKFLOW_UPDATED: {
+                    stdout.printf(": %s v%s wfid %d %y\n", e.info.name, e.info.version, e.info.workflowid, e.info.info);
+                    break;
+                }
+
+                case QEC_JOB_START: {
+                    stdout.printf(": %s v%s jid %d trig: %y next: %y\n", e.info.name, e.info.version, e.info.jobid,
+                        e.info.info.trigger, e.info.info.next);
+                    break;
+                }
+
+                case QEC_JOB_STOP: {
+                    stdout.printf(": %s v%s jid %d\n", e.info.name, e.info.version, e.info.jobid);
+                    break;
+                }
+
+                case QEC_JOB_INSTANCE_START: {
+                    stdout.printf(": %s v%s jid %d jiid %d\n", e.info.name, e.info.version, e.info.jobid,
+                        e.info.job_instanceid);
+                    break;
+                }
+
+                case QEC_JOB_INSTANCE_STOP: {
+                    stdout.printf(": %s v%s jid %d jiid %d %y\n", e.info.name, e.info.version, e.info.jobid,
+                        e.info.job_instanceid, e.info.status);
+                    break;
+                }
+
+                case QEC_JOB_ERROR: {
+                    stdout.printf(": %s v%s jid %d jiid %d\n", e.info.name, e.info.version, e.info.jobid,
+                        e.info.job_instanceid);
+                    break;
+                }
+
+                case QEC_JOB_RECOVERED: {
+                    stdout.printf(": %s v%s jid %d (%y -> %y)\n", e.info.name, e.info.version, e.info.jobid,
+                        e.info.old_statuses, e.info.new_status);
+                    break;
+                }
+                case QEC_JOB_CREATED:
+                case QEC_JOB_DELETED:
+                case QEC_JOB_UPDATED: {
+                    stdout.printf(": %s v%s jid %d %y\n", e.info.name, e.info.version, e.info.jobid, e.info.info);
+                    break;
+                }
+
+                case QEC_GROUP_STATUS_CHANGED: {
+                    stdout.printf(": %s enabled: %y\n", e.info.name, e.info.enabled);
+                    break;
+                }
+
+                case QEC_ALERT_ONGOING_CLEARED:
+                case QEC_ALERT_TRANSIENT_RAISED:
+                case QEC_ALERT_ONGOING_RAISED: {
+                    stdout.printf(": %y\n", e.info);
+                    break;
+                }
+
+                case QEC_CONNECTION_UP: {
+                    stdout.printf(": %s: %s\n", e.info.type, e.info.name);
+                    break;
+                }
+
+                case QEC_CONNECTION_DOWN: {
+                    stdout.printf(": %s: %s: %s\n", e.info.type, e.info.name, e.info.err);
+                    break;
+                }
+
+                case QEC_CONNECTION_ENABLED_CHANGE: {
+                    stdout.printf(": %s: %s: %y\n", e.info.type, e.info.name, e.info.enabled);
+                    break;
+                }
+
+                case QEC_CONNECTION_DEBUG_DATA_CHANGE: {
+                    stdout.printf(": %s: %s: %y\n", e.info.type, e.info.name, e.info.debug_data);
+                    break;
+                }
+
+                case QEC_CONNECTION_CREATED:
+                case QEC_CONNECTION_UPDATED:
+                case QEC_CONNECTION_DELETED: {
+                    stdout.printf(": %s: %s\n", e.info.type, e.info.name);
+                    break;
+                }
+
+                case QEC_LOGGER_CREATED:
+                case QEC_LOGGER_UPDATED:
+                case QEC_LOGGER_DELETED:
+                case QEC_APPENDER_CREATED:
+                case QEC_APPENDER_UPDATED:
+                case QEC_APPENDER_DELETED: {
+                    stdout.printf(": %y\n", e.info);
+                    break;
+                }
+
+                case QEC_CONNECTIONS_RELOADED: {
+                    stdout.printf(": %s: count: %d\n", e.info.type, e.info.connections.size());
+                    break;
+                }
+
+                case QEC_SERVICE_METHOD_PERFORMANCE: {
+                    stdout.printf(": %s: %s.%s(): %y\n", e.info.type, e.info.name, e.info.method, e.info.end - e.info.start);
+                    break;
+                }
+
+                case QEC_PROCESS_STARTED:
+                case QEC_PROCESS_STOPPED: {
+                    stdout.printf(": node %y pid %d %s: %y\n", e.info.node, e.info.pid, e.info.type, e.info.id);
+                    break;
+                }
+
+                case QEC_PROCESS_MEMORY_CHANGED: {
+                    stdout.printf(": node %y pid %d %s: %y mem: %s (node: %s / %s)\n", e.info.node, e.info.pid, e.info.type, e.info.id, e.info.priv_str, e.info.node_priv_str, e.info.node_ram_str);
+                    break;
+                }
+
+                case QEC_NODE_INFO: {
+                    stdout.printf(": node %y: procs: %d mem: %s\n", e.info.name, e.info.processes, e.info.node_priv_str);
+                    break;
+                }
+
+                case QEC_NODE_REMOVED: {
+                    stdout.printf(": node %y\n", e.info.name);
+                    break;
+                }
+
+                default: {
+                    stdout.printf("\n");
+                    break;
+                }
+            }
+            if (o.verbose && exists e.caller && e.caller != "<internal>") {
+                show_info("caller: ", "%s@%s (%s) %s()", e.caller.user, e.caller."source-host", e.caller.source, e.caller.api);
+                #printf("caller: %n\n", e.caller);
+            }
+
+            stdout.sync();
+        }
+    }
+
+    # the signal number is always passed as an argument to signal handlers
+    sig_winch(int signal) {
+        self += TermIOS::getWindowSize();
+    }
+}
+
+class Term {
+    public {}
+    private {
+        TermIOS orig;
+    }
+
+    constructor() {
+        TermIOS t();
+
+        # get current terminal attributes for stdin
+        stdin.getTerminalAttributes(t);
+
+        # save a copy
+        orig = t.copy();
+
+        # get local flags
+        int lflag = t.getLFlag();
+
+        # disable canonical input mode (= turn on "raw" mode)
+        lflag &= ~ICANON;
+
+        # turn off echo mode
+        lflag &= ~ECHO;
+
+        # do not check for special input characters (INTR, QUIT, and SUSP)
+        lflag &= ~ISIG;
+
+        # set the new local flags
+        t.setLFlag(lflag);
+
+        # set minimum characters to return on a read
+        t.setCC(VMIN, 1);
+
+        # set character input timer in 0.1 second increments (= no timer)
+        t.setCC(VTIME, 0);
+
+        # make these terminal attributes active
+        stdin.setTerminalAttributes(TCSADRAIN, t);
+    }
+
+    destructor() {
+        restore();
+    }
+
+    restore() {
+        # restore terminal attributes
+        stdin.setTerminalAttributes(TCSADRAIN, orig);
+    }
+}

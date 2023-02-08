@@ -1,0 +1,42 @@
+type: workflow
+name: issue3102workflow
+version: "1.0"
+desc: test workflow
+author:
+  - Qore Technologies, s.r.o.
+# modules:
+#   - TestWorkflow
+#   - TestWorkflow2
+
+# queues, events and groups are defined in separate files
+steps: ["issue3102step:1.0"]
+  # the element is two paralel steps
+  # - ["teststep1:1.0", "teststep:1.0"]
+
+keylist:
+  - test-key1
+sla_threshold: 2
+groups:
+  - issue3102group
+tags:
+  mytag: value
+  mytag2: value2
+code: DevTestWorkflow-v1.0.qwf
+errors: errors.yaml
+config-item-values:
+  - name: issue-3384-config-item-1
+    value: issue3102workflow-level-value
+  - name: issue-3384-config-item-2
+    value: 34567
+  - name: issue-3384-config-item-3
+    value:
+      issue3384workflow-level: test
+  - name: issue-3384-config-item-4
+    value:
+      - 5
+      - 4
+      - 3
+
+# Also as Ondra suggested it would be good to have connections in WF meaning
+# you can use only listed connections in the WF definition. And in case one (or all)
+# connection is down the Workflow will go to an error state (not processesing wf orders smth like that)

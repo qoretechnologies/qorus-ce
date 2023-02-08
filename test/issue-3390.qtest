@@ -1,0 +1,91 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3390Test
+
+class Issue3390Test inherits QorusPassiveWorkflowTest {
+    public {
+        const Timeout = 10s;
+        const PollInterval = 250ms;
+
+        const WorkflowName = "ISSUE-3390-JAVA-TEST";
+        const ServiceName = "Issue3390JavaTest";
+        const JobName = "Issue3390JavaTest";
+    }
+
+    constructor() : QorusPassiveWorkflowTest(WorkflowName, "1.0", \ARGV) {
+        addTestCase("testWorkflow", \testWorkflow());
+        addTestCase("testService", \testService());
+        addTestCase("testJob", \testJob());
+        set_return_value(main());
+    }
+
+    testWorkflow() {
+        {
+            if (!qrest.get("workflows/" + WorkflowName + "/remote")) {
+                qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": False});
+
+            doWorkflowTest();
+        }
+
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        WorkflowLogHelper wlh(m_rest_pfx, m_options.verbose > 1);
+        on_exit wlh.stop();
+        # set a 30 minute timeout
+        qrest.setTimeout(30m);
+        assertEq(OMQ::StatComplete, execSynchronous(oh).status);
+    }
+
+    testService() {
+        {
+            if (!qrest.get("services/" + ServiceName + "/remote")) {
+                qrest.put("services/" + ServiceName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("services/" + ServiceName + "/setRemote", {"remote": False});
+
+            doServiceTest();
+        }
+
+        doServiceTest();
+    }
+
+    doServiceTest() {
+        assertEq("OK", qrest.put("services/" + ServiceName + "/test/call"));
+    }
+
+    testJob() {
+        {
+            if (!qrest.get("jobs/" + JobName + "/remote")) {
+                qrest.put("jobs/" + JobName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("jobs/" + JobName + "/setRemote", {"remote": False});
+
+            doJobTest();
+        }
+
+        doJobTest();
+    }
+
+    doJobTest() {
+        assertEq(StatComplete, qrest.put("jobs/" + JobName + "/run").status);
+    }
+}

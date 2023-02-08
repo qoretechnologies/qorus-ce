@@ -1,0 +1,29 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3490Parent inherits QorusNormalStep {
+    primary() {
+        int wfiid1 = createOrder("ISSUE-3490-CHILD", NOTHING, {
+            "staticdata": {},
+            "parent_workflow_instanceid": getWfiid(),
+        });
+        logInfo("created child order: %y", wfiid1);
+        int wfiid2 = createOrder("ISSUE-3490-CHILD", NOTHING, {
+            "staticdata": {},
+            "parent_workflow_instanceid": getWfiid(),
+        });
+        logInfo("created child order: %y", wfiid2);
+        int wfiid3 = createOrder("ISSUE-3490-CHILD", NOTHING, {
+            "staticdata": {},
+            "parent_workflow_instanceid": getWfiid(),
+        });
+        logInfo("created child order: %y", wfiid3);
+        updateDynamicData({
+            "child1": wfiid1,
+            "child2": wfiid2,
+            "child3": wfiid3,
+        });
+    }
+}

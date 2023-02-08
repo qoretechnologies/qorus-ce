@@ -1,0 +1,10 @@
+type: workflow
+name: issue3423workflow
+version: "1.0"
+desc: test workflow
+author:
+  - Qore Technologies, s.r.o.
+steps: ["issue3423step:1.0"]
+keylist:
+  - test-key1
+sla_threshold: 2

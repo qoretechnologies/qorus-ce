@@ -1,0 +1,23 @@
+# name: test-logger-job
+# version: 1.0
+# desc: help job for LoggerRestInterfaceTest unit test
+# author: Taras Petrychkovych (Qore Technologies)
+# schedule:  0 * * * *
+# active: false
+# define-group: test: test interfaces
+# groups: test
+
+%strict-args
+%require-types
+%new-style
+%enable-all-warnings
+
+sub run() {
+    UserApi::logFatal("log Fatal message");
+    UserApi::logError("log Error message");
+    UserApi::logWarn("log Warn message");
+    UserApi::logInfo("log Info message");
+    UserApi::logDebug("log Debug message");
+    UserApi::logTrace("log Trace message");
+}
+# END

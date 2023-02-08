@@ -1,0 +1,16 @@
+# This is a generated file, don't edit!
+type: workflow
+name: ISSUE-3820-TEST
+desc: 'test for #3820'
+version: '1.0'
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - regression
+  - test
+remote: false
+autostart: 0
+steps:
+    [
+        "Issue3820Step:1.0"
+    ]

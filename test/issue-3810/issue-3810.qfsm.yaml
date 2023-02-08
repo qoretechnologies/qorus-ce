@@ -1,0 +1,41 @@
+# This is a generated file, don't edit!
+type: fsm
+name: issue-3810
+desc: 'issue #3810 test'
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 48
+            'y': 61
+        initial: true
+        name: Output List
+        desc: ''
+        type: state
+        id: w0RuVzxsl
+        action:
+            type: connector
+            value:
+                class: Issue3810OutputList
+                connector: outputList
+        execution_order: 1
+        transitions:
+            -
+                state: '2'
+                language: qore
+    '2':
+        position:
+            x: 308
+            'y': 64
+        initial: false
+        name: Log List
+        desc: ''
+        type: state
+        id: ZMbVrHEk-
+        action:
+            type: connector
+            value:
+                class: Issue3810LogList
+                connector: logList

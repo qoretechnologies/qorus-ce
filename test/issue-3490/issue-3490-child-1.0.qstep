@@ -1,0 +1,12 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3490Child inherits QorusEventStep {
+    primary() {
+        softstring event_key = getWfiid();
+        bindEvent(event_key);
+        logInfo("bound on event %y", event_key);
+    }
+}

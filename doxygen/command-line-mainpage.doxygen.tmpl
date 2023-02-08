@@ -1,0 +1,1217 @@
+/** @page commandline Command-Line Programs
+
+    @tableofcontents
+
+    @section commandline_intro Command-Line Introduction
+
+    This section of the Qorus Integration Engine&reg; manual describes command-line programs delivered with Qorus.
+    Other command-line programs delivered with %Qore are not documented here such as:
+    - \c qdp: the %Qore @ref dataproviderintro "DataProvider" interface
+    - \c qdbg and \c qdbg-remote: Qore debugger and remote Qore debugger (see @ref debugging_remote_interfaces)
+    - \c sqlutil: the %Qore @ref sqlutilintro "SqlUtil" interface
+
+    @note The system environment must be properly set up for Qorus command-line programs to work; see
+    @ref installtarenvvars for more information on environment variables required for Qorus.
+
+    <hr>
+    @section make-release make-release: Qorus Release Packager
+
+    @par Usage
+    \c make-release <i>[options] [release-label] [files...]</i>
+
+    The \c make-release script should be used to package Qorus user releases for automated installation.  This script
+    will package all files to be delivered and created an automated installation package using @ref oload "oload" to
+    load all objects into the target Qorus schema.
+
+    The script assumes that user files are stored relative to the current directory; use the \c –U, \c -p, or \c -P
+    options to change.
+
+    The script creates the release in \c $HOME/releases in a subdirectory named
+    <tt>qorus-user-</tt><i><b>release-label</b></i>.  To change the target directory, use the \c –r option (or set the
+    \c $QORUS_RELEASE_DIR environment variable before running the script).
+
+    This script creates a release directory with the following contents:
+
+    <b>Release Directory Contents</b>
+    |!Filename|!Description
+    |\c install.sh|The automated installer script.  This script is copied from \c $OMQ_DIR/templates
+    |<tt>qorus-user-</tt><i><b>release-label</b></i><tt>.tar.gz</tt>|The compressed tar archive of the user files to \
+        be installed
+    |<tt>releases/qorus-user-</tt><i><b>release-label</b></i><tt>.qrf</tt>|A loader command file is automatically \
+        created for all Qorus objects to be loaded in the new schema
+
+    The \c install.sh script in this directory can be edited (actions added to the \c pre_install and \c post_install
+    functions) if necessary (for example, to delete services or delete cached workflow definitions to ensure that new
+    objects are immediately used).
+
+    The release can be tar’ed and compressed for distribution by using the \c -c option.
+
+    @note The \c make-release script should always be used to create new releases as future version of Qorus
+    Integration Engine&reg; will likely include release tracking and rollback support, and \c make-release will allow
+    these features to be used transparently.
+
+    <b>Options Supported by make-release</b>
+    |!Long Option|!Short|!Description
+    |\c --python-modules=ARG|\c -a|Package the given directory as a %Python module dir to be installed in the target \
+        under <tt>$OMQ_DIR/user/python/lib/python</tt><i>&lt;version&gt;</i><tt>/site-packages</tt> by default
+    |\c --python-dest=ARG|\c -b|Store files packaged with \c -a in the given directory under <tt>$OMQ_DIR/</tt>
+    |\c --compress|\c -c|Creates a \c ".tar.bz2" archive of the release created
+    |\c --refresh|\c -f|Includes a command in the release file to refresh all loaded objects in the server \
+        automatically
+    |\c --full-release|\c -F|verify release completeness, only with <tt>-i</tt>
+    |\c --install|\c -i|Execute the install.sh immediately to perform a local installation of the release just \
+        created (useful for testing)
+    |\c --user=ARG|\c -u|sets the source directory (when not present, assumes ".")
+    |\c --user-src=ARG|\c -U|sets the root source directory for release components; all release componets should be \
+        given as relative paths from this directory
+    |\c --prefix=ARG|-p|sets user prefix directory for relative paths (implies <tt>-U.</tt>) (note: makes a flat \
+        release in this dir)
+    |\c --add-prefix=ARG|\c -P|Sets the directory name prefix for the package (ie -Puser = prepend \c "user" to the \
+        target release directory)
+    |\c --load-file=ARG|\c -l|Create only a loader file (do not give a release label with this option)
+    |\c --loader-only=ARG|\c -L|stage system release; create only loader files here
+    |\c --user-sql=ARG|\c -q|Adds an SQL file to execute in the omquser schema when installing
+    |\c --release-dir=ARG|-r|Sets the directory where the release will be created (default \c $QORUS_RELEASE_DIR)
+    |\c --show-release-dir|\c -R|Show the release directory and exit
+    |\c --system-dir=ARG|\c -s|set system dir (also sets <tt>-S</tt>)
+    |\c --system|\c -S|make system release
+    |\c --verbose|\c -v|output more information
+    |\c --python-module=ARG|\c -a|Adds the a python module to the release
+    |\c --python-module-dest=ARG|\c -b|Sets the directory where the python module will be created \
+        (default <tt>user/python/lib/python</tt><i>&lt;version&gt;</i><tt>/site-packages</tt>)
+    |\c --help|\c -h|Prints command help text
+
+    @see @ref qorus_releases
+
+    <hr>
+    @section ocmd ocmd: Command-Line Interface to the Qorus RPC API
+
+    @par Usage
+    \c ocmd <i>[options] method [arguments]</i>
+
+    This command provides a command-line interface to the old and deprecated Qorus @ref rpcapi "RPC API".  It executes
+    by connecting to the Qorus HTTP server and issuing @ref YAMLRPC "YAML-RPC", XML-RPC, or JSON-RPC commands.
+    Responses are deserialized into a %Qore data structure, and the resulting data is then displayed on the console.
+
+    @note The RPC API is not subject to new development and is only provided for backwards compatibility; it is
+    recommended to use @ref qrest "qrest" instead which is the primary interface to the
+    @ref rest_api_page_latest "REST API", which is where all new features and functionality are implemented for recent
+    versions of Qorus.
+
+    By default, \c ocmd uses the @ref YAMLRPC "YAML-RPC" protocol to communicate with the Qorus server.
+
+    To submit XML-RPC web service calls, specify \c xmlrpc or \c xmlrpcs (for XML-RPC over a TLS/SSL-encrypted HTTPS
+    transport) protocol in the URL (ex: \c "xmlrpc://server1:8501"), however please note that XML-RPC does not support
+    time zones or fractional second resolution, so date/time information returned by the server may not be displayed
+    correctly by client programs when this protocol is used.
+
+    To submit JSON-RPC web service calls, specify \c jsonrpc or \c jsonrpcs (for JSON-RPC over a TLS/SSL-encrypted
+    HTTPS transport) protocol in the URL (ex: \c "jsonrpc://server1:8501"), however please note that JSON does not
+    have native date/time or binary types, so such information returned by the server may not be displayed correctly
+    by client programs when this protocol is used.
+
+    Note that command-line arguments are parsed with @ref Util::parse_to_qore_value(), so that complex values can be
+    provided as arguments.
+
+    For example, to get help on system API method omq.system.add-user():
+
+    @code unixprompt% ocmd help add-user @endcode
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    @note Any RPC API method supported by Qorus can be called from the command-line by using this program (including
+    methods which act as gateways to system and user services).  However, several other programs have been developed
+    to provide a more user-friendly interface to some common functions.
+
+    <b>Options Supported by ocmd</b>
+    |!Long Option|!Short|!Description
+    |\c --foreign|\c -f|Do not process the method name (do not prepend \c "omq.system." to method names not \
+        containing a '.')
+    |\c --help|\c -h|Prints command help text
+    |\c --literal|\c -l|Show literal responses, giving the option 2 times shows HTTP headers
+    |\c --monitor|\c -m|Monitor network events – shows details about all network communication with the Qorus server
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; ex: \
+        \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|Show the system URL as parsed from the option file
+    |\c --timeout=ARG|\c -t|Set the HTTP timeout in seconds (also the connect timeout)
+    |\c --unformatted-xml|\c -X|Shows the literal YAML, XML, or JSON response (unformatted)
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; ex: \
+        \c "http://server1:8501/RPC2"; see @ref client_unixsocketurls
+    |\c --verbose|\c -v|Shows more information about the web service call
+    |\c --xml|\c -x|Shows the literal YAML, XML, or JSON response (formatted)
+
+    <hr>
+    @section ojview ojview: Show Job Information
+
+    @par Usage
+    \c ojview <i>[options]</i>
+
+    This program displays information about the status of @ref jobs and of job processing.  Without options, an
+    overview is given of all job instances in the last 24 hours.
+
+    Depending on the options given on the command-line, detailed information can be retrieved and output for the
+    objects desired.
+
+    For example, to see an overview of all job data with no time limitations:
+    @verbatim unixprompt% ojview –a @endverbatim
+
+    To see the detailed status of job instance ID 9649, with job info and error info:
+
+    @verbatim unixprompt% ojview –v j:9649 @endverbatim
+
+    @note Depending on the options given, this command shows information retrieved from the Qorus by calling various
+    methods of the @link ##info system.info @endlink service (see @ref jobinfo for more information).
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>Data Options Supported by ojview</b>
+    |!Option|!Short|!Description
+    |\em name|n/a|Shows an overview of the job name given for the given time period (default: last 24 hours)
+    |\em number|n/a|Shows an overview of the job id given for the given time period (default: last 24 hours)
+    |<b>j:</b><i>id</i>|n/a|Shows information about the job instance given (\em id = job instance id)
+    |\c --all|\c -a|Show all information
+    |\c --date=ARG|\c -D|Show information from the date and time given (format <tt>YYYY[MM[DD[HHmmSS]]]</tt>)
+    |\c --day|\c -d|Show information form the last 24 hours (default)
+    |\c --hour|\c -H|Show information from the last 60 minutes
+    |\c --month|\c -m|Show information from the last month
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --week|\c -w|Show information from the last 7 days
+    |\c --year|\c -y|Show information from the last year
+
+    <b>Metadata Option Supported by ojview</b>
+    |!Option|!Short|!Description
+    |\c --definition|\c -f|Show job definition (metadata)
+    |\c --all-jobs|\c -A|List definition info for all defined jobs
+
+    <b>Output Options Supported by ojview</b>
+    |!Option|!Short|!Description
+    |\c --status=ARG|\c -S|Show only job instances with status=ARG (\c C = @ref OMQ::JS_Complete "COMPLETE", \
+        \c E = @ref OMQ::JS_Error "ERROR", \c I = @ref OMQ::JS_InProgress "IN-PROGRESS", \
+        \c Z = @ref OMQ::JS_Crash "CRASH")
+
+    <b>Miscellaneous Options Supported by ojview</b>
+    |!Option|!Short|!Description
+    |\c --verbose|\c -v|Show more information (more –v’s = more info)
+    |\c --help|\c -h|Prints command help text
+    |\c --url=ARG|\c -u|Sets the URL; see @ref client_unixsocketurls
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --show-url|\c -U|Show default URL
+    |\c --message|\c -r|Show reformatted request and response messages
+    |\c --literal|\c -l|Show literal request and response messages (2x or with -v = show headers)
+    |\c --mono|\c -M|Do not use ANSI colors in output
+
+    <hr>
+    @section oload oload: Data Loading Tool and Schema Manager
+
+    @par Usage
+    \c oload <i>[options] [workflow|order|service|function file(s) ...]</i>
+
+    This program is used to load new code and object descriptions into the Qorus database.  It can also be used to run
+    SQL files into Qorus datasources, but, as of Qorus version 2.0.0, \c oload calls @ref schema-tool "schema-tool" to
+    actually execute the SQL.  If functions, services, workflows, or orders are changed or inserted, then oload will
+    attempt to refresh the Qorus server’s cache by calling the REST API PUT system/metadata/reload... method.
+    Normally this program should be run by automated installation scripts, however during development this tool may be
+    used to manipulate schema objects by hand.
+
+    The loader recognizes the file type based on its extension, therefore metadata files must have the appropriate
+    extensions as documented below.
+
+    <b>Metadata File Suffixes</b>
+    |!Suffix|!Description
+    |<tt>*.qfd</tt>|@ref dep_funcdeffile
+    |<tt>*.qwf</tt>|@ref dep_wfdeffile
+    |<tt>*.qsd</tt> or <tt>*.qsd.java</tt>|@ref dep_servicedeffile
+    |<tt>*.qjob</tt> or <tt>*.qjob.java</tt>|@ref dep_jobdeffile
+    |<tt>*.qclass</tt> or <tt>*.qclass.java</tt>|@ref dep_classdeffile
+    |<tt>*.qconn</tt>|@ref dep_connectionfiles
+    |<tt>*.qconst</tt>|@ref dep_constantdeffile
+    |<tt>*.qrf</tt>|@ref loaderreleasefile
+    |<tt>*.qsm</tt>|@ref schemamodulefile
+    |<tt>*.qmapper</tt>|@ref dep_mappers
+    |<tt>*.qscript</tt>|@ref qscriptfile
+    |<tt>*.tar*</tt>|Qorus release packages with a single subdirectory containing at least <tt>install.sh</tt>
+    |<tt>*.yaml</tt>|@ref yamldefinitionfiles
+
+    If an object already exists, it will be redefined by the \c oload program.
+
+    @subsection loaderreleasefile Loader Release File Description
+
+    The loader supports release files which are useful for packaging automated releases.  Release files are text files
+    with simple instructions that are executed by the loader.
+
+    Each command takes one or no arguments.  The commands in the following table are supported:
+
+    <b>Load Release File Commands</b>
+    |!Command|!Argument|!Description
+    |\c load|Filename|Loads the specified file into the database
+    |\c omquser-exec-sql|Filename|Executes the file as an SQL script using @ref schema-tool "schema-tool" in the \
+        user schema
+    |\c check-shutdown|\em n/a|Checks if the Qorus server is running; if so, prints an error message and exits
+    |\c refresh-all|\em n/a|Will reset all affected workflows, services, and jobs
+    |\c refresh-services|\em n/a|Will reset all jobs directly loaded in the server
+    |\c refresh-recursive|\em n/a|Will reset all affected workflows, services, and jobs directly listed or used by \
+        any library code (functions, classes, constants, etc) loaded
+    |\c refresh-services|\em n/a|Will reset any services directly loaded to ensure that the new configuration is \
+        used on the next method call
+    |\c refresh-workflows|\em n/a|Will call omq.system.reset-workflow() to refresh the cached configuration on all \
+        workflow updated
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>Options Supported by oload</b>
+    |!Long Option|!Short|!Description
+    |\c --allow-redef|\c -A|Allows dangerous workflow redefinitions (for example, making recoveries of instances of \
+        the previous definition impossible) – for use in development only.
+    |\c --data-ts=ARG||Sets the data tablespace name for the given datasource for use with the \c –schema and \
+        \c –user-schema options, ARG syntax: <i>datasource_name=tablespace_name</i>
+    |\c --datasource=ARG|\c -D|Overrides datasource parameters, ARG: \em dsname=spec \n\
+        - <i>spec=driver:user/pass@@dbname[(encoding)][%hostname][:port]</i>
+    |\c --delete=ARG|\c -X|delete database object, ARG: \em type:spec \n\
+        - \b workflow: \c workflow:<i>name:version</i> \n\
+        - <b>order data</b>: \c wfinstances:<i>name:version</i> \n\
+        - \b service: \c service:<i>name:version</i> \n\
+        - <b>service method</b>: \c method:<i>servicename:version:methodname</i> \n\
+        - \b step: \c step:<i>name:version</i> \n\
+        - \b function: \c function:<i>name:version</i> \n\
+        - \b class: \c class:<i>name:version</i> \n\
+        - \b constant: \c constant:<i>name:version</i> \n\
+        - \b queue: \c queue:<i>name</i> @note Take care when using this option; deleted objects can only be \
+        restored from a database backup (or for Qorus metadata by reloading the definitions from the filesystem)
+    |\c --delete-id=ARG||delete database object by id, ARG: \em type:id \n\
+        - \b workflow: \c workflow:<i>id</i> \n\
+        - <b>order data</b>: \c wfinstances:<i>id</i> \n\
+        - \b service: \c service:<i>id</i> \n\
+        - <b>service method</b>: \c method:<i>id</i> \n\
+        - \b step: \c step:<i>id</i> \n\
+        - \b function: \c function:<i>id</i> \n\
+        - \b class: \c class:<i>id</i> \n\
+        - \b constant: \c constant:<i>id</i> \n\
+        - \b queue: \c queue:<i>id</i> @note Take care when using this option; deleted objects can only be restored \
+        from a database backup (or for Qorus metadata by reloading the definitions from the filesystem)
+    |\c --full-release|\c -F|Error if the release referes to external objects
+    |\c --force|\c -f|Force schema verification/downgrade with user schemas
+    |\c --help|\c -h|Shows option help text
+    |\c --index-ts=ARG||Sets the index tablespace name for the given datasource, ARG syntax: \
+        <i>datasource_name=tablespace_name</i>
+    |\c --list=ARG|\c -L|Lists objects in the database, ARG=<tt>workflows, services, jobs, classes, constants, \
+        functions, queues, events, groups</tt> @note Only enough characters of the argument need to be given to \
+        uniquely identify the object type to list. @note If -v is also given, then the last modified date is also \
+        displayed for each object
+    |\c --no-error-update|\c -E|Do not update workflow error definitions; only create new global error definitions
+    |\c --override|\c -O|Override manually updated entries (job schedule, workflow and service autostart, connection \
+        definitions)
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --quiet|\c -q|Suppress all output except error messages
+    |\c --refresh=ARG|\c -r|Refreshes objects loaded using the network API, ARG is \c w (workflows), \
+        \c s (services), or \c j (jobs) [deprecated by \c --reload]
+    |\c --reload|\c -R|Reloads interfaces in the server
+    |\c --schema=ARG||Run SQL file given as argument against the omq datasource (only use with system patches)
+    |\c --show-defines|\c -d|Show defines and exit
+    |\c --show-release=ARG|\c -s|list the specified qorus release content (the argument contains the release name)
+    |\c --show-url|\c -W|Displays the default Qorus system URL
+    |\c --sign-schema||Performs no action; schema signing is no longer necessary or supported
+    |\c --token=ARG|\c -t|Use the given token with HTTP requests to the Qorus server
+    |\c --use-schedule|\c -S|Override manually set job schedules by the schedules from the loaded files (equivalent \
+        to \c qorus-client option \c override-job-params)
+    |\c --user-schema=ARG||Run SQL file given as argument against the \c omquser datasource
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+    |\c --validate|\c -l|Validate all workflows, services, and jobs affected by updated or inserted objects; without \
+        this option only workflows, services, and jobs that are directly loaded are validated
+    |\c --verbose|\c -v|Sets verbosity level
+
+    @note Workflows, services, and jobs are disabled before deleting them as it would cause system instability if a
+    running interface were deleted from the database while active in Qorus
+
+    @subsection loaderclientoptions Client Options Used by oload
+
+    The following @ref qorusclientoptionoverview "client options" affect the functionality of oload:
+    - @ref applications
+    - @ref client-url (can be overridden with \c -u)
+    - @ref data-tablespace (can be overridden with \c --data-ts)
+    - @ref index-tablespace (can be overridden with \c --index-ts)
+    - @ref missing-tag-warning
+    - @ref override-job-params
+    - @ref proxy-url (can be overridden with \c -p)
+    - @ref remote
+    - @ref warn-deprecated-api
+
+    @see @ref qorusclientoptionoverview
+
+    <hr>
+    @section oprop oprop: System Property Tool
+
+    @par Usage
+    \c oprop <i>[options] [[get|set] [domain [key [value]]]]</i>
+
+    This script provides easy API-based access to Qorus @ref sysprops "system properties".
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    @par Examples
+    To display the value of system properties:
+    @verbatim
+unixprompt% oprop get [domain [key]]
+    @endverbatim
+
+    If only a domain value is supplied, then all properties in the given domain are returned.  If a domain and a key
+    value are supplied, then the value of that key in the given domain is returned.  If no parameters are suppled,
+    then all @ref sysprops "system properties" in all domains are returned.
+
+    To set the value of a system property:
+    @verbatim
+unixprompt% oprop set domain key [value]
+    @endverbatim
+
+    If no value is supplied, then the value and the key given are deleted.  When the last key of a domain is deleted,
+    the domain entry is removed as well.
+
+    @note Values are parsed from the string given on the command line with @ref Util::parse_to_qore_value()
+
+    <b>Options Supported by oprop</b>
+    |!Long Option|!Short|!Description
+    |\c --help|\c -h|Prints command help text
+    |\c --literal|\c -l|Show literal responses, giving the option 2 times shows HTTP headers
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --push=ARG|\c -p|read properties from the given file and publish them to the server
+    |\c --reformat|\c -R|reformat data with -l+ for better readability
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --retrieve=ARG|\c -r|retrieve and save current properties to the given file
+    |\c --show-url|\c -W|Shows the default system URL
+    |\c --timeout=ARG|\c -t|Set the HTTP timeout in seconds (also the connect timeout)
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+    |\c --verbose|\c -v|be more verbose
+    |\c --xml|\c -x|use XML instead of YAML (YAML is the default)
+
+    <hr>
+    @section ostart ostart: Start Workflow Execution Instances
+
+    @par Usage
+    \c ostart <i>[options] name [version] [mode] [option=value]</i>
+
+    This program allows the user to easily start execution instances of a workflow and optionally set options on the
+    instance.  If the \em version argument is not given on the command-line, the latest version of the workflow will
+    be assumed.  If the \em mode value is not given on the command-line, then the mode is assumed to be OMQ::WM_Normal.
+
+    @note Best practice in Qorus is to set the @ref wf_autostart "autostart" value of workflows to a positive number,
+    which allows Qorus to automatically start and stop workflows when the system is running and all their dependencies
+    are satisfied.  In this case the @ref ostart "ostart" and @ref ostop "ostop" programs are normally not used.
+
+    For example, to start an execution instance of the latest version of workflow \c CREATE-ACCOUNT:
+    @verbatim unixprompt% ostart CREATE-ACCOUNT @endverbatim
+
+    @note This method provides a user-friendly interface to the Qorus API method:
+    - omq.system.start-workflow()
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>Options Supported by ostart</b>
+    |!Long Option|!Short|!Description
+    |\c --file=ARG|\c -f|Reads in an XML file created by @ref ostatus "ostatus –r" and starts all workflows with the \
+        options given in the file.
+    |\c --help|\c -h|Prints command help text
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|Shows the default URL
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+
+    <hr>
+    @section ostatus ostatus: Show System, Workflow, and Service Status
+
+    @par Usage
+    \c ostatus <i>[options]</i>
+
+    This program is capable of displaying system, workflow, and service status.  Detailed information on workflows,
+    services, and jobs can be retrieved by using the appropriate command-line arguments, however, by default only a
+    summary line is shown.
+
+    For example, to display system information and current system option status:
+    @verbatim unixprompt% ostatus -oS @endverbatim
+
+    For information about the state of workflows and orders in the database, use the @ref oview "oview" command; use
+    the @ref ojview "ojview" command for job information.
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>Options Supported by ostatus</b>
+    |!Long Option|!Short|!Description
+    |\c --callstack[=ARG]|\c -C|Shows a filtered execution call stack of every active thread in the Qorus server; use \
+        \c -CC to show an unfiltered list (to display also waiting threads)
+    |\c --help|\c -h|Prints command help text
+    |\c --jobs|\c -j|Display active job information (use -v for more information)
+    |\c --methods|\c -m|Display method information when displaying service info (use -v or -vv for more information)
+    |\c --options|\c -o|Show the values of current system options
+    |\c --prop=ARG|\c -p|Retrieves all @ref sysprops "system properties" and saves to an XML file with the given name.
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --restore-autostart=ARG|\c -E|Restores autostart status from a YAML-encoded file created with \c -A; names, \
+        versions, and workflowids must match for updates to be made; only differences are updated in the system
+    |\c --retrieve=ARG|\c -r|Retrieves the current running workflow list and all options and saves to an XML file \
+        for use with ostart
+    |\c --save-autostart=ARG|\c -A|Saves the autostart status to a YAML-encoded file for later restoration with \c -E
+    |\c --services|\c -s|Display service information (use –v, -vv, or -m for more information)
+    |\c --show-url|\c -W|Shows the default URL
+    |\c --system|\c -S|Show additional system information
+    |\c --timeout=ARG|\c -t|Set the HTTP timeout in seconds (also the connect timeout)
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+    |\c --verbose|\c -v|Show more information (more –v’s = more info)
+    |\c --workflows|\c -w|Display running workflow information (use –v or -vv for more information)
+
+    @note It's recommended to use @ref qctl "qctl" to view thread stacks, as @ref qctl "qctl" can display thread
+    stacks from any Qorus process, while @ref ostatus "ostatus" can only show thread stacks from the
+    @ref qorus-core "qorus-core" process.
+
+    <hr>
+    @section ostop ostop: Stop Workflow Instances
+
+    @par Usage
+    \c ostop <i>[options] id|name [version]</i>
+
+    This program allows the user to easily stop running execution instances of a workflow by either giving the
+    workflow execution instance id or the name and an optional version.
+
+    @note Best practice in Qorus is to set the @ref wf_autostart "autostart" value of workflows to a positive number,
+    which allows Qorus to automatically start and stop workflows when the system is running and all their dependencies
+    are satisfied.  In this case the @ref ostart "ostart" and @ref ostop "ostop" programs are normally not used.
+
+    For example, to stop all execution instances of workflow \c CREATE-ACCOUNT:
+
+    @code unixprompt% ostop CREATE-ACCOUNT @endcode
+
+    @note This method provides a user-friendly interface to the following Qorus API methods:
+    - omq.system.stop-workflow()
+    - omq.system.stop-workflow-instance()
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \
+    \c $OMQ_DIR or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located
+    in the default location.
+
+    <b>Options Supported by ostop</b>
+    |!Long Option|!Short|!Description
+    |\c --all|\c -a|Stop all running workflows
+    |\c --help|\c -h|Prints command help text
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|Shows the default URL
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+
+    <hr>
+    @section oview oview: Show Workflow Instance, Order Status and Overviews
+
+    @par Usage
+    \c oview <i>[options]</i>
+
+    This program displays information about the status of workflow order data instances in the database.  Without
+    options, an overview is given of all workflow order data instances in the last 24 hours that do not have a
+    @ref OMQ::StatComplete "COMPLETE" status.
+
+    Depending on the options given on the command-line, detailed information can be retrieved and output for the
+    objects desired.
+
+    Workflow errors can be automatically queried as well, and workflow orders can be automatically retried based on
+    the search results with \c -R.
+
+    For example, to see an overview of all workflow data with no time limitations:
+    @verbatim unixprompt% oview –ca @endverbatim
+
+    To see the detailed status of workflow order data instance ID 419649, with step and segment details:
+    @verbatim unixprompt% oview –ssg w:419649 @endverbatim
+
+    @note Depending on the options given, this command shows information retrieved from the Qorus by calling various
+    methods of the @link ##info system.info @endlink service.
+
+    For more information about this service, please see the @link ##info system.info @endlink service.
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>Data Options Supported by oview</b>
+    |!Option|!Short|!Description
+    |\em name|n/a|Shows an overview of the workflow name given
+    |\em number|n/a|Shows an overview of the workflow id given
+    |<b>w:</b><i>id</i>|n/a|Shows information about the workflow order data instance given \
+        (\em id = workflow order data instance id)
+    |<b>e:</b><i>id</i>|n/a|Shows information about the order given (\em id = external order data instance id)
+    |<b>o:</b><i>id</i>|n/a|Shows order data information about the workflow order data instance ID given \
+        (\em id = workflow order data instance id)
+    |<b>k:</b><i>arg</i>|n/a|Workflow order data instance by key, arg=<i>name:version:key:value</i>
+    |<b>E:</b><i>code</i>|n/a|Performs a search for workflow errors with the given error code for error searches
+    |\c --date=ARG|\c -D|Show information from the date and time given (format <tt>YYYY[MM[DD[HHmmSS]]]</tt>)
+    |\c --hour|\c -H|Show information from the last 60 minutes
+    |\c --day|\c -d|Show information form the last 24 hours (default)
+    |\c --week|\c -w|Show information from the last 7 days
+    |\c --month|\c -m|Show information from the last month
+    |\c --year|\c -y|Show information from the last year
+    |\c --all|\c -a|Show all information
+    |\c --complete|\c -c|Include workflow order data instances with OMQ::StatComplete status in output
+    |\c --nosqlcache|\c -F|do not use SQL cache (exact values, slow with large databases
+
+    <b>Code Options Supported by oview</b>
+    |!Option|!Description
+    |<b>class:</b><i>name[:version]</i>|Displays the given class code object in source file format
+    |<b>const:</b><i>name[:version]</i>|Displays the given constant code object in source file format
+    |<b>func:</b><i>name[:version]</i>|Displays the given function code object in source file format
+    |<b>map:</b><i>name[:version]</i>|Displays the given @ref mappers "mapper" in source file format
+    |<b>meth:</b><i>service[:version]:name</i>|Displays the given service method in source file format
+    |<b>svc:</b><i>name[:version]</i>|Displays the given service and all methods in service source file format
+    |<b>vmap:</b><i>name</i>|Displays the given @ref value-maps "value map" in source file format
+    |<b>job:</b><i>name</i>|Displays the given job in source file format
+    |<b>conn:</b><i>name</i>|Displays the given @ref userconn "user connection" in source file format
+
+    <b>Output Options Supported by oview</b>
+    |!Option|!Short|!Description
+    |\c --status=ARG|\c -S|Show only workflow order data instances with status=ARG: \n\
+        - \c A = @ref OMQ::StatAsyncWaiting "ASYNC-WAITING" \n\
+        - \c B = @ref OMQ::StatBlocked "BLOCKED" \n\
+        - \c C = @ref OMQ::StatComplete "COMPLETE" \n\
+        - \c E = @ref OMQ::StatError "ERROR" \n\
+        - \c I = @ref OMQ::StatInProgress "IN-PROGRESS" \n\
+        - \c N = @ref OMQ::StatIncomplete "INCOMPLETE" \n\
+        - \c R = @ref OMQ::StatRetry "RETRY" \n\
+        - \c S = @ref OMQ::StatScheduled "SCHEDULED" \n\
+        - \c V = @ref OMQ::StatEventWaiting "EVENT-WAITING" \n\
+        - \c W = @ref OMQ::StatWaiting "WAITING" \n\
+        - \c X = @ref OMQ::StatCanceled "CANCELED" \n\
+        - \c Y = @ref OMQ::StatReady "READY"
+    |\c --errors|\c -e|Show detailed error information for workflow order data instances displayed (<tt>-v</tt> for \
+        even more information)
+    |\c --full|\c -f|Show a full list of individual statuses instead of summarized statuses (default is summarized)
+    |\c --limit=ARG|\c -L|limit number of workflows retrieved and displayed
+    |\c --segment|\c -g|Show segment information
+    |\c --steps|\c -s|Show detailed information about steps executed
+    |\c --order|\c -o|Show detailed order information
+
+    <b>Error Search and Retry Options Supported by oview</b>
+    |!Option|!Short|!Description
+    |\c --search-errors|\c -E|apply all other command-line arguments to error searching only
+    |\c --show-all-errors|\c -A|show all errors including warning and info records
+    |\c --business|\c -b|show only business errors
+    |\c --technical|\c -t|show only technical errors
+    |\c --stepid=ARG|n/a|show only errors from the given stepid
+    |\c --stepname=ARG|n/a|show only errors from the given step name
+    |\c --retry|\c -R|retry all workflow orders found in error search
+
+    <b>Miscellaneous Options Supported by oview</b>
+    |!Option|!Short|!Description
+    |\c --help|\c -h|Prints command help text
+    |\c --literal|\c -l|Show literal request and response messages (2x or with -v = show headers)
+    |\c --message|\c -r|Show reformatted request and response messages
+    |\c --mono|\c -M|Do not use ANSI colors in output
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -U|Show default URL
+    |\c --url=ARG|\c -u|Sets the URL; see @ref client_unixsocketurls
+    |\c --verbose|\c -v|Show more information (more –v’s = more info)
+
+    <hr>
+    @section qbugreport qbugreport: Qorus Bug Report Process
+
+    @par Usage
+    \c qbugreport
+
+    \c qbugreport creates a bug report file that can be used to analyze problems with Qorus.  The Community Edition of
+    Qorus is not eligible for support contracts, however, so only send a bug report file to Qore Technologies on
+    special request from Qore Technologies' engineering team.
+
+    Example output:
+    @verbatim
+prompt$ qbugreport
+gathering information for bug report file: "/tmp/qorus-instance-name-bugreport-20230117T185441.tar.bz2"
+getting processing info for 18 processes: done
+getting thread stacks for 18 processes: done
+staged 87 log files
+getting debug info "sync-cache" from qorus-core: done
+getting debug info "sync-summary" from qorus-core: done
+getting debug info "order-stats" from qorus-core: done
+getting debug info "order-stats-summary" from qorus-core: done
+getting debug info "services" from qorus-core: done
+getting debug info "interface-serialization" from qorus-core: done
+getting debug info "workflow-control" from qorus-core: done
+getting debug info "jobs" from qorus-core: done
+getting debug info "sm-data-cache" from qorus-core: done
+getting debug info "sm-data-cache-summary" from qorus-core: done
+getting debug info "sm-segment-cache" from qorus-core: done
+getting debug info "sm-segment-summary" from qorus-core: done
+getting debug info "sm-local" from qorus-core: done
+getting debug info "development" from qorus-core: done
+creating tar file: "/tmp/qorus-instance-name-bugreport-20230117T185441.tar.bz2": done (56230666 bytes)
+please send "/tmp/qorus-instance-name-bugreport-20230117T185441.tar.bz2" to bugs@qoretechnologies.com
+    @endverbatim
+
+    To run in Docker:
+    @verbatim docker exec qorus-container-name bash -l -c qbugreport @endverbatim
+
+    To run in Kubernetes:
+    @verbatim kubectl exec deploy/qorus-core -- bash -l -c qbugreport @endverbatim
+
+    As indicated in the output of the program, the final compressed tar file (which in Docker or Kubernetes will be
+    created in the container indicated in the \c /tmp directory) should be sent to \c bugs@qoretechnologies.com
+
+    @note Only the Enterprise Edition of Qorus is eligible for support contracts; the Enterprise Edition of Qorus can
+    only be run in a production environment with a valid license; contact sales@qoretechnologies.com to upgrade to the
+    Enterprise Edition if you need enterprise features or professional support for your Qorus instance.
+
+    <hr>
+    @section qctl qctl: Qorus Cluster Control Process
+
+    @par Usage
+    \c qctl \em [options] &lt;cmd&gt; [args...]
+
+    \c qctl is the primary command-line program for Qorus cluster control and can be used to
+    start, stop, restart, and get information about the cluster, among other things.
+
+    @par Examples
+    To start or recover the cluster, type:
+    @verbatim qctl start @endverbatim \n
+    To stop the cluster, type:
+    @verbatim qctl stop @endverbatim \n
+    To restart the entire cluster, type:
+    @verbatim qctl restart @endverbatim \n
+    To list cluster processes, type:
+    @verbatim qctl ps <proc> @endverbatim \n
+    To get information about a running cluster process, type:
+    @verbatim qctl info <proc> @endverbatim \n
+    To get thread stacks for a running cluster process, type:
+    @verbatim qctl threads <proc> @endverbatim \n
+    To kill a running cluster process, type:
+    @verbatim qctl kill <proc> @endverbatim \n
+    To get command-line help, type:
+    @verbatim qctl help @endverbatim
+
+    <hr>
+    @section qdsp qdsp: Cluster Datasource Pool Process
+
+    \c qdsp is a cluster server process and should only be started by @ref qorus "qorus" (which in turn should
+    normally be started by @ref qctl "qctl").
+
+    This process serves a remote database connection pool to other Qorus cluster client processes.
+
+    @subsection qdsp_mode qdsp Coordinated Mode
+
+    By default \c qdsp processes run in centralized or non-coordinated mode, where any DB action through a Qorus
+    datasource will be executed in the \c qdsp process and results are serialized and transmitted back to the client
+    process using Qorus's ZeroMQ-based internal cluster API.
+
+    This mode is slower than direct database access for heavy SQL I/O, but provides very efficient support for many
+    small queries with stable, long-running connections to the database server in case there is large overhead
+    establishing new database sessions.
+
+    When coordinated mode is enabled, for example by setting the @ref default-datasource-coordinated option to
+    \c true or by setting the Qorus datasource option \c "coord-mode" to \c true for the datasource, each process
+    requesting a connection from the datasource pool requests permission to open a local connection to the database
+    server from the \c qdsp process, and all SQL I/O is performed locally in the cluster process.
+
+    This mode is recommended for environments where many short-lived connections are acceptable or desired over a few
+    stable, long-running connections, such as with database servers that establish connections very quickly with low
+    overhead, or with databases that implement connection pooling on the server side (ex: Oracle Database Resident
+    Connection Pooling, for example).
+
+    @subsection qdsp_reset qdsp Datasource Resets
+
+    When a datasource is reset, the inforation about the any potential new datasource connection parameters is sent to
+    the \c qdsp process.
+
+    If the @ref qdsp_mode "coordinated mode" has changed, then regardless of the current mode of the \c qdsp process,
+    the \c qdsp process will immediately terminate (aborting any transactions currently in process if the old mode was
+    not coordinated) and will be restarted by @ref qorus "the master process".
+
+    Otherwise, the internal datasource connection parameters are updated, and if the \c qdsp process is not in
+    @ref qdsp_mode "coordinated mode", then a new @ref Qore::SQL::DatasourcePool "DatasourcePool" object is created
+    that will process any new SQL commands received.  Transactions still in progress with the old pool are allowed to
+    complete.  Because of this, in the worst case if all connections in the old pool are in transactions and the new
+    pool gets new transaction requests immediately for all available connections, up to \a n + \a m connections can be
+    used at one time, where \a n is the maximum number of connections in the old pool, and \a m is the maximum number
+    of connections in the new pool.
+
+    @subsection qdsp_termination Abnormal Termination of qdsp Processes
+
+    If the \c qdsp process terminates or is killed while Qorus is running, then @ref qorus "qorus" will restart it,
+    and all cluster processes with active connections will be notified that the server terminated abnormally.
+
+    If the \c qdsp process was in @ref qdsp_mode "coordnated mode", then there is no affect on cluster processes, but
+    the total number of connections used may exceed the maximum number of allowed connections while existing
+    transactions for connections authorized before the termination are executed.
+
+    If the \c qdsp process was in @ref qdsp_mode "non-coordinated mode", then the transaction state for any active
+    connections will have been lost, and cluster client programs are notified, and each thread blocked on an active
+    transaction will get a \c DATASOURCEPOOL-PROCESS-ERROR exception raised.
+
+    @subsection qdsp_client_termination Abnormal Termination of qdsp Clients
+
+    If the \c qdsp process was in @ref qdsp_mode "coordnated mode" when a cluster client process terminates during a
+    transaction, then the \c qdsp process rolls back any active transactions for the process and returns the
+    connection to the pool.
+
+    If the \c qdsp process was in @ref qdsp_mode "non-coordnated mode" when a cluster client process terminates
+    while holding a connection reservation slot, the connection is marked as open and immediately provided to any
+    waiting processes.
+
+    @note This process is not meant to be started by hand but rather only by @ref qorus "qorus"
+
+    <hr>
+    @section qevent qevent: Command-Line Event Monitor
+
+    @par Usage
+    \c qevent \em [options]
+
+    \c qevent listens for Qorus system events and outputs them to the terminal.  Press any key to stop listening and
+    exit the program.
+
+    <b>Event Filtering Options Supported by qevent</b>
+    |!Long Option|!Short|!Description
+    |\c --and|\c -A|use AND logic for event filtering and OR NOT logic for negative filtering (default +OR, -AND NOT)
+    |\c --class=arg|\c -c|show event class=arg (initial character match)
+    |\c --event=arg|\c -e|show event=arg (regex match)
+    |\c --severity=arg|\c -y|show events with severity ARG
+    |\c --user-severity=arg|\c -t|show events with user severity ARG
+    |\c --user-event=arg|\c -n|show user events with name ARG
+    |\c --not-class=arg|\c -C|include class ARG in negative filter
+    |\c --not-event=arg|\c -E|include event ARG in negative filter
+    |\c --not-severity=arg|\c -Y|include severity ARG in negative filter
+    |\c --not-user-severity=arg|\c -T|include user severity ARG in negative filter
+    |\c --not-user-event=arg|\c -N|include user event ARG in negative filter
+    |\c --raw|\c -R|show raw event info
+
+    <b>Reference Info Options Supported by qevent</b>
+    |!Long Option|!Short|!Description
+    |\c --list-classes|\c -l|list all class codes and exit
+    |\c --list-events|\c -x|list all event codes and exit
+    |\c --list-severity|\c -z|list all severity levels and exit
+
+    <b>Websocket Options</b>
+    |\c --list-logs|\c -L|list online websocket log sources
+    |\c --stream-log=ARG|\c -S|stream given log websocket source
+    |\c --jstream=ARG|\c -J|stream given JSON websocket source
+
+    <b>Miscellaneous Options Supported by qevent</b>
+    |!Long Option|!Short|!Description
+    |\c --help|\c -h|Prints command help text
+    |\c --history=ARG|\c -H|Sets the number of old messages to display on start
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|Shows the default URL
+    |\c --url=ARG|\c -u|Set URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://server1:8501"; see @ref client_unixsocketurls
+    |\c --verbose|\c -v|sets verbosity level (more -v's = more info)
+
+    <hr>
+    @section qjob qjob: Qorus Server Cluster Process
+
+    \c qjob is a cluster server process and should only be started by @ref qorus "qorus" (which in turn should
+    normally be started by @ref qctl "qctl").
+
+    This process is spawned once for each clustered job interface that runs in its own process space.
+
+    @subsection qjob_termination Abnormal Termination of qjob Processes
+
+    If the \c qjob process terminates or is killed while Qorus is running, then @ref qorus "qorus" will restart it.
+    After restarting, the \c qjob process will recover its application session data in the system schema and restart
+    normal job processing by waiting until the next trigger time.
+
+    @note
+    - \c qjob processes can be killed with <tt>qctl kill <qorus-process-id></tt> or with the REST API
+      (@ref rest_api_POST_latest_jobs__id_or_name__kill or @ref rest_api_POST_latest_system_processes__id__kill) or by killing
+      the operating system process, however interace processes should normally be stopped by disabling the interface;
+      killing an interface process should only be done as a last resort.
+    - This process is not meant to be started by hand but rather only by @ref qorus "qorus"
+
+    <hr>
+    @section qorus qorus: Qorus Cluster Master Process
+
+    @par Usage
+    \c qorus <i>[command-line-options] [option=value]</i>
+
+    This is the Qorus Integration Engine&reg; cluster master or "supervisor" process.  It starts, stops, and
+    restarts all other cluster processes on the node where it is running.
+
+    For backwards compatibility, this program can also be used to start or recover the Qorus cluster as with
+    previous versions of Qorus, however @ref qctl "qctl" is recommended for starting (and stopping) the Qorus
+    cluster.
+
+    By default this program will launch in the background, however this can be changed by setting the
+    @ref daemon-mode parameter to @ref False.  @see @ref systemoptions for more details on the options supported.
+    Qorus options are read from the @ref options "options file", however any options given on the command-line
+    will override values in the @ref options "options file".
+
+    @par Example
+    @verbatim
+prompt$ qorus daemon-mode=0 verbose=6
+    @endverbatim
+
+    @see @ref systemref for details on how the Qorus cluster operates.
+
+    <b>Command-line Options Supported by qorus</b>
+    |!Long Option|!Short|!Description
+    |\c --qorus-dir|\c -d|Sets the application root directory (overrides $OMQ_DIR)
+    |\c --option-list|\c -l|Shows the list of valid system options and exits
+    |\c --help|\c -h|Shows option help text
+    |\c --verbose|\c -v|Sets verbosity level
+    |\c --version|\c -V|Shows version information and exits
+
+    @subsection qorus_termination Abnormal Termination of the qorus Process
+
+    If the \c qorus process terminates or is killed, then it must be restarted for Qorus operation to continue,
+    ottherwise requests to start and stop new interfaces will deadlock due to the missing \c qorus master process.
+
+    It's recommended to configure the Unix init process to ensure that the \c qorus master process is always running,
+    for example by using a \c systemd service script for Unix systems that use \c systemd for init.
+
+    <hr>
+    @section qorus-core qorus-core: Qorus Core Cluster Process
+
+    \c qorus-core is a cluster server process and should only be started by @ref qorus "qorus" (which in turn
+    should normally be started by @ref qctl "qctl").
+
+    This process runs all global services (such as the global HTTP/S listeners) as well as running directly all
+    non-clustered interfaces within its own process space.
+
+    @subsection qorus_core_termination Abnormal Termination of the qorus-core Process
+
+    If the \c qorus-core process terminates or is killed while Qorus is running, then @ref qorus "qorus" will restart
+    it, and all cluster processes with active connections will be notified that the server terminated abnormally.
+
+    The application session will be recovered, and also a recovery for all still-running interface (i.e.
+    @ref qwf "qwf", @ref qsvc "qsvc", and @ref qjob "qjob") and @ref qdsp "qdsp" processes is performed.
+
+    @note This process is not meant to be started by hand but rather only by @ref qorus "qorus"
+
+    <hr>
+    @section qrest qrest: Command-Line Interface to the Qorus System REST API
+
+    @par Usage
+    \c qrest <i>[options] [get|put|delete|post]</i> \c path<i>[?action=...;arg1=...]</i>
+
+    This script provides a command-line interface to the Qorus @ref restapi "REST API".  It sends REST requests to the
+    server according to the command-line options and displays the response.  Responses are deserialized into a %Qore
+    data structure, and the resulting data is then displayed on the screen.  If the HTTP verb is omitted, then \c GET
+    is assumed.
+
+    The URI path component should not contain the initial \c /api component; \c qrest prepends \c /api/latest to every
+    request; see the following example which calls @ref rest_api_GET_latest_workflows :
+    @code{.py}
+# list all workflows
+prompt$ qrest workflows?short=1
+    @endcode
+
+    By default, \c qrest uses YAML serialization for message bodies to communicate with the Qorus server.
+
+    Note that message body arguments are parsed with @ref Util::parse_to_qore_value(), so that complex values can be
+    provided as arguments.
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires the \c $OMQ_DIR
+    environment variable to be set to find the Qorus client module.
+
+    @note Any @ref restapi "REST API" method supported by Qorus can be called from the command-line by using this
+    program (including methods which act as gateways to system and user services).  However, several other programs
+    have been developed to provide a more user-friendly interface to some common functions.
+
+    <b>Options Supported by qrest</b>
+    |!Long Option|!Short|!Description
+    |\c --help|\c -h|Prints command help text
+    |\c --literal|\c -l|Show literal responses, giving the option 2 times shows HTTP headers
+    |\c --path=ARG|\c -P|use alternate leading REST path in URL
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --reformat|\c -R|reformat data with -l+ for better readability
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|show default Qorus system @ref restapi "REST API" URL (with path prefix) and exit
+    |\c --timeout=ARG|\c -t|Set the HTTP timeout in seconds (also the connect timeout)
+
+    @see @ref restapi
+
+    <hr>
+    @section qsvc qsvc: Qorus Service Cluster Process
+
+    \c qsvc is a cluster server process and should only be started by @ref qorus "qorus" (which in turn
+    should normally be started by @ref qctl "qctl").
+
+    This process is spawned once for each clustered service interface that runs in its own process space.
+
+    @subsection qsvc_termination Abnormal Termination of qsvc Processes
+
+    If the \c qsvc process terminates or is killed while Qorus is running, then @ref qorus "qorus" will restart it if
+    the service's @ref service_autostart "autostart" attribute is set to \c true.
+
+    @ref service_stateless "Stateless services" can run in an unlimited number of processes / containers and support
+    a microservice architecture with Qorus.
+
+    @note
+    - \c qsvc processes can be killed with <tt>qctl kill &lt;qorus-process-id&gt;</tt> or with the REST API
+      (@ref rest_api_POST_latest_services__id_or_name__kill or @ref rest_api_POST_latest_system_processes__id__kill) or by
+      killing the operating system process, however interace processes should normally be stopped by disabling the
+      interface; killing an interface process should only be done as a last resort.
+    - This process is not meant to be started by hand but rather only by @ref qorus "qorus"
+
+    <hr>
+    @section qwf qwf: Qorus Workflow Cluster Process
+
+    \c qwf is a cluster server process and should only be started by @ref qorus "qorus" (which in turn
+    should normally be started by @ref qctl "qctl").
+
+    This process is spawned once for each clustered workflow interface that runs in its own process space.
+
+    @subsection qwf_termination Abnormal Termination of qwf Processes
+
+    If the \c qwf process terminates or is killed while Qorus is running, then @ref qorus "qorus" will restart it.
+    After restarting, the \c qwf process will recover its application session data in the system schema.  If the
+    @ref wf_autostart "autostart" value for the workflow is positive, then workflow processing will restart as well.
+    If not, then the restarted \c qwf process will terminate after recovering its application session.
+
+    @note
+    - \c qwf processes can be killed with <tt>qctl kill &lt;qorus-process-id&gt;</tt> or with the REST API
+      (@ref rest_api_POST_latest_workflows__id_or_name__kill or @ref rest_api_POST_latest_system_processes__id__kill) or by
+      killing the operating system process, however interace processes should normally be stopped by disabling the
+      interface; killing an interface process should only be done as a last resort.
+    - This process is not meant to be started by hand but rather only by @ref qorus "qorus"
+
+    <hr>
+    @section schema-tool schema-tool: Schema Manipulation Helper Tool
+
+    @par Usage
+    \c schema-tool <i>[options]</i>
+
+    This program assists with schema manipulation, particularly with tasks regarding installing or upgrading the
+    system schema.  With no command-line options, the program returns the status of the system schema (according to
+    the configuration found in the Qorus installation pointed to by the \c $OMQ_DIR environment variable).
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    \c schema-tool supports options for some common database maintenance tasks, as well as takes responsibility for
+    loading all SQL scripts into Qorus datasources.  See the options below for more information.
+
+    <b>Miscellaneous Options Supported by schema-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --code|\c -c|Display a numeric code instead of the schema version string
+    |\c --type|\c -t|Display only the database driver for the system schema
+    |\c --verbose|\c -v|Show more information when displaying the schema version; additionally displays the archive \
+        schema status (if any)
+    |<tt>--arch[=ARC]</tt>|\c -a|Perform the operation on the archive schema; the argument is required with \c -C
+    |\c --datasource=ARG|\c -D|Overrides datasource parameters, ARG: <i>dsname=spec</i>, \
+        <i>spec=driver:user/pass@@dbname[%hostname][:port]</i>
+    |\c --current||Shows the current system (target) schema version
+    |\c --dry-run|\c -d|do not send any SQL to the database, just prints out commands; affects only 'write' statements
+    |\c --migrate|\c -M|migrate old users in options file to RBAC DB
+    |\c --first-time-install|\c -m|run first time install setup to setup DB archiving and log rotation
+    |\c --help|\c -h|Display this help text
+
+    <b>Schema Maintenance Options Supported by schema-tool</b>
+    |!Long Option|!Short|!Description
+    |<tt>--analyze[=ARG]</tt>|\c -A|Analyze Oracle index health in the given datasource (system schema if no \
+        datasource argument is given); verbose info with \c -v, see also \c --max-height and \c --max-leaf-pct
+    |<tt>--block-buffer[=ARG]</tt>|\c -b|Show the Oracle block buffer hit ratio for the given datasource (system \
+        schema if no datasource argument is given)
+    |<tt>--force-rebuild[=ARG]</tt>|\c -F|Force rebuilding all indexes in the given datasource (system schema if \
+        no datasource argument is given)
+    |\c --ignore-errors|\c -i|ignore errors when loading schema files
+    |\c --max-height=ARG||Sets the maximum index height threshold for rebuilding Oracle indexes
+    |\c --max-leaf-pct=ARG||Sets the threshold for the maximum percentage of deleted leaf nodes for rebuilding \
+        Oracle indexes
+    |\c --parallel|\c -P|use "parallel" when rebuilding indexes on Oracle
+    |<tt>--rebuild[=ARG]</tt>|\c -R|Analyze Oracle index health in the given datasource (system schema if no \
+        datasource argument is given) and rebuild indexes that exceed the height and deleted leaf node parameters; \
+        verbose info with \c -v, see also \c --max-height and \c --max-leaf-pct to set parameters
+    |<tt>--schema-stats[=ARG]</tt>|\c -S|Analyze statistics for all tables in the given datasource (system schema if \
+        no datasource argument is given)
+    |\c --snapshot|\c -s|refresh the workflow instances/statuses snapshot
+    |\c --table-stats=ARG|\c -T|Analyze statistics the given table, a datasource may be given if \
+        ARG=<i>datasource_name=table_name</i>, otherwise the system schema is assumed if no datasource name is \
+        supplied in the argument
+
+    <b>Schema Modification Options Supported by schema-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --align-schema|\c -V|Check the Qorus installation and align the system datasource with the system schema \
+        description
+    |\c --create|\c -C|<em>[DEPRECATED]</em> Same as \c --align
+    |\c --upgrade|\c -U|<em>[DEPRECATED]</em> Same as \c --align
+    |\c --data-ts=ARG||Sets the data tablespace name for the given datasource, ARG syntax: \
+        <i>datasource_name=tablespace_name</i>
+    |<tt>--drop-schema=[ARG]</tt>||drop system schema; optional ARG=user schema module for user schema
+    |\c --force|\c -f|force schema verification and alignment (also allows schema downgrades)
+    |\c --ignore-errors|\c -i|ignore errors when loading schema files
+    |\c --index-ts=ARG||Sets the index tablespace name for the given datasource, ARG syntax: \
+        <i>datasource_name=tablespace_name</i>
+    |\c --new-release||run release load file for new releases
+    |\c --run-schema=ARG|\c -r|executes the given schema file in the given datasource, with an optional starting \
+        line number for use when recovering after an error: ARG=<i>dsname=filename[:starting-line]</i>
+
+    <b>Session Options Supported by schema-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --list-active|\c -L|list ACTIVE sessions and API reachability status
+    |<tt>--list-sessions[=ARG]</tt>|\c -l|list last ARG sessions (default = 10)
+    |\c --session=ARG|\c -N|show info for given session ID
+    |<tt>--recover[=ARG]</tt>||recover application session, ARG=instance name
+
+    <hr>
+    @section swagger2service swagger2service: Generate Qorus REST Server Service from a Swagger Schema
+
+    @par Example
+    @verbatim
+swagger2service Petstore.swagger.yaml
+    @endverbatim
+
+    @par Usage
+    \c swagger2service <i>[options] url_to_swagger_schema</i>
+
+    This program generates template source code for a server-side REST service for Qorus from a
+    <a href="https://swagger.io/">Swagger</a> schema.  The service generates two files: a YAML mtadata file and the
+    service source file.  The Swagger schema is also referenced as a service resource.
+
+    <b>User Options Supported by swagger2service</b>
+    |!Long Option|!Short|!Description
+    |\c --building-block|\c -b|Use the \c BBM_RestServiceBase class as the base class for the service
+    |\c --file=ARG|\c -f|Specifies the output file name, if not given, then the output files are written to \
+        a name derived from the swagger schema
+    |\c --list|\c -L|Lists Swagger schema information such as the target URL, available URI paths and supported HTTP \
+        methods; no source output is generated with this option
+    |\c --name=ARG|\c -n|Overrides the output service name; if this option is not supplied, then the service name is \
+        derived from the Swagger schema info
+    |\c --version=ARG|\c -v|Overrides the output service version; if this option is not supplied, then the service \
+        version is derived from the Swagger schema info
+    |\c --help|\c -h|Display this help text
+
+    <hr>
+    @section user-tool user-tool: Offline Role-Based Access Control Tool
+
+    @par Usage
+    \c user-tool <i>[options]</i>
+
+    This program manipulates data in Qorus’ RBAC tables.  Users, permissions, role, and access groups can be created,
+    modified, and deleted and information about all RBAC data can be queried.
+
+    This program accesses the Qorus database directly, therefore for all options except \c --synchronize, it is not
+    subject to Qorus RBAC control itself and does not require the Qorus server to be running.  Unless the
+    \c --synchronize option is used, only the database server must be available.
+
+    @note To synchronize changes with a running instance of Qorus, use the \c user-tool \c –s option to call the
+    @ref rest_api_PUT_latest_system_reloadRbac REST API method after effecting updates.
+
+    Note that arguments below should not contain any spaces unless they are quoted; for example:
+    @verbatim unixprompt% user-tool –duser1:name="John Smith" @endverbatim
+
+    If there are no spaces in an argument, then quotes are optional.
+
+    Be aware that this program is delivered as a %Qore-language script, and, as such, requires either the \c $OMQ_DIR
+    or \c $QORE_MODULE_DIR environment variables to be set to find the Qorus client module, if not located in the
+    default location.
+
+    <b>User Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --add-user|\c -A|Adds a new user; ARG=<i>username,password,role,"description"</i>
+    |\c --update-user|\c -d|Updates an existing user; ARG=<i>user:key=value</i>, valid keys are \c "pass", \
+        \c "name", and \c "roles" (note that \c "name" gives the user's descriptive name; currently usernames cannot \
+        be changed); roles can be relative, ex: +name,-name
+    |\c --add-user-role|\c -m|Adds one or more roles to an existing user, ARG=<i>user:role[,role...]</i>
+    |\c --del-user-role|\c -O|Removes one or more roles to an existing user, ARG=<i>user:role[,role...]</i>
+    |\c --user-info|\c -i|Displays user information; ARG=<i>user</i>
+    |\c --list-users|\c -l|Displays information about all users; two "l"s lists all roles associated with the users \
+        as well (i.e.: user-tool –ll)
+    |\c --users-with-role|\c -w|Display all users with the given role; ARG=<i>role</i>
+
+    <b>Permission Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --add-perm|\c -P|Adds a new user permission; ARG=<i>name:"description"</i>
+    |\c --update-perm|\c -E|Updates the description for an existing user permission; ARG=<i>name:"description"</i>; \
+        only user permissions may be updated
+    |\c --list-roles|\c -L|Lists all user and system permissions
+
+    <b>Role Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --add-role|\c -R|Adds a new role ARG=<i>role:"description":permission[,...][:group,...]</i>
+    |\c --update-role|\c -U|Updates an existing role; ARG=<i>role:key=value</i>, valid keys are \c "desc", \
+        \c "groups" for groups the role is a member of, \c "perms" for the list of permissions the role has; \
+        \c "groups" and \c "perms" can be relative; ex: +name,-name
+    |\c --add-role-perm|\c -F|Adds one or more permission to an existing role, \
+        ARG=<i>role:permission[,permission...]</i>
+    |\c --del-role-perm|\c -I|Removes one or more roles to an existing role, \
+        ARG=<i>role:permission[,permission...]</i>
+    |\c --role-info|\c -f|Displays information about the given role; ARG=<i>role</i>
+    |\c --list-roles|\c -r|Lists all available roles, two "r"s lists all permissions and groups associated with the \
+        roles as well (i.e.: <tt>user-tool -rr</tt>)
+    |\c --role-with-perm|\c -p|Display all roles with the given permission; ARG=<i>permission</i>
+    |\c --add-role-group=ARG|\c -G|adds one or more groups to a role; ARG=<i>role:group[,group,...]</i>
+    |\c --del-role-group=ARG|\c -o|removes one or more groups from a role; ARG=<i>role:group[,group,...]</i>
+
+    <b>Group Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --add-group=ARG|\c -g|adds a workflow/service group, arg format: <i>name:key1=value1,key2=value2,...</i>\n\
+        valid keys: \c "desc", \c "workflows", \c "services", and \c "enabled". \c "desc" is required, the \
+        \c "workflows" and \c "services" keys take comma-separated lists of strings as arguments; if \c "enabled" is \
+        not present, the default is \c true
+    |\c --update-group=ARG|\c -t|updates a worklfow/service group, arg format: \
+        <i>name:key1=value1,key2=value2,...</i>\n\
+        valid keys: \c "desc", \c "workflows", \c "services", \c "jobs", and \c "enabled". \c "desc" is required, \
+        the \c "workflows", \c "services", and \c "jobs" keys take comma-separated lists of strings as arguments and \
+        can be relative; ex: +name,-name
+    |\c --group-info=ARG|\c -n|show information on the given group
+    |\c --list-groups|\c -S|lists all groups (two S's gives more info)
+    |\c --add-group-wf=ARG|\c -b|adds a workflow to a workflow/service group; \
+        arg format: <i>name=wfname:version,[wfname:version,...]</i>
+    |\c --del-group-wf=ARG|\c -z|deletes a workflow from a workflow/service group; \
+        arg format: <i>name=wfname:version,[wfname:version,...]</i>
+    |\c --add-group-svc=ARG|\c -j|adds a service to a workflow/service group; \
+        arg format: <i>name=svcname:version,[svcname:version,...]</i>
+    |\c --del-group-svc=ARG|\c -x|deletes a service from a workflow/service group; \
+        arg format: <i>name=svcname:version,[svcname:version,...]</i>
+
+    <b>Deletion Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --delete|\c -X|Deletes an object from the RBAC database; ARG=<i>object:name</i>; valid objects are \
+        \c "user", \c "role", \c "perm", and \c "group".  @note Only user permissions may be deleted; system \
+        permissions may not be deleted.  See @ref RBACPermissions for a list of system permissions
+    |\c --cascade-delete|\c -c|When deleting a permission or group associated to one or more roles, using this \
+        option will delete the reference from all roles as well as deleting the permission or group
+
+    <b>Encryption Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --generate-keys|\c -K|generates encryption keys and system options for sensitive data processing and \
+        validates existing encryption options; does not modify existing keys
+
+    <b>Other Options Supported by user-tool</b>
+    |!Long Option|!Short|!Description
+    |\c --help|\c -h|Display this help text
+    |\c --datasource|\c -D|Override the "omq" datasource connection parameters; \
+        ex: <tt>-Domq=oracle:user/pass@@dbname</tt>
+    |\c --migrate|\c -M|Migrate all users from \c $OMQ_DIR/etc/options file \
+        (should only be used by the install script)
+    |\c --proxy-url=ARG|\c -p|Set the proxy URL: \c "http://host:port"; at least host or port must be given; \
+        ex: \c "http://proxy1:8080"; see @ref client_unixsocketurls
+    |\c --quiet|\c -q|Do not display any output unless there is an error
+    |\c --rbac-provider|\c -B|Sets the name of the external RBAC provider to use (ex: \c "QorusLdapAuth")
+    |\c --remote=ARG|\c -Q|use the given @ref remoteconn "remote Qorus connection" instead of the local instance
+    |\c --show-url|\c -W|Displays the default Qorus server URL
+    |\c --synchronize|\c -s|Synchronize RBAC database with Qorus server by calling system REST API method \
+        @ref rest_api_PUT_latest_system_reloadRbac @note that in order to successfully execute this method, the \
+        calling user must have the @ref OMQ::QR_USER_CONTROL "USER-CONTROL" role.
+    |\c --url=ARG|\c -u|Sets the Qorus server URL in case the synchronize option is used; \
+        see @ref client_unixsocketurls
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine&reg;"
+*/

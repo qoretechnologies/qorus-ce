@@ -1,0 +1,166 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - fsm
+  name:
+    type: string
+    max-length: 160
+  desc:
+    type: string
+    max-length: 4000
+  states:
+    type: hash # key is state id as string
+    element-type: state
+optional:
+  input-type:
+    type: hash
+  output-type:
+    type: hash
+  options:
+    type: options
+  groups:
+    type: list
+    element-type: string
+definitions:
+  state:
+    required:
+      # this is a unique ID for the state across all states, even in blocks
+      id:
+        type: string
+      initial:
+        type: bool
+        default: false
+      position:
+        type: position
+        default:
+          x: 0.0
+          "y": 0.0
+      type:
+        type: string
+        allowed-values:
+        - state
+        - fsm
+        - block
+        - if
+        default: state
+      name:
+        type: string
+        max-length: 160
+    optional:
+      # "action": not allowed if type == "fsm"
+      action:
+        type: action
+      execution_order:
+        type: integer
+      # only allowed if type == "block"
+      block-type:
+        type: string
+        allowed-values:
+        - for
+        - foreach
+        - while
+      # only allowed if type == "block"
+      block-config:
+        type: hash
+      # only allowed (also required) for "if" states
+      language:
+        type: string
+        allowed-values:
+        - qore
+        - python
+        default: qore
+      # only allowed (also required) for "if" states
+      condition:
+        type: string|connector
+        default: default
+      # only allowed if type == "block" and "fsm" is not present
+      states:
+        type: hash # key is state id as string
+        element-type: state
+      # only allowed if type == "block" and "states" is not present
+      fsm:
+        type: string
+      transitions:
+        type: list
+        element-type: transition
+      injected:
+        type: bool
+      injectedData:
+        type: hash
+      # only allowed (also required) for "if" states
+      input-output-type:
+        type: hash
+      # "input-type": not allowed if type == "fsm"
+      input-type:
+        type: hash
+      # "output-type": not allowed if type == "fsm"
+      output-type:
+        type: hash
+      desc:
+        type: string
+        max-length: 4000
+      # config items for values only if type == "state" with a connector
+      config-items:
+        type: list
+        element-type: config-item
+  transition:
+    required:
+      state:
+        type: string
+      language:
+        type: string
+        allowed-values:
+        - qore
+        - python
+        default: qore
+    optional:
+      condition:
+        type: string|connector
+        default: default
+      # cannot be set for if-state transitions
+      errors:
+        type: list
+        element-type: string # error names
+      # only used for if-state transitions
+      branch:
+        type: string
+        allowed-values:
+        - "true"
+        - "false"
+  position:
+    required:
+      x:
+        type: float|integer
+      "y":
+        type: float|integer
+  action:
+    required:
+      type:
+        type: string
+        allowed-values:
+          - connector
+          - pipeline
+          - mapper
+          - apicall
+          - create
+          - search-single
+          - search
+          - update
+          - delete
+      value:
+        type: string|connector|dataprovider
+  mapper:
+    required:
+      mapper:
+        type: string
+        regex: ^[^:]+:.+$ # name:version
+  pipeline:
+    required:
+      pipeline:
+        type: string
+
+include-definitions:
+  - config-item_definition.yaml
+  - connector_definition.yaml
+  - dataprovider_definition.yaml

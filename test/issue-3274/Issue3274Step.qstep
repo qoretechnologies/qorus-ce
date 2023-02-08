@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3274Step inherits QorusNormalStep {
+    primary() {
+        UserApi::logInfo("Issue3274Step was called");
+    }
+}

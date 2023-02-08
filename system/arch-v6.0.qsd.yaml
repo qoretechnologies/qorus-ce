@@ -1,0 +1,193 @@
+# This is a generated file, don't edit!
+type: service
+name: arch
+desc: Qorus archive service
+version: "6.0"
+servicetype: SYSTEM
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusSystemService
+class-name: QorusSystemArchService
+code: arch-v6.0.qsd
+config-items:
+  - name: datasource
+    type: "*string"
+    description: The archive datasource name; must be a valid Qorus datasource; this configuration
+          item must be set for archiving to run; purging can run without it
+    config_group: Archiving Main
+    strictly_local: true
+    default_value: null
+  - name: day-interval
+    type: int
+    description: The number of days for data to be kept in the current Qorus instance schema; older
+          data will be archived. For example, set it to `365` to keep one year history in the
+          live/production schema
+    config_group: Archiving Main
+    strictly_local: true
+  - name: archive
+    type: bool
+    default_value: false
+    description: Switch on/off archiving; the arch service does not archive if it's set to `False`
+        and the `QorusSystemArchService::archive()` method is called; the `datasource` config item must
+        also be set for archiving to be possible
+    config_group: Archiving Main
+    strictly_local: true
+  - name: purge
+    type: bool
+    default_value: true
+    description: Switch on/off standalone purging. The arch service does not do anything if it's set
+        to `False` and the `QorusSystemArchService::purge()` method is called. A manual purge cannot
+        be run if the `archive` config is set to `True`.  Purging is possible without an archiving
+        datasource
+    config_group: Archiving Main
+    strictly_local: true
+  - name: batch-sleep
+    type: int
+    default_value: 0
+    description: A sleep/delay between batch loops (if configured in `max-loops` or in direct calls)
+        in seconds
+    config_group: Archiving Options
+    strictly_local: true
+  - name: max-loops
+    type: int
+    default_value: 0
+    description: Set maximum loops (of size `batch-size`) related for the `archive()` or `purge()` methods; 0 means run until
+        there is something to process
+    config_group: Archiving Options
+    strictly_local: true
+  - name: batch-size
+    type: int
+    default_value: 10000
+    description: The size in number of records of a single transaction block; its value can be sized
+        to limit the size of the database UNDO/TEMP segment usage during archiving
+    config_group: Archiving DB Options
+    strictly_local: true
+  - name: space-management
+    type: bool
+    default_value: false
+    description: The archive service will free database table space if it is set to `True`
+    config_group: Archiving DB Options
+    strictly_local: true
+  - name: statistics
+    type: bool
+    default_value: true
+    description: Compute database statistics in the source schema after archiving or purging
+    config_group: Archiving DB Options
+    strictly_local: true
+  - name: statistics-options
+    type: "*hash"
+    default_value: null
+    description: A hash with optional settings for statistics computation
+    config_group: Archiving DB Options
+    strictly_local: true
+  - name: day-interval-workflows
+    type: "*int"
+    default_value: null
+    description: The number of days for workflow order instance data to be kept in the current Qorus
+        instance schema. If not set, then `day-interval` is used
+    config_group: Archiving Fine Tuning
+    strictly_local: true
+  - name: day-interval-jobs
+    type: "*int"
+    default_value: null
+    description: The number of days for job result data to be kept in the current Qorus instance
+        schema. If not set, then `day-interval` is used
+    config_group: Archiving Fine Tuning
+    strictly_local: true
+  - name: no-metadata
+    type: bool
+    default_value: false
+    description: If `True`, metadata will not be archived, only live data; if `False`, metadata is
+        archived along with live data
+    config_group: Archiving Fine Tuning
+    strictly_local: true
+  - name: filter
+    type: "*hash"
+    default_value: null
+    description: Optional data filter hash; see documentation for hash format
+    config_group: Archiving Fine Tuning
+    strictly_local: true
+  - name: shadow-datasources
+    type: "*list"
+    default_value: null
+    description: Optional list of datasource names to be kept on the same DB schema version. This
+        option is used only for upgrading via `schema-tool`. This can be used for, for exampole,
+        rotating the datasource config item value between datasources
+    config_group: Archiving Fine Tuning
+    strictly_local: true
+methods:
+    - name: estimated_counts
+      desc: "Run archive/purge/space management in pro-forma mode without making any changes\n\n
+        parameters:\n
+        - `loops`: optional integer value which will stop puring after `loops` of `batch-size` (`0` = do not stop)\n
+        - `filter`: optional hash providing an archive filter (see online docs for more info about this parameter)\n\n
+        return value: a hash with merged result of all sub-actions. Structure:\n
+        - `metadata`: Qorus static meta-data\n
+        \x20 - `table name`\n
+        \x20   - `full_insert`: count of lines for tables where is required toperform FULL delete/insert\n
+        \x20   - `insert`: count of lines directly inserted to the archive schema\n
+        \x20   - `update`: count of lines updated in the archive schema\n
+        \x20   - `noop`: count of lines where there is no operation required\n
+        \x20   - `src_deleted`: count of lines which are found in the archive schema but not in source (probably deleted from source, but they cannot be delete from archive to keep referential integrity).\n
+        - `orders`: Qorus live orders/workflow instances etc\n
+        \x20 - `table name`\n
+        \x20   - `arch`: count of archived lines (archive schema)\n
+        \x20   - `purge`: count of purged lines (source schema)\n
+        - `space`: Space management result\n
+        \x20   `table_name`: result for given table\n
+        - `indexes`: a list with result from space_management"
+
+    - name: info
+      desc: "show service parameters
+    @return a hash of current service parameters"
+
+    - name: archive
+      desc: "Run archive/purge/space management\n\n\
+        parameters:\n
+        - `loops`: optional integer value which will stop puring after `loops` of `batch-size` (`0` = do not stop)\n
+        - `filter`: optional hash providing an archive filter (see online docs for more info about this parameter)\n\n
+        return value: a hash with merged result of all sub-actions. Structure:\n
+        - `metadata`: Qorus static meta-data\n
+        \x20 - `table name`\n
+        \x20   - `full_insert`: count of lines for tables where is required toperform FULL delete/insert\n
+        \x20   - `insert`: count of lines directly inserted to the archive schema\n
+        \x20   - `update`: count of lines updated in the archive schema\n
+        \x20   - `noop`: count of lines where there is no operation required\n
+        \x20   - `src_deleted`: count of lines which are found in the archive schema but not in source (probably deleted from source, but they cannot be delete from archive to keep referential integrity).\n
+        - `orders`: Qorus live orders/workflow instances etc\n
+        \x20 - `table name`\n
+        \x20   - `arch`: count of archived lines (archive schema)\n
+        \x20   - `purge`: count of purged lines (source schema)\n
+        - `space`: Space management result\n
+        \x20   `table_name`: result for given table\n
+        - `indexes`: a list with result from space_management"
+      write: true
+
+    - name: purge
+      desc: "Run purge/space management only\n\n
+        parameters:\n
+        - `loops`: optional integer value which will stop puring after `loops` of `batch-size` (`0` = do not stop)\n
+        - `filter`: optional hash providing an archive filter (see online docs for more info about this parameter)"
+      write: true
+
+    - name: space_management
+      desc: "Run the space management in standalone process\n\n
+        return value: a hash with database table names as keys and values with appropriate space management result or a single key/value result for PostgreSQL"
+      write: true
+
+    - name: statistics
+      desc: "Run the statistics computing in standalone process\n\n
+        parameters:
+        - `customOptions`: a hash or nothing with custom statistics-options. System statistics-options are overriden by custom options"
+      write: true
+
+    - name: interrupt
+      desc: Interrupt the currently running archive / purge action as soon as possible
+
+    - name: filter
+      desc: Return the current archiving filter, if any
+
+    - name: set_filter
+      desc: Set the new archiving filter with a filter hash or no value for no filter
+      write: true

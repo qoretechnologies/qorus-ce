@@ -1,0 +1,1455 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+%requires QorusQscriptUtil
+
+%requires Util
+%requires FsUtil
+%requires RestClient
+
+%requires uuid
+
+%exec-class QorusRegression
+
+class QorusRegression inherits QorusPassiveWorkflowTest {
+    public {}
+
+    private {
+        #! ARRAYTEST workflow instance ID
+        softint arraytest_wfiid;
+
+        #! key for tests
+        const TestKey = "__XXX_TEST_KEY_";
+
+        const ClassDesc = {
+            "name": Type::String,
+            "version": Type::String,
+            "classid": Type::Int,
+            "description": Type::String,
+            "author": Type::String,
+            "body": Type::String,
+            "language": Type::String,
+            "created": Type::Date,
+            "modified": Type::Date,
+            "connectors": Type::NothingType,
+            "processor": Type::NothingType,
+            "tags": Type::Hash,
+            "source": Type::String,
+            "line": Type::Int,
+            "offset": Type::String,
+            "host": Type::String,
+            "user": Type::String,
+        };
+
+        # constants have the same format as classes
+        const ConstantDesc = ClassDesc + {"createdby": Type::String, "modifiedby": Type::String}
+            - ("classid", "language", "line", "processor", "connectors") + {"constantid": Type::Int};
+
+        const ErrorDesc = (
+            "error": Type::String,
+            "description": Type::String,
+            "severity": Type::String,
+            "status": Type::String,
+            "business_flag": Type::Boolean,
+            "retry_delay_secs": Type::Int,
+            "type": Type::String,
+        );
+
+        # functions have mostly the same format as classes and constants
+        const FunctionDesc = ClassDesc + {"createdby": Type::String, "modifiedby": Type::String}
+            - ("classid", "language", "line", "processor", "connectors") + {"function_instanceid": Type::Int, "function_type": Type::String};
+
+        const GroupDesc = (
+            "name": Type::String,
+            "description": Type::String,
+            "id": Type::Int,
+            "enabled": Type::Boolean,
+            "size": Type::Int,
+            "is_default": Type::Boolean,
+            "workflows": Type::List,
+            "services": Type::List,
+            "jobs": Type::List,
+            "mappers": Type::List,
+            "vmaps": Type::List,
+            "fsms": Type::List,
+            "pipelines": Type::List,
+            "roles": Type::List,
+        );
+
+        const JobDesc = (
+            "jobid": Type::Int,
+            "name": Type::String,
+            "description": Type::String,
+            "version": Type::String,
+            "author": Type::String,
+            "remote": Type::Boolean,
+            "manual_remote": Type::Boolean,
+            "sessionid": Type::Int,
+            "run_skipped": Type::Boolean,
+            "month": Type::String,
+            "day": Type::String,
+            "wday": Type::String,
+            "hour": Type::String,
+            "minute": Type::String,
+            #"last_executed": Type::Date,
+            "created": Type::Date,
+            "modified": Type::Date,
+            "manually_updated": Type::Boolean,
+            "enabled": Type::Boolean,
+            "source": Type::String,
+            "line": Type::Int,
+            "mappers": Type::NothingType,
+            "vmaps": Type::NothingType,
+            "lib": Type::NothingType,
+            "tags": Type::Hash,
+            "groups": Type::List,
+            "offset": Type::String,
+            "host": Type::String,
+            "user": Type::String,
+            "code": Type::String,
+            "schedule": Type::String,
+            "connections": Type::List,
+            "alerts": Type::List,
+            "db_active": Type::Boolean,
+            "active": Type::Boolean,
+            "manual_active": Type::Boolean,
+            "options": Type::List,
+            "sched_type": Type::String,
+            "sched_txt": Type::String,
+            "state": Type::NothingType,
+            "persistent-state": Type::NothingType,
+            "process": Type::NothingType,
+            "open": Type::Boolean,
+            "class_based": Type::Boolean,
+            "language": Type::String,
+            "fsm_triggers": Type::NothingType,
+            "config_items": Type::NothingType,
+        );
+
+        const MapperDesc = (
+            "mapperid": Type::Int,
+            "name": Type::String,
+            "version": Type::String,
+            "patch": Type::NothingType,
+            "desc": Type::String,
+            "parse_options": Type::NothingType,
+            "created": Type::Date,
+            "modified": Type::Date,
+            "type": Type::String,
+            "option_source": Type::Hash,
+            "field_source": Type::Hash,
+            "fields": Type::Hash,
+            "options": Type::Hash,
+            "valid": Type::Boolean,
+            #"error": Type::String,
+            "groups": Type::List,
+        );
+
+        const MapperTypeDesc = (
+            "name": Type::String,
+            "options": Type::Hash,
+            "user_options": Type::Hash,
+            "runtime_options": Type::Hash,
+            "required_options": Type::NothingType,
+            "required_record_options": Type::NothingType,
+            "requires_input": Type::Boolean,
+            "requires_output": Type::Boolean,
+            "type": Type::String,
+        );
+
+        const ExecDesc = {
+            "mode": Type::String,
+            "totalSegments": Type::Int,
+            "starttime": Type::Date,
+            "sync": Type::Boolean,
+            "sync_wfiid": Type::NothingType,
+            "executionID": Type::Int,
+            "remote": Type::Boolean,
+            "process": Type::Hash,
+            "alerts": Type::List,
+            "log_url": Type::String,
+        };
+
+        const FsEnvTestName = "fs-envtest.qconn";
+        const FsEnvTestUrl = "file://" + tmp_location() + "/$ENVTEST1/${ENVTEST2}";
+        const FsEnvTestFile = sprintf("fs-envtest = (desc = test connection, url = %s, readonly = true)", FsEnvTestUrl);
+        const RestEnvTestName = "rest-envtest.qconn";
+        const RestEnvTestFile = "rest-envtest = (desc = test connection, url = \"rest://user:pass@example.com:80/$ENVTEST1/${ENVTEST2}\", timeout = 1, connect_timeout = 1)";
+        const SoapUrlTestName = "soap-urltest.qconn";
+        const SoapUrlTestFile = "soap-urltest = (desc = test, url = soap://${QORUS_TEST_WSDL},)";
+        const InvalidConnectionName1 = "fs-invalid-test1.qconn";
+        const InvalidConnectionFile1 = "fs-invalid-test1 = (desc = invalid test connection, url = filex:///x,)";
+        const InvalidConnectionName2 = "fs-invalid-test2.qconn";
+        const InvalidConnectionFile2 = "fs-invalid-test2 (desc = invalid test connection, url = file:///x,)";
+        const InvalidConnectionName3 = "fs-invalid-test3.qconn";
+        const InvalidConnectionFile3 = "fs-invalid-test3 = (desc = invalid test connection, url = file:///x";
+        const ComplexConnectionName1 = "rest-con1.qconn";
+        const ComplexConnectionFile1 = "# a test user connection for a REST connection
+rest-con1 = (
+%ifdef ignore
+%else
+    \"desc\" = \"$DESC1\",
+%endif
+%ifndef XYZ
+%ifndef asdsa
+%else
+%endif
+    url = \"rest://user:'pass'\\$val1$val2#,\\\"word\\\")\\${ENV1}${ENV2}@example.com:$PORT1\",
+    timeout = 1,
+    connect_timeout = 1
+%else
+%endif
+)";
+        const ComplexConnectionName2 = "rest-con2.qconn";
+        const ComplexConnectionFile2 = "# a test user connection for a REST connection
+rest-con2 = (
+    desc = a description(really),
+    url = rest://example.com:80,
+    timeout = 1,
+    connect_timeout = 1
+)";
+
+        const ComplexConnectionName3 = "rest-con3.qconn";
+        const ComplexConnectionFile3 = "# a test user connection for a REST connection
+rest-con3 = (
+    desc = it's a description :-( with extra quotes \",
+    url = rest://example.com:80,
+    timeout = 1,
+    connect_timeout = 1
+)";
+
+        const ComplexConnectionName4 = "fs-con1.qconn";
+        const ComplexConnectionFile4 = "fs-con1 = (desc = it's a description :-( with extra quotes \", url = file:///dir)
+fs-con2 = (desc = a, url = file:///dir) # comment
+fs-con3 = (desc = a, url = file:///dir) ";
+
+        const ComplexConnectionName5 = "fs-con4.qconn";
+        const ComplexConnectionFile5 = "fs-con4 = (desc = it's a description :-( with extra quotes \", url = file:///dir)
+fs-con5 = (desc = a, url = file:///dir) # comment
+fs-con6 = (desc = a, url = file:///dir)";
+
+        const YamlConnectionName1 = "tcon1.qconn.yaml";
+        const YamlConnectionFile1 = "type: connection
+name: tcon1
+desc: test conn
+url: rests://localhost:8080
+options:
+  timeout:
+    type: int
+    value: 1
+";
+
+        const OpropSetXmlName = "prop.xml";
+        const OpropSetXmlFile = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><qorus_properties instance=\"qorus-test-instance\" schema-compatibility=\"3.1.0\" schema-load-compatibility=\"3.1.0\" schema-version=\"3.1.0.1\">
+<REGRESSION-TEST>
+    <test_option>val</test_option>
+</REGRESSION-TEST>
+</qorus_properties>";
+
+        const InvalidWFKeyName = "INVALID-WF-KEY-v1.0.qwf";
+        const InvalidWFKeyFile = "
+$format_version = \"2.6\";
+$groups.test.desc = \"test interfaces\";
+$workflows.\"INVALID-WF-KEY\".\"1.0\" = (
+    \"desc\": \"dummy test workflow with 1 step\",
+    \"author\": \"Qore Technologies, sro\",
+    \"steps\": (\"dummy_1:1.0\"),
+    \"keylist\": (
+        \"test1\",
+        \"test2\",
+    ),
+    \"groups\": \"test\",
+    \"onetimeinit\": \"dummy_init:1.0\",
+    \"options\": (\"test-opt\": \"test option\", \"test-opt2\": \"test option\"),
+    \"ferda_invalid\" : (\"zzz\",),
+    );
+";
+
+        # NOTE: "args" can be a string, or a list,
+        # each element of "args" can be a HASH with 2 keys: "filename"
+        # and "filecontent", which means that the file with given name will be created
+        # in the temp folder and the file full path will be put as the argument
+        const Scripts = (
+            ("cmd": "ocmd", "args": "help debug"),
+            ("cmd": "ocmd", "args": "-W"),
+            ("cmd": "ojview",),
+            ("cmd": "ojview", "args": "-W"),
+            ("cmd": "ojview", "args": "-f del"),
+            ("cmd": "ojview", "args": "del"),
+            ("cmd": "oprop", "args": "get omq"),
+            ("cmd": "oprop", "args": "-W"),
+            ("cmd": "oprop", "args": ("-p",
+                                      ("filename" : OpropSetXmlName,
+                                       "filecontent" : OpropSetXmlFile))),
+            ("cmd": "ostart", "args": "ARRAYTEST"),
+            ("cmd": "ostart", "args": "-W"),
+            ("cmd": "ostatus",),
+            ("cmd": "ostatus", "args": "-W"),
+            ("cmd": "ostatus", "args": "-C"),
+            ("cmd": "ostatus", "args": "-o"),
+            ("cmd": "ostatus", "args": "-w"),
+            ("cmd": "ostatus", "args": "-s"),
+            ("cmd": "ostatus", "args": "-j"),
+            ("cmd": "ostop", "args": "ARRAYTEST"),
+            ("cmd": "ostop", "args": "-W"),
+            ("cmd": "oview",),
+            ("cmd": "oview", "args": "-W"),
+            ("cmd": "qevent", "args": "-L"),
+            ("cmd": "qevent", "args": "-W"),
+            ("cmd": "qevent", "args": "-l"),
+            ("cmd": "qevent", "args": "-x"),
+            ("cmd": "qevent", "args": "-z"),
+            ("cmd": "qrest", "args": "-T"),
+            ("cmd": "qrest", "args": "-W"),
+        );
+
+        # HTTP REST connection
+        QorusSystemRestHelper qrest_http;
+        # HTTPS REST connection
+        QorusSystemRestHelper qrest_https;
+
+        # workflow instanceid of the synchronous workflow order
+        softint wfiid;
+
+        # Qorus options
+        hash qoptions;
+
+        # hash with file CONTENT for small file backups
+        hash fileBackups;
+    }
+
+    constructor() : QorusPassiveWorkflowTest("REGRESSION-TEST", "1.3", \ARGV) {
+        qoptions = omqclient.getOptions("qorus");
+        addTestCase("oprop", \opropTest());
+        addTestCase("stream config", \streamConfig());
+        addTestCase("mapper sort", \mapperSort());
+        addTestCase("connection env subst", \connectionEnvSubst());
+        addTestCase("invalid-wf-key", \invalidWFKey());
+        addTestCase("stream-thread-resources", \streamThreadResources());
+        addTestCase("rest-api", \restTestCase());
+        addTestCase("rest-client", \restClientTest());
+        addTestCase("clients", \clientTest());
+        addTestCase("connections", \connections());
+        addTestCase("REGRESSION-TEST", \regressionWorkflow());
+        addTestCase("sensitive data", \sensitiveData());
+        addTestCase("unique order", \uniqueOrder());
+        addTestCase("ind order", \indOrderTest());
+        addTestCase("info service", \infoServiceTest());
+        addTestCase("rpc-test", \rpcTest());
+        # assign REST connection variables
+
+        if (qrest.isSecure()) {
+            qrest_https = qrest;
+
+            # try to use any UNIX listener if present
+            {
+                string url = sprintf("/tmp/qorus-sock-%s/api/latest", qoptions."instance-key");
+                if (is_socket(url)) {
+                    qrest_http = new QorusSystemRestHelper({
+                        "url": url,
+                    });
+                }
+            }
+            # find an insecure listener if possible and create the qrest_http object
+            if (!qrest_http && qoptions."http-server") {
+                qrest_http = new QorusSystemRestHelper({
+                    "url": qoptions."http-server"[0],
+                });
+            }
+        } else {
+            qrest_http = qrest;
+            # find a secure listener if possible and create the qrest_https object
+            if (qoptions."http-secure-server") {
+                string url = qoptions."http-secure-server"[0];
+                # remove any cert,key options, etc
+                url =~ s/{.*}$//;
+                url = url =~ /:/ ? sprintf("https://%s", url) : sprintf("https://localhost:%d", url);
+                qrest_https = new QorusSystemRestHelper({
+                    "url": url,
+                });
+            }
+        }
+
+        set_return_value(main());
+    }
+
+    streamThreadResources() {
+        DbRemoteReceive recv(qrest, "omquser", "select", "dummy_table");
+        testAssertion("stream-thread-resources", \throw_thread_resource_exceptions(), NOTHING, new TestResultExceptionType("STREAM-CLEANUP-ERROR"));
+    }
+
+    connectionEnvSubst() {
+        # create the connection file
+        TempFileHelper ffn(FsEnvTestName, FsEnvTestFile);
+
+        string e1 = get_random_string();
+        string e2 = get_random_string();
+        setenv("ENVTEST1", e1);
+        setenv("ENVTEST2", e2);
+        string ref_fs_path = sprintf("%s/%s/%s", tmp_location(), e1, e2);
+
+        # load fs connection
+        doSystem("oload -lR " + ffn.get());
+        on_exit
+            qrest.del("remote/user/fs-envtest");
+
+        {
+            if (mkdir(ref_fs_path, 0755, True)) {
+                throw "MKDIR-ERROR", sprintf("%s: %s", ref_fs_path, strerror());
+            }
+            on_exit {
+                remove_tree(dirname(ref_fs_path));
+            }
+            chmod(ref_fs_path, 0555);
+            string url = "file://" + ref_fs_path;
+            hash h = qrest.put("remote/user/fs-envtest/ping");
+            assertEq(True, h.ok);
+            assertEq("OK", h.info);
+            h = qrest.get("remote/user/fs-envtest");
+            assertEq(url, h.url);
+            assertEq("OK", h.status);
+            # get options to restore after clearing
+            hash<auto> opts = qrest.get("remote/user/fs-envtest/opts");
+            h = qrest.put("remote/user/fs-envtest", ("options": {}));
+            on_exit {
+                qrest.put("remote/user/fs-envtest", {"opts": opts});
+            }
+            assertEq(Type::String, h.info.type());
+            h = qrest.put("remote/user/fs-envtest/ping");
+            assertEq(True, h.status != "OK");
+            assertEq(Type::String, h.info.type());
+        }
+
+        {
+            # QorusQscriptUtil, filesystem test
+            list<string> test_dirs = ( "foo/bar", "foo/bar/xxx", );
+            QorusQscriptUtil::fs_dirs("fs-envtest", test_dirs);
+            ListIterator it(test_dirs);
+            while (it.next()) {
+                string path = ref_fs_path + "/" + it.getValue();
+                auto d = hstat(path);
+                assertEq(True, exists d, sprintf("Directory must exist: %s", path));
+            }
+        }
+
+        {
+            TempFileHelper rfn(RestEnvTestName, RestEnvTestFile);
+
+            # load rest connection
+            doSystem("oload -lR " + rfn.get());
+            on_exit
+                qrest.del("remote/user/rest-envtest");
+
+            # wait for connection to be available
+            waitForConnection("user/rest-envtest");
+
+            assertEq("rest://user:<masked>@example.com:80/" + e1 + "/" + e2, qrest.get("remote/user/rest-envtest/url"));
+            assertEq("rest://user:<masked>@example.com:80/" + e1 + "/" + e2, qrest.get("remote/user/rest-envtest/url?with_password=false"));
+            # issue #1885 test retrieving qorus connections with passwords
+            assertEq("rest://user:pass@example.com:80/" + e1 + "/" + e2, qrest.get("remote/user/rest-envtest/url?with_password=true"));
+        }
+
+        {
+            TempFileHelper sfn(SoapUrlTestName, SoapUrlTestFile);
+            TempFileHelper wfn(SoapUrlTestName, qrest.get("services/simple/resource_files/simple.wsdl/data"));
+
+            # load soap connection
+            setenv("QORUS_TEST_WSDL", wfn.get());
+            doSystemVerbose("oload -lRv " + sfn.get());
+            on_exit
+                qrest.del("remote/user/soap-urltest");
+
+            assertEq("soap://" + wfn.get(), qrest.get("remote/user/soap-urltest/url"));
+        }
+
+        {
+            TempFileHelper ifn(InvalidConnectionName1, InvalidConnectionFile1);
+
+            # load invalid connection
+            string output = doBackquote("oload -lR " + ifn.get());
+            assertEq(True, output =~ /cannot register/);
+        }
+
+        {
+            TempFileHelper ifn(InvalidConnectionName2, InvalidConnectionFile2);
+
+            # load invalid connection
+            string output = doBackquote("oload -lR " + ifn.get());
+            assertEq(True, output =~ /CONNECTION-PARSE-ERROR.*expecting token/);
+        }
+
+        {
+            TempFileHelper ifn(InvalidConnectionName3, InvalidConnectionFile3);
+
+            # load invalid connection
+            string output = doBackquote("oload -lR " + ifn.get());
+            assertEq(True, output =~ /CONNECTION-PARSE-ERROR.*premature end of file/);
+        }
+
+        {
+            TempFileHelper cfn(ComplexConnectionName1, ComplexConnectionFile1);
+
+            # set env vars and load connection
+            string rdesc = get_random_string(50);
+            setenv("val1", "xxx");
+            setenv("val2", "zzz");
+            setenv("ENV1", "XXX");
+            setenv("ENV2", "ZZZ");
+            setenv("DESC1", rdesc);
+            setenv("PORT1", "80");
+            doSystem("oload -lvR " + cfn.get());
+            on_exit
+                qrest.del("remote/user/rest-con1");
+
+            hash h = qrest.get("remote/user/rest-con1?with_password=true");
+            assertEq("rest://user:'pass'$val1zzz#,\"word\")${ENV1}ZZZ@example.com:80", h.url);
+            assertEq("'pass'$val1zzz#,\"word\")${ENV1}ZZZ", h.url_hash.password);
+            assertEq(rdesc, h.desc);
+            h = qrest.get("remote/user/rest-con1");
+            assertEq("rest://user:<masked>@example.com:80", h.url);
+            assertEq(NOTHING, h.url_hash.password);
+            assertEq(rdesc, h.desc);
+
+            omqclient.reloadUserConnections();
+            RestClient rc = UserApi::getUserConnection("rest-con1", False);
+            assertEq(1, rc.getTimeout());
+
+            # issue #1970: verify that oview conn:xxx works
+            {
+                TempFileHelper ncf(get_random_string() + ".qconn");
+                system("oview conn:rest-con1 > " + ncf.get());
+                assertEq(True, is_file(ncf.get()));
+                assertGt(0, hstat(ncf.get()).size);
+                doSystem("oload -lvR " + ncf.get());
+
+                h = qrest.get("remote/user/rest-con1");
+                assertEq("rest://user:<masked>@example.com:80", h.url);
+                assertEq(NOTHING, h.url_hash.password);
+            }
+        }
+
+        {
+            TempFileHelper cfn(ComplexConnectionName2, ComplexConnectionFile2);
+
+            doSystem("oload -lvR " + cfn.get());
+            on_exit
+                qrest.del("remote/user/rest-con2");
+
+            hash h = qrest.get("remote/user/rest-con2");
+            assertEq("a description(really)", h.desc);
+            assertEq("rest://example.com:80", h.url);
+        }
+
+        {
+            TempFileHelper cfn(ComplexConnectionName3, ComplexConnectionFile3);
+
+            doSystem("oload -lvR " + cfn.get());
+            on_exit
+                qrest.del("remote/user/rest-con3");
+
+            hash h = qrest.get("remote/user/rest-con3");
+            assertEq("it's a description :-( with extra quotes \"", h.desc);
+            assertEq("rest://example.com:80", h.url);
+        }
+
+        {
+            TempFileHelper cfn(ComplexConnectionName4, ComplexConnectionFile4);
+
+            doSystem("oload -lvR " + cfn.get());
+            on_exit {
+                qrest.del("remote/user/fs-con1");
+                qrest.del("remote/user/fs-con2");
+                qrest.del("remote/user/fs-con3");
+            }
+
+            hash h = qrest.get("remote/user/fs-con1");
+            assertEq("it's a description :-( with extra quotes \"", h.desc);
+            assertEq("file:///dir", h.url);
+
+            h = qrest.get("remote/user/fs-con2");
+            assertEq("a", h.desc);
+            assertEq("file:///dir", h.url);
+
+            h = qrest.get("remote/user/fs-con3");
+            assertEq("a", h.desc);
+            assertEq("file:///dir", h.url);
+        }
+
+        {
+            TempFileHelper cfn(ComplexConnectionName5, ComplexConnectionFile5);
+
+            doSystem("oload -lvR " + cfn.get());
+            on_exit {
+                qrest.del("remote/user/fs-con4");
+                qrest.del("remote/user/fs-con5");
+                qrest.del("remote/user/fs-con6");
+            }
+
+            hash h = qrest.get("remote/user/fs-con4");
+            assertEq("it's a description :-( with extra quotes \"", h.desc);
+            assertEq("file:///dir", h.url);
+
+            h = qrest.get("remote/user/fs-con5");
+            assertEq("a", h.desc);
+            assertEq("file:///dir", h.url);
+
+            h = qrest.get("remote/user/fs-con6");
+            assertEq("a", h.desc);
+            assertEq("file:///dir", h.url);
+        }
+
+        {
+            TempFileHelper cfn(YamlConnectionName1, YamlConnectionFile1);
+
+            doSystem("oload -lvR " + cfn.get());
+            on_exit {
+                qrest.del("remote/user/tcon1");
+            }
+
+            hash<auto> h = qrest.get("remote/user/tcon1");
+            on_error printf("h: %N\n", h);
+            assertEq(1, h.opts."timeout");
+        }
+    }
+
+    hash<auto> waitForConnection(string pathend, date wait = 5s) {
+        date timeout = now_us() + wait;
+        while (True) {
+            try {
+                return qrest.get("remote/" + pathend);
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err != 'DATASTREAM-CLIENT-RECEIVE-ERROR"') {
+                    rethrow;
+                }
+                sleep(250ms);
+                if (now_us() > timeout) {
+                    throw "CONNECTION-ERROR", sprintf("timed out waiting for connection %y: %y", pathend, wait);
+                }
+            }
+        }
+    }
+
+    invalidWFKey() {
+        TempFileHelper ifn(InvalidWFKeyName, InvalidWFKeyFile);
+
+        # load invalid connection; redirection of stderr -> stdout works on both UNIX and Windows
+        string output = doBackquote("oload -lR " + ifn.get());
+        assertEq(True, output =~ /INVALID-WF-KEY:1.0: invalid keys found in workflow definition: \["ferda_invalid"\]/);
+    }
+
+    static string doBackquote(string cmd) {
+        cmd = vsprintf(cmd, argv);
+        # redirect stderr to stdout (works on Unix and Windows)
+        return backquote(cmd + " 2>&1");
+    }
+
+    int doSystemVerbose(string cmd) {
+        cmd = vsprintf(cmd, argv);
+        printf("command: %s\n", cmd);
+
+        int rv;
+        string out = trim(backquote(cmd + " 2>&1", \rv));
+        printf("%s\n", out);
+
+        return rv;
+    }
+
+    int doSystem(string cmd) {
+        cmd = vsprintf(cmd, argv);
+        if (m_options.verbose > 3) {
+            printf("command: %s\n", cmd);
+        }
+
+        int rv;
+        string out = trim(backquote(cmd + " 2>&1", \rv));
+        if (m_options.verbose > 3) {
+            printf("%s\n", out);
+        }
+
+        return rv;
+    }
+
+    static createFile(string fn, string body) {
+        File f();
+        f.open2(fn, O_CREAT|O_WRONLY|O_TRUNC);
+        f.write(body);
+    }
+
+    restClientTest() {
+        string out = doBackquote(ENV.OMQ_DIR + "/bin/qrest -T");
+        assertEq(True, out =~ /OK/);
+    }
+
+    clientTest() {
+        foreach hash<auto> sh in (Scripts) {
+            string cmd = sh.cmd;
+            softlist args = sh.args;
+            list<TempFileHelper> temp_files();
+
+            if (args) {
+                foreach auto h in (args.iterator()) {
+                    if (h.filename && h.filecontent) {
+                        TempFileHelper fn(h.filename, h.filecontent);
+                        temp_files += fn;
+                        cmd += " " + fn.get();
+                    } else if (h.typeCode() == NT_STRING) {
+                        cmd += " " + h;
+                    } else {
+                        throw "TEST-ERROR", sprintf("Invalid element %y in Scripts", h);
+                    }
+                }
+            }
+            if (m_options.verbose > 2) {
+                printf("cmd: %s\n", cmd);
+            }
+            assertEq(0, doSystem(cmd), cmd);
+        }
+
+        string str = doBackquote("oview service:http-test:1.0 | grep groups");
+        assertEq(True, str !~ /http-test/);
+    }
+
+    connections() {
+        # issue #1918: this test must come before the REGRESSION-TEST workflow, and
+        # the http-service must be unloaded and reloaded because dependencies disappear when connections are reloaded
+        qrest.put("services/http-test/unload");
+        qrest.put("services/http-test/load");
+        string cname = "fs-regression";
+%ifdef Windows
+            cname += "-win";
+%endif
+        list l = qrest.get("remote/user/" + cname + "/deps");
+        # get http-test service dependency
+        hash sdh = (map $1, l, $1.name == "http-test")[0];
+        assertEq("SERVICE", sdh.type);
+    }
+
+    regressionWorkflow() {
+        hash<auto> oh += {
+            "staticdata": {"now": now_us()},
+        };
+        if (m_options.login)
+            oh.dynamicdata.auth = m_options.login;
+
+        WorkflowLogHelper wlh(m_rest_pfx, m_options.verbose > 1);
+        on_exit wlh.stop();
+        # set a 30 minute timeout
+        qrest.setTimeout(30m);
+        wfiid = execSynchronous(oh).workflow_instanceid;
+    }
+
+    sensitiveData() {
+        if (!wfiid) {
+            testSkip("REGRESSION-TEST workflow execution failed");
+        }
+        if (!qrest_https)
+            testSkip("no HTTPS listener");
+
+        hash h = qrest_https.get("orders/" + wfiid);
+        if (qoptions."purge-sensitive-data-complete")
+            assertEq(NOTHING, h.sensitive_data);
+        else
+            assertEq(True, boolean(h.sensitive_data));
+
+        # test REST API to create/update sensitive data
+        hash sd = (
+            "skey": "test_key",
+            "svalue": "1234",
+            "data": ("a": 1, "string": "other"),
+            "aliases": 0,
+        );
+        string str = qrest_https.put("orders/" + wfiid + "/sensitiveData", sd);
+        assertEq("OK", str);
+
+        h = qrest_https.get("orders/" + wfiid);
+        assertEq(True, h.has_sensitive_data);
+        hash nsd{sd.svalue} = (
+            "data": sd.data,
+            "aliases": ("0",),
+        );
+        assertEq(nsd, h.sensitive_data.test_key);
+    }
+
+    uniqueOrder() {
+        hash oh = (
+            "staticdata": ("a": "a"),
+            "scheduled": now() + 1D,
+        );
+
+        # test global unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/REGRESSION-TEST/createOrder", oh + ("global_unique_key": ("test": "test1"))));
+        # test workflow (name) unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/REGRESSION-TEST/createOrder", oh + ("workflow_unique_key": ("test": "test1"))));
+        # test workflow-specific unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/REGRESSION-TEST/createOrder", oh + ("workflow_specific_unique_key": ("test": "test1"))));
+
+        # get a random key value
+        string key1 = get_random_string(50);
+        softint wfiid = qrest.post("workflows/SIMPLETEST/createOrder", oh + ("global_unique_key": ("key1": key1))).workflow_instanceid;
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        hash kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key1, kh.key1);
+
+        string key2 = get_random_string(50);
+        wfiid = qrest.post("workflows/SIMPLETEST/createOrder", oh + ("workflow_unique_key": ("key1": key2))).workflow_instanceid;
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key2, kh.key1);
+
+        string key3 = get_random_string(50);
+        wfiid = qrest.post("workflows/SIMPLETEST/createOrder", oh + ("workflow_specific_unique_key": ("key1": key3))).workflow_instanceid;
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key3, kh.key1);
+
+        # test global unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("global_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("global_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("global_unique_key": ("key1": key3))));
+        # test workflow (name) unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_unique_key": ("key1": key3))));
+        # test workflow-specific unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_specific_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_specific_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \qrest.post(), ("workflows/SIMPLETEST/createOrder", oh + ("workflow_specific_unique_key": ("key1": key3))));
+    }
+
+    opropTest() {
+        # test issue 1975
+        string val = "+" + get_random_string(31);
+        string path = tmp_location() + DirSep + val;
+
+        doSystem("oprop set +test " + val + " 1");
+        on_exit
+            qrest.del("system/props/+test");
+        assertEq(1, UserApi::propGet("+test", val));
+        doSystem("oprop -x -r=" + path);
+        on_exit
+            unlink(path);
+        #printf("DEBUG file: %s\n", ReadOnlyFile::readTextFile(path));
+        doSystem("oprop set +test " + val);
+        doSystem("oprop -p=" + path);
+        on_exit
+            doSystem("oprop set +test " + val);
+        hash h = UserApi::propGet("+test");
+        assertEq(val, h.firstKey());
+        assertEq(1, h{val});
+    }
+
+    streamConfig() {
+        QorusSystemRestHelper remote();
+        StreamConfig sc("upsert", remote);
+        assertEq(300000, sc.timeout());
+    }
+
+    mapperSort() {
+        # verify that options are sorted according to use
+        hash mh = qrest.get("mappers/mapper-sort-test/options");
+        # give each input element an cardinal number according to its position
+        hash ih = map {$1: $#}, keys mh.input;
+        # give each output element an cardinal number according to its position
+        hash oh = map {$1: $#}, keys mh.output;
+        # check order of first 4 input fields
+        assertEq(("field-1", "field-4", "field-2", "field-3"), (map $1, ih.keys(), $# < 4));
+        assertEq(("FIELD-1", "FIELD-4", "FIELD-6", "FIELD-2", "FIELD-5", "FIELD-3"), (map $1, oh.keys(), $# < 6));
+    }
+
+    backupFile(string fname) {
+        if (! exists fileBackups) {
+            fileBackups = hash();
+        }
+        if (has_key(fileBackups, fname)) {
+            throw "ERROR", sprintf("file %s is already backed up", fname);
+        }
+        File f();
+        int ret = f.open(fname, O_RDONLY);
+        if (ret == -1) { # cannot read the file, no backup (try to remove the file on the end)
+            throw "ERROR", sprintf("cannot backup file %s that cannot be opened: %y", fname, strerror(errno()));
+        } else {
+            fileBackups{fname} = f.read(-1);
+        }
+    }
+
+    writeFile(string fname, *string content) {
+        File f();
+        # FIXME we restore the file with default permissions (0666) and default encoding, which is not optimal. --PQ 12-Sep-2016
+        int ret = f.open(fname, O_CREAT | O_TRUNC | O_WRONLY);
+        if (ret == -1) { # cannot open the file
+            throw "ERROR", sprintf("cannot restore file %s: %y", fname, strerror(errno()));
+        }
+        f.write(content);
+    }
+
+    restoreFile(string fname) {
+        if (!has_key(fileBackups, fname)) {
+            throw "ERROR", sprintf("file %s is not backed up", fname);
+        }
+        writeFile(fname, fileBackups{fname});
+        remove fileBackups{fname};
+    }
+
+    startupShutdownTestCase() {
+        printf("startup shutdown tests\n");
+        # put here all tests that require startup/shutdown
+        deprecatedOptionTestCase();
+    }
+
+    deprecatedOptionTestCase() {
+        string fname = ENV.OMQ_DIR + "/etc/options";
+        on_exit {
+            restoreFile(fname);
+            startSystem();
+        }
+        shutdownSystem();
+        backupFile(fname);
+
+        writeFile(fname, fileBackups{fname} + "\nqorus.flush-status: true\n");
+        {
+            on_exit shutdownSystem();
+            startSystem();
+            bool flush_status = qrest.get("system/options/flush-status/value");
+            assertEq(flush_status, True);
+        }
+    }
+
+    restTestCase() {
+        assertEq(NT_DATE, qrest.get("system/starttime").typeCode());
+
+        # test public APIs
+        restPublicTests();
+
+        # test step APIs
+        restStepTests();
+
+        # test async queue APIs
+        restAsyncQueueTests();
+
+        # test class APIs
+        restClassTests();
+
+        # test constant APIs
+        restConstantTests();
+
+        # test error APIs
+        restErrorTests();
+
+        # test function APIs
+        restFunctionTests();
+
+        # test group APIs
+        restGroupTests();
+
+        # test workflow APIs
+        restWorkflowTests();
+
+        # test job APIs
+        restJobTests();
+
+        # test REST mapper APIs
+        restMapperTests();
+
+        # test REST mapper type APIs
+        restMapperTypeTests();
+
+        # test REST valuemap APIs
+        restValueMapTests();
+
+        # test option APIs
+        restOptionTests();
+
+        # test service APIs
+        restServiceTests();
+
+        # test release APIs
+        restReleaseTests();
+
+        # test sensitive data tests
+        restSensitiveDataTests();
+
+        # test system/userhttp APIs
+        restUserHttpTests();
+
+        # REST exec test
+        restExecTests();
+    }
+
+    restPublicTests() {
+        any h = qrest.get("public/info");
+        assertEq(Type::Hash, h.type());
+        assertEq(Type::String, h."omq-schema".type(), "issue 1722");
+    }
+
+    restStepTests() {
+        hash<auto> sh = qrest.get("workflows/REGRESSION-TEST/stepinfo/RegressionMainStep");
+        assertEq(Type::String, sh.desc.type());
+    }
+
+    restAsyncQueueTests() {
+        hash qh = qrest.get("async-queues/async-test");
+        assertEq("async-test", qh.name);
+        assertEq(Type::Int, qh.queueid.type());
+    }
+
+    restClassTests() {
+        hash<auto> ch = qrest.get("classes/TestClass1");
+        map assertEq($1.value, ch{$1.key}.type(), "REST class." + $1.key), ClassDesc.pairIterator();
+        assertEq((map {$1: True}, keys ClassDesc), (map {$1: True}, keys ch));
+    }
+
+    restConstantTests() {
+        hash ch = qrest.get("constants/TestConstants1");
+        map assertEq($1.value, ch{$1.key}.type(), "REST constant." + $1.key), ConstantDesc.pairIterator();
+        assertEq(ConstantDesc.size(), ch.size());
+    }
+
+    restErrorTests() {
+        hash eh = qrest.get("errors/global/ERROR-1");
+        map assertEq($1.value, eh{$1.key}.type(), "REST error." + $1.key), ErrorDesc.pairIterator();
+        assertEq(ErrorDesc.size(), eh.size());
+    }
+
+    restFunctionTests() {
+        hash fh = qrest.get("functions/TestFunction1");
+        map assertEq($1.value, fh{$1.key}.type(), "REST function." + $1.key), FunctionDesc.pairIterator();
+        assertEq(FunctionDesc.size(), fh.size());
+    }
+
+    restGroupTests() {
+        hash h = qrest.get("groups/test");
+        map assertEq($1.value, h{$1.key}.type(), "REST group." + $1.key), GroupDesc.pairIterator();
+        assertEq(GroupDesc.size(), h.size());
+    }
+
+    restWorkflowTests() {
+        # issue #1895: synthetic groups are being returned in the workflow list in the REST API response
+        hash wh = qrest.get("workflows")[0];
+        assertEq(Type::List, wh.groups.type());
+
+        bool has_synth = False;
+        foreach hash gh in (wh.groups) {
+            hash rgh = qrest.get("groups/" + gh.name);
+            if (rgh.synthetic) {
+                has_synth = True;
+                break;
+            }
+        }
+        assertEq(False, has_synth);
+    }
+
+    restJobTests() {
+        hash h = qrest.get("jobs/del");
+        # in case it hasn't been executed
+        remove h.last_executed;
+
+        hash jh = h;
+        map assertEq($1.value, h{$1.key}.type(), "REST job." + $1.key), JobDesc.pairIterator();
+        assertEq(JobDesc.size(), h.size());
+
+        # test job state APIs
+        string val = UUID::get();
+
+        hash sdh = h.state + (TestKey: val);
+        hash sh = qrest.put("jobs/del/setStateData", ("data": sdh));
+        assertEq(sdh, sh);
+
+        # restore original storage on exit
+        on_exit
+            qrest.put("jobs/del/setStateData", ("data": jh.state));
+
+        h = qrest.get("jobs/del");
+        assertEq(sdh, h.state);
+
+        h = qrest.get("jobs/test?lib_source=1");
+        assertEq(True, h.lib.functions[0].hasKey("body"));
+
+        # issue #1896: no groups are returned in the REST jobs full list
+        list l = qrest.get("jobs");
+        # find a job with groups
+        foreach hash tjh in (l) {
+            if (tjh.groups) {
+                h = tjh;
+                break;
+            }
+        }
+        assertEq(Type::Hash, jh.groups[0].type());
+    }
+
+    restValueMapTests() {
+        hash h = qrest.get("valuemaps/regression3");
+        assertEq(Type::String, h.description.type());
+        # test adding a lookup with no value
+        string action = qrest.put("valuemaps/regression3/value", ("key": TestKey, "value": NOTHING));
+        assertEq("IGNORED", action);
+        assertEq(h, qrest.get("valuemaps/regression3"));
+        # create a value
+        action = qrest.put("valuemaps/regression3/value", ("key": TestKey, "value": 1));
+        assertEq("CREATED", action);
+        # delete the value mapping on exit
+        on_exit {
+            action = qrest.put("valuemaps/regression3/value", ("key": TestKey, "value": NOTHING));
+            assertEq("DELETED", action);
+        }
+        # make sure values are stored as integers
+        string k2 = TestKey + "_2";
+        action = qrest.put("valuemaps/regression3/value", ("key": k2, "value": "string", "enabled": True));
+        assertEq("CREATED", action);
+        assertEq(0, qrest.get("valuemaps/regression3/" + k2));
+        # delete the value mapping on exit
+        on_exit {
+            action = qrest.put("valuemaps/regression3/value", ("key": k2, "value": NOTHING));
+            assertEq("DELETED", action);
+        }
+    }
+
+    restOptionTests() {
+        # get current options excluding any deprecated options with default values
+        hash opts = map {$1.name: $1.value}, qrest.get("system/options"),
+            !$1."startup-only"
+            && ($1.desc !~ /deprecated/
+                || ($1."default" != $1.value));
+        # restore on exit
+        on_exit qrest.put("system/options/set", opts);
+
+        assertEq(opts{"flush-status"}, NOTHING);
+    }
+
+    restMapperTests() {
+        hash h = checkMapper();
+
+        # reload this mapper and try again
+        assertEq((h.mapperid,), qrest.put("mappers/reload?ids=" + h.mapperid));
+
+        checkMapper();
+    }
+
+    restMapperTypeTests() {
+        hash h = qrest.get("mappertypes/Mapper");
+        map assertEq($1.value, h{$1.key}.type(), "REST mappertype." + $1.key), MapperTypeDesc.pairIterator();
+        assertEq(MapperTypeDesc.size(), h.size());
+    }
+
+    restServiceTests() {
+        # test service state APIs
+        string val = UUID::get();
+        hash dh = qrest.get("services/sqlutil");
+        assertEq(Type::Hash, dh.type());
+
+        hash sdh = dh.state + (TestKey: val);
+        hash h = qrest.put("services/sqlutil/setStateData", ("data": sdh));
+        assertEq(sdh, h);
+
+        # restore original storage on exit
+        on_exit
+            qrest.put("services/sqlutil/setStateData", ("data": dh.state));
+
+        h = qrest.get("services/sqlutil");
+        assertEq(sdh, h.state);
+    }
+
+
+    restReleaseTests() {
+        list rl = qrest.get("releases?offset=0;limit=1;with_files=1;with_components=1");
+        if (!rl.size())
+            testSkip("no releases to test");
+        assertEq(1, rl.size());
+        assertEq(True, rl[0].hasKey("files"));
+        assertEq(True, rl[0].files[0].hasKey("components"));
+
+        rl = qrest.get("releases?file_name=RESCHEDULE;limit=1"); # file_name has to be part of test qorus-tests.qrf
+        if (!rl)
+            testSkip("no system releases to test");
+        assertEq(1, rl.size());
+        assertEq(True, rl[0].hasKey("files"));
+
+        rl = qrest.get("releases?component=RESCHEDULE;limit=1"); # component has to be part of test qorus-tests.qrf
+        assertEq(1, rl.size());
+        assertEq(True, rl[0].hasKey("files"));
+        assertEq(True, rl[0].files[0].hasKey("components"));
+    }
+
+    restSensitiveDataTests() {
+        if (!qrest_http || !qrest_https)
+            testSkip("cannot run sensitive data tests; need both HTTP and HTTPS connections to the server to test");
+
+        # get random string for sensitive value
+        string svalue = get_random_string(40);
+
+        # sensitive data
+        hash sdh = (
+            "taxid": (
+                svalue: (
+                    "data": (
+                        "a": "a",
+                    ),
+                    "aliases": ("0", ),
+                ),
+            ),
+        );
+
+        # create an order with sensitive data
+        hash oh = (
+            "staticdata": (
+                "a": "a",
+            ),
+            "sensitive_data": sdh,
+        );
+
+        softint wfiid = qrest_https.post("workflows/SIMPLETEST/createOrder", oh).workflow_instanceid;
+        #printf("wfiid: %y\n", wfiid);
+        hash roh = qrest_https.get("orders/" + wfiid);
+        assertEq(sdh, roh.sensitive_data);
+        assertEq(True, roh.has_sensitive_data);
+
+        # ensure that no sensitive data is returned with an insecure request
+        {
+            hash<auto> info;
+            on_error printf("info: %N\n", info);
+            roh = qrest_http.get("orders/" + wfiid, NOTHING, \info).body;
+        }
+        assertEq(NOTHING, roh.sensitive_data);
+        {
+            on_error printf("roh: %N\n", roh);
+            assertEq(True, roh.has_sensitive_data);
+        }
+
+        # ensure that an order with sensitive data cannot be created over an insecure interface
+        assertThrows("SENSITIVE-DATA-ERROR", \qrest_http.post(), ("workflows/SIMPLETEST/createOrder", oh));
+
+        # replace the sensitive data
+        qrest_https.put("orders/" + wfiid + "/sensitiveData", ("skey": "taxid", "svalue": svalue, "data": ("a": "b"), "aliases": "1"));
+        sdh.taxid{svalue} = (
+            "data": ("a": "b"),
+            "aliases": ("1", ),
+        );
+        roh = qrest_https.get("orders/" + wfiid);
+        assertEq(sdh, roh.sensitive_data);
+
+        # test the sensitive data search API
+        list l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflowname": "SIMPLETEST"));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "status": roh.workflowstatus));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflowid": roh.workflowid));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "modified": now() - 1D));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "minstarted": now() - 1D));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "maxmodified": now() + 1D));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        l = qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "maxstarted": now() + 1D));
+        assertEq(("skey": "taxid", "svalue": svalue), l[0].("skey", "svalue"));
+        assertThrows("INVALID-WORKFLOW", \qrest_https.get(), ("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflowname": "XXX")));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "modified": now() + 1D)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "minstarted": now() + 1D)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "maxstarted": now() - 1D)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "maxmodified": now() - 1D)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "offset": 1)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflowid": -1)));
+        assertEq((), qrest_https.get("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": -1)));
+
+        assertThrows("SENSITIVE-DATA-ERROR", \qrest_http.get(), ("orders/searchSensitiveData", ("skey": "taxid", "svalue": svalue)));
+
+        assertThrows("ORDER-STATUS-ERROR", \qrest_https.del(), ("orders/purgeSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid)));
+        assertThrows("SENSITIVE-DATA-ERROR", \qrest_http.del(), ("orders/purgeSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid)));
+        assertThrows("SENSITIVE-DATA-ERROR", \qrest_http.del(), ("orders/purgeSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid, "force": True)));
+
+        l = qrest_https.del("orders/purgeSensitiveData", ("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid, "force": True));
+        assertEq(("skey": "taxid", "svalue": svalue, "workflow_instanceid": wfiid), l[0].("skey", "svalue", "workflow_instanceid"));
+    }
+
+    restUserHttpTests() {
+        *hash<auto> resp = qrest.get('system/userhttp');
+        assertTrue(resp.typeCode() == Qore::NT_HASH || resp.typeCode() == Qore::NT_NOTHING);
+    }
+
+    restExecTests() {
+        hash<auto> wfh = qrest.get("workflows/SIMPLETEST");
+        if (!wfh.remote) {
+            qrest.put("workflows/SIMPLETEST/setRemote", {"remote": True});
+        }
+        on_exit {
+            if (!wfh.remote) {
+                qrest.put("workflows/SIMPLETEST/setRemote", {"remote": False});
+            }
+        }
+        # issue #2624: make sure the SIMPLETEST workflow can be started without errors
+        qrest.put("workflows/SIMPLETEST/setOptions", {"options": {"no-init-error": True}});
+
+        # start SIMPLETEST workflow
+        qrest.put("workflows/SIMPLETEST/start");
+        on_exit {
+            qrest.put("workflows/SIMPLETEST/stop");
+        }
+
+        hash<auto> eh = qrest.get("workflows/SIMPLETEST/exec")[0];
+        map assertEq($1.value, eh{$1.key}.type(), "REST class." + $1.key), ExecDesc.pairIterator();
+        assertEq(ExecDesc.size(), eh.size());
+    }
+
+    hash checkMapper() {
+        hash h = qrest.get("mappers/regression-out-sql-statement");
+        # the "error" key may or may not be present
+        remove h.error;
+
+        map assertEq($1.value, h{$1.key}.type(), "REST mapper." + $1.key), MapperDesc.pairIterator();
+        assertEq(MapperDesc.size(), h.size());
+
+        # ensure we can get a mapper properly with its version
+        h = qrest.get("mappers/regression-out-sql-statement:" + h.version);
+        # the "error" key may or may not be present
+        remove h.error;
+
+        map assertEq($1.value, h{$1.key}.type(), "REST mapper." + $1.key), MapperDesc.pairIterator();
+        assertEq(MapperDesc.size(), h.size());
+
+        assertEq("QorusSqlStatementOutboundMapper", h.type);
+
+        # negative test with an invalid version
+        assertThrows("MAPPER-ERROR", \qrest.get(), "mappers/regression-out-sql-statement:-1.0");
+
+        return h;
+    }
+
+    indOrderTest() {
+        int array_size = 50;
+        hash args = (
+            "staticdata": {},
+            "options": (
+                "no-errors": True,
+                "fast-exec": True,
+                "array-size": array_size,
+            ),
+        );
+
+        arraytest_wfiid = qrest.post("workflows/ARRAYTEST/execSynchronous", args).workflow_instanceid;
+
+        hash wh = qrest.get("orders/" + arraytest_wfiid);
+
+        list sl = map $1, wh.StepInstances, $1.stepname == "array_test_f1";
+        assertEq(array_size, sl.size());
+        assertEq(range(0, array_size), (map $1.ind, sl));
+    }
+
+    infoServiceTest() {
+        # info.getStepProcessingSummary()
+        list l = qrest.put("services/info/getStepProcessingSummary/call", ("args": ("step": "array_test_f1", "mindate": now() - 1D)));
+        hash h = l[0];
+        assertEq("array_test_f1", h.name);
+        assertEq(Type::Int, h.stepid.type());
+        assertEq(Type::String, h.version.type());
+        assertEq(Type::Int, h.count.type());
+        assertEq(Type::Date, h.minstarted.type());
+        assertEq(Type::Date, h.maxcompleted.type());
+        assertEq(Type::Date, h.avgduration.type());
+        assertEq(Type::Date, h.maxduration.type());
+
+        # info.getStepInstanceList()
+        # test issue 1777
+        l = qrest.put("services/info/getStepInstanceList?action=call", ("args": arraytest_wfiid));
+        h = l[0];
+        assertEq(Type::Int, h.workflow_instanceid.type());
+        assertEq(Type::Int, h.stepid.type());
+        assertEq(Type::Int, h.ind.type());
+        assertEq(Type::String, h.stepstatus.type());
+        assertEq(Type::Int, h.skip.type());
+        assertEq(Type::Date, h.started.type());
+        assertEq(Type::Date, h.completed.type());
+
+        # info.getWFIStepInstances()
+        # test issue 1777
+        h = qrest.put("services/info/getWFIStepInstances?action=call", ("args": arraytest_wfiid));
+        h = h.StepInstances[0];
+        assertEq(Type::Int, h.workflow_instanceid.type());
+        assertEq(Type::Int, h.stepid.type());
+        assertEq(Type::Int, h.ind.type());
+        assertEq(Type::String, h.stepname.type());
+        assertEq(Type::String, h.stepversion.type());
+        assertEq(Type::String, h.steptype.type());
+        assertEq(Type::String, h.stepstatus.type());
+        assertEq(Type::Boolean, h.skip.type());
+        assertEq(Type::Date, h.started.type());
+        assertEq(Type::Date, h.completed.type());
+        assertEq(Type::Boolean, h.business_error.type());
+    }
+
+    rpcTest() {
+        # read in options
+        string ostr = `cat $OMQ_DIR/etc/options`;
+        string str = omqapi.callAPI("flush-options");
+        # move the file back on exit
+        on_exit {
+            File f();
+            f.open2(ENV.OMQ_DIR + "/etc/options", O_CREAT | O_WRONLY | O_TRUNC);
+            f.write(ostr);
+        }
+
+        assertEq("OK", str);
+
+        # issue #1888: make sure the new options file has no UNIX socket file in the http-server option
+        str = backquote("grep /tmp/qorus-sock- $OMQ_DIR/etc/options");
+        assertEq("", str);
+    }
+}
+
+class TempFileHelper {
+    constructor(string fn) {
+        init();
+        path = dirname + DirSep + fn;
+    }
+
+    constructor(string fn, data content) {
+        init();
+        path = create(fn, content);
+    }
+
+    destructor() {
+        map unlink($1), paths, is_file($1);
+        rmdir(dirname);
+    }
+
+    string get() {
+        return path;
+    }
+
+    string create(string fn, data file_data) {
+        File f();
+        string file_path = dirname + DirSep + fn;
+        f.open2(file_path, O_CREAT | O_TRUNC | O_WRONLY);
+        paths += file_path;
+        f.write(file_data);
+        return file_path;
+    }
+
+    private:internal init() {
+        dirname = tmp_location() + DirSep + get_random_string();
+        mkdir(dirname);
+    }
+
+    private:internal {
+        string dirname;
+        string path;
+        list<string> paths();
+    }
+}

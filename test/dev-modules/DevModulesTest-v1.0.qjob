@@ -1,0 +1,34 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: DevModulesTest
+# version: 1.0
+# desc: class-based test job
+# author: Qore Technologies, s.r.o.
+# single-instance: false
+# active: false
+# run-skipped: true
+# job-modules: TestJob
+##schedule: min hour day month dow
+# schedule: 0,10,20,30,40,50 * * * mon-fri
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# language: qore
+# class-based: true
+# functions: regression-lib
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class DevModulesTest inherits TestJob {
+    runImpl() {
+        logInfo("test job info: %y", getInfo());
+
+        *int aid = auditUserEvent("REGRESSION-JOB-EVENT");
+        test_value(aid.type(), auditCheckEventString(OMQ::AES_USER_EVENT) ? Type::Int : Type::NothingType, "audit-1");
+
+        logInfo("h: %y", getUserContextInfo());
+    }
+}
+# END

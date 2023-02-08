@@ -1,0 +1,29 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test interfaces",
+    },
+};
+
+const Steps = (
+    "class:Issue3233Step1:1.0",
+    "class:Issue3233Step2:1.0"
+);
+
+# workflow definition
+our hash<auto> workflows."ISSUE-3233-WORKFLOW"."1.0" = {
+    "desc": "issue 3233 workflow",
+    "author": "Qore Technologies, s.r.o.",
+    "steps": Steps,
+    "groups": "test",
+    "classes": ("Issue3233BaseStep",),
+    "sla_threshold": 2,
+};

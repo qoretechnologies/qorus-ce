@@ -1,0 +1,44 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3816JobTest
+
+class Issue3816JobTest inherits QorusJobTest {
+    public {}
+
+    constructor() : QorusJobTest("issue-3816", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        hash<auto> h = qrest.post("workflows/DUMMY-TEST/execSynchronous", {"staticdata": {}});
+        assertEq(OMQ::StatComplete, h.status);
+
+        qrest.put("jobs/issue-3816/config/wfiid", {"value": h.workflow_instanceid});
+        RunJobResult job(OMQ::StatComplete);
+        hash<auto> result = exec(job).getJobResult();
+        hash<auto> info = getJobResultHash(result.job_instanceid).info;
+        assertEq("DUMMY-TEST", info.order.input.name);
+        assertEq(OMQ::StatComplete, info.order.input.workflowstatus);
+        assertEq(h.workflow_instanceid.toInt(), info.order.input.workflow_instanceid);
+
+        h = qrest.put("jobs/issue-3816-2/run");
+        assertEq(OMQ::StatComplete, h.status);
+
+        info = qrest.get("jobresults/" + h.job_instanceid).info;
+        assertEq(Type::Int, info.output.workflow_instanceid.type());
+        assertFalse(info.output.duplicate);
+    }
+}

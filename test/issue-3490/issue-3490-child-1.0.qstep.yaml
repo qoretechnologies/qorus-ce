@@ -1,0 +1,11 @@
+# This is a generated file, don't edit!
+type: step
+name: issue-3490-child
+desc: 'issue #3490 child'
+base-class-name: QorusEventStep
+class-name: Issue3490Child
+event: issue-3490
+lang: qore
+version: "1.0"
+steptype: EVENT
+code: issue-3490-child-1.0.qstep

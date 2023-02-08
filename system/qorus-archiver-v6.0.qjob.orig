@@ -1,0 +1,85 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+# version 5.1: Qorus 5.1: updated to YAML metadata; no change in functionality
+# version 4.0: Qorus 4.0: updated to a class-based job; no change in functionality
+# version 1.0: initial release
+
+#! Qorus archiver job
+class QorusArchiver inherits QorusJob {
+    public {
+        const QAM_ARCHIVE = "ARCHIVE";
+        const QAM_PURGE = "PURGE";
+    }
+
+    #! System job for data archiving - archiving process has to be configured first.
+    /** See documentation @ref archiving.
+
+        This job expects archiving to be properly set up already, and it does not handle
+        any additional user inputs.  So at least \c max-loops should be set - keeping it
+        with the defailt value (0) can cause performance problems for the system.
+
+        Also consider setting \c no-metadata to speed up archiving actions.  Please note
+        that this option requires at least one run with metadata archivin enabled and then
+        one archiving run with metadata enabled after each user code deployment as well.
+    */
+    run() {
+        string mode = getConfigItemValue("mode");
+        logInfo("running in %y mode", mode);
+        date start = now_us();
+        on_exit {
+            logInfo("%y run elapsed time: %y", mode, now_us() - start);
+        }
+        hash<auto> result;
+        on_exit {
+            saveInfo(result);
+        }
+        switch (mode) {
+            case QAM_ARCHIVE: {
+                result = omqservice.system.arch.archive();
+                break;
+            }
+            case QAM_PURGE: {
+                result = omqservice.system.arch.purge();
+                break;
+            }
+        }
+    }
+
+    # returns config items for this job
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "mode": <ConfigItemInfo>{
+                "type": "string",
+                "default_value": QAM_PURGE,
+                "allowed_values": (QAM_ARCHIVE, QAM_PURGE),
+                "description": "Archiving mode: \"ARCHIVE\" means to run archiving and purging (requires archiving "
+                    "enabled and an archive datasource); \"PURGE\" means to delete old data only without archiving",
+                "config_group": "Archiving Main",
+                "strictly_local": True,
+            },
+        };
+    }
+}

@@ -1,0 +1,57 @@
+# service: qdsp-performance-test
+# serviceversion: 1.0
+# servicedesc: QDSP performance test
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: QdspPerfromanceTest
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# autostart: false
+# define-group: EXAMPLES: example interface objects
+# groups: EXAMPLES
+# ENDSERVICE
+
+class QdspPerfromanceTest inherits QorusService {
+    # name: init
+    # desc: just to ensure it is running
+    init() {
+    }
+
+    private int fetchColumnsInternal(string dsname, int loops = -1, hash sh = {}) {
+        AbstractDatasource ds = UserApi::getDatasourcePool(dsname);
+        on_success ds.commit();
+        on_error ds.rollback();
+
+        AbstractTable t = UserApi::getSqlTable(ds, "qsd_performance_test");
+        SQLStatement stmt = t.getRowIterator(sh);
+
+        int rows = 0;
+        int int_loops = 0;
+        while (*hash h = stmt.fetchColumns(sh.limit ?? 1000)) {
+            rows += h.firstValue().size();
+            int_loops++;
+            if (loops != -1 && int_loops > loops) {
+                break;
+            }
+        }
+        return rows;
+    }
+
+    # name: fetchColumns
+    # desc: SQLStatement::fetchColumns() like test
+    int fetchColumns(string dsname) {
+        return fetchColumnsInternal(dsname);
+    }
+
+    # name: fetchColumnsRotateConnections
+    # desc: perform
+    int fetchColumnsRotateConnections(string dsname, int count) {
+        int ret = 0;
+        hash sh = {
+            "limit": 1,
+        };
+
+        for (int i = 0; i < count; i++) {
+            ret += fetchColumnsInternal(dsname, 1, sh);
+        }
+        return ret;
+    }
+}

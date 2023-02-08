@@ -1,0 +1,67 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+$groups.regression.desc = "regression test group";
+
+$events."regression-test".desc = "test event type for the REGRESSION-TEST workflow";
+
+const feedback_parent = {
+    "name": "feedback_parent:1.1",
+    "subworkflow": True,
+    # bug 1238
+    "arrayname": "feedback_array:1.0",
+    # issue #2434: set description
+    "desc": "feedback parent description",
+};
+
+const revent = {
+    "name": "RegressionMainStep:1.0",
+    "classname": "RegressionMainStep:1.0",
+    "eventtype": "regression-test",
+};
+
+const retry = "regression_retry:1.0";
+
+$steps = (feedback_parent, revent, retry);
+
+$workflows."REGRESSION-TEST"."1.3" = {
+    "desc"         : "regression test workflow",
+    "author"       : "Qore Technologies, s.r.o.",
+    "sla_threshold": 120,
+    "steps"        : $steps,
+    "groups"       : ("test", "regression"),
+    "functions"    : (
+        "regression-lib",
+        "regression-untyped-lib",
+        "regression1",
+        # test for issue #2282
+        "feedback_parent",
+    ),
+    "onetimeinit"  : "regression_test_onetimeinit:1.0",
+    "attach"       : "regression_test_attach:1.0",
+    "classes"      : (
+        "JavaRegression",
+    ),
+    "keylist"      : ("test", "test-2299"),
+    "errorfunction": "regression_errors:1.0",
+    "options"      : {
+        "test-opt": "test option",
+        "test-opt2": "test option",
+    },
+    "mappers"      : (
+        "regression-out-sql-statement:1.0",
+        "regression-out-rawsql-statement:1.0",
+        "mapper-sort-test:1.0",
+        "invalid-test-mapper:1.0",
+        "java-test-mapper:1.0",
+        "mapper-api-test:1.0",
+    ),
+    "vmaps"        : ("regression1", "regression2", "regression3"),
+    "max_instances": 1,
+};
+

@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: service
+name: context-data-test
+desc: test service context data
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: ContextDataTest
+groups:
+  - regression
+  - test
+lang: qore
+version: "1.0"
+servicetype: USER
+code: context-data-test-1.0.qsd
+methods:
+  - name: test
+    desc: test type

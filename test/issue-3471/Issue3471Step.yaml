@@ -1,0 +1,20 @@
+# This is a generated file, don't edit!
+type: step
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusNormalStep
+class-name: Issue3471Step
+desc: test step class
+lang: java
+name: Issue3471Step
+version: "1.0"
+steptype: NORMAL
+code: Issue3471Step.java
+config-items:
+  - name: issue-3471-step-cfg-item-1
+    default_value:
+        null
+    type: "*hash"
+    description: "test"
+    strictly_local: true
+    config_group: test

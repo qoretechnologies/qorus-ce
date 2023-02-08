@@ -1,0 +1,60 @@
+# This is a generated file, don't edit!
+type: service
+name: issue-3834-swagger
+desc: 'issue #3834 Swagger test'
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3834Swagger
+groups:
+  - regression
+  - test
+remote: false
+version: '1.0'
+api-manager:
+    factory: swagger
+    provider-options:
+        schema:
+            type: file-as-string
+            value: billing-demo-1.0.yaml
+        root-uri:
+            type: string
+            value: issue-3834-swagger
+        auth-name:
+            type: select-string
+            value: permissive
+    endpoints:
+        -
+            endpoint: /accounts/*/GET
+            type: fsm
+            value: issue-3834-get-account
+        -
+            endpoint: /accounts/*/PUT
+            type: method
+            value: account_put
+        -
+            endpoint: /accounts/*/DELETE
+            type: method
+            value: account_delete
+        -
+            endpoint: /accounts/GET
+            type: method
+            value: accounts_get
+        -
+            endpoint: /accounts/POST
+            type: method
+            value: accounts_post
+servicetype: USER
+code: issue-3834-swagger-1.0.qsd
+methods:
+  - name: init
+    desc: init method
+  - name: account_put
+    desc: method
+  - name: account_delete
+    desc: method
+  - name: accounts_get
+    desc: method
+  - name: accounts_post
+    desc: method

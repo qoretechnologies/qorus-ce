@@ -1,0 +1,13 @@
+# This is a generated file, don't edit!
+type: class
+name: JavaConnectorTest
+desc: To test Java connectors from other languages
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: test
+    method: test
+    type: input-output
+lang: java
+version: "1.0"
+code: JavaConnectorTest-1.0-class/JavaConnectorTest.java

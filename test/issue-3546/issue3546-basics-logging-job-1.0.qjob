@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3546BasicsLoggingJob inherits QorusJob {
+    run() {
+        logInfo("job info: %y", getInfo());
+    }
+}

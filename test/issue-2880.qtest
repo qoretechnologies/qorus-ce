@@ -1,0 +1,242 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue2880
+
+class QorusIssue2880 inherits Test {
+    public {
+        const PollInterval = 250ms;
+    }
+
+    constructor() : Test("Issue2880Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # test Qore
+        {
+            # start workflow and stop it when done
+            qrest.put("workflows/USER-INTERACTION-TEST/setAutostart", {"autostart": 1});
+            hash<auto> h = qrest.post("workflows/USER-INTERACTION-TEST/createOrder", {"staticdata": {}});
+            if (m_options.verose > 2) {
+                printf("USER-INTERACTION-TEST wfiid %d created\n", h.workflow_instanceid);
+            }
+
+            waitForStatus("2880-1", h.workflow_instanceid, StatAsyncWaiting, (StatError, StatComplete));
+
+            if (m_options.verose > 2) {
+                list<auto> stepdata = qrest.get("orders/" + h.workflow_instanceid + "/stepdata");
+                printf("stepdata: %y\n", stepdata);
+            }
+
+            # test for 404 error
+            try {
+                qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep", {
+                    "stepname": "xxx",
+                });
+                assertEq(True, False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq(404, ex.arg.status_code);
+            }
+
+            # test for 400 error
+            try {
+                qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep");
+                assertEq(True, False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq(400, ex.arg.status_code);
+            }
+
+            *hash<auto> sh = qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep", {
+                "stepname": "user-interaction-test-1",
+            });
+            if (m_options.verose > 2) {
+                printf("sh: %y\n", sh);
+            }
+
+            # release the lock
+            qrest.post("orders/" + h.workflow_instanceid + "/releaseUserInteractionStepLock",
+                {"stepid": sh.stepid, "ind": sh.ind});
+
+            # test for 404 error
+            try {
+                qrest.post("orders/" + h.workflow_instanceid + "/releaseUserInteractionStepLock",
+                    {"stepid": -sh.stepid, "ind": sh.ind});
+                assertEq(True, False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq(404, ex.arg.status_code);
+            }
+
+            # test for 400 error
+            try {
+                qrest.post("orders/" + h.workflow_instanceid + "/releaseUserInteractionStepLock",
+                    {"ind": sh.ind});
+                assertEq(True, False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq(400, ex.arg.status_code);
+            }
+
+            # lock it again
+            sh = qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep", {
+                "stepname": "user-interaction-test-1",
+            });
+
+            # break the lock
+            qrest.post("orders/" + h.workflow_instanceid + "/breakUserInteractionStepLock",
+                {"stepid": sh.stepid, "ind": sh.ind, "note": "test"});
+
+            # lock it again
+            sh = qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep", {
+                "stepname": "user-interaction-test-1",
+            });
+
+            assertEq(Type::Int, sh.workflow_instanceid.type());
+            assertEq(Type::Int, sh.stepid.type());
+            assertEq(Type::Int, sh.ind.type());
+            assertEq(Type::String, sh.queuekey.type());
+            assertEq(Type::Int, sh.queueid.type());
+            assertEq(Type::String, sh.queuename.type());
+
+            assertEq(h.workflow_instanceid.toInt(), sh.workflow_instanceid);
+
+            # update locked step data
+            qrest.put("orders/" + h.workflow_instanceid + "/stepData", {
+                "stepid": sh.stepid,
+                "ind": sh.ind,
+                "newdata": {
+                    "test1": "test",
+                },
+            });
+
+            # post workflow queue data
+            qrest.post("async-queues/" + sh.queuename + "/update", {"key": sh.queuekey, "data": {}});
+
+            # wait for order to go to COMPLETE
+            waitForStatus("2880-2", h.workflow_instanceid, StatComplete, StatError);
+
+            # ensure that the REST order response has the step data when the order is not cached
+            assertEq(Type::List, qrest.get("orders/" + h.workflow_instanceid + "/stepdata/")[0].data.type());
+        }
+        # test Java and YAML step data APIs
+        {
+            # start workflow and stop it when done
+            qrest.put("workflows/JAVA-USER-INTERACTION-TEST/setAutostart", {"autostart": 1});
+            hash<auto> h = qrest.post("workflows/JAVA-USER-INTERACTION-TEST/createOrder", {"staticdata": {}});
+
+            waitForStatus("java-2880-1", h.workflow_instanceid, StatAsyncWaiting, (StatError, StatComplete));
+
+            *hash<auto> sh = qrest.post("orders/" + h.workflow_instanceid + "/lockUserInteractionStep", {
+                "stepname": "java-user-interaction-test-1",
+            });
+            if (m_options.verose > 2) {
+                printf("sh: %y\n", sh);
+            }
+
+            assertEq(Type::Int, sh.workflow_instanceid.type());
+            assertEq(Type::Int, sh.stepid.type());
+            assertEq(Type::Int, sh.ind.type());
+            assertEq(Type::String, sh.queuekey.type());
+            assertEq(Type::Int, sh.queueid.type());
+            assertEq(Type::String, sh.queuename.type());
+
+            assertEq(h.workflow_instanceid.toInt(), sh.workflow_instanceid);
+
+            # update locked step data
+            hash<auto> new_step_data = {
+                "test1": "test",
+            };
+            qrest.put("orders/" + h.workflow_instanceid + "/yamlStepData", {
+                "stepid": sh.stepid,
+                "ind": sh.ind,
+                "newdata": make_yaml(new_step_data),
+            });
+
+            # test step data APIs
+            assertEq(new_step_data, qrest.get("orders/" + h.workflow_instanceid + "/stepdata")[0].data[0]);
+            assertEq(new_step_data, parse_yaml(qrest.get("orders/" + h.workflow_instanceid + "/yamlStepData",
+                {"stepid": sh.stepid, "ind": sh.ind})));
+            assertEq(new_step_data, qrest.get("orders/" + h.workflow_instanceid + "/stepData",
+                {"stepid": sh.stepid, "ind": sh.ind}));
+
+            # post workflow queue data
+            qrest.post("async-queues/" + sh.queuename + "/update", {"key": sh.queuekey, "data": {}});
+
+            # wait for order to go to COMPLETE
+            waitForStatus("java-2880-2", h.workflow_instanceid, StatComplete, StatError);
+
+            # ensure that the REST order response has the step data when the order is not cached
+            assertEq(Type::List, qrest.get("orders/" + h.workflow_instanceid + "/stepdata/")[0].data.type());
+        }
+    }
+
+    waitForStatus(string label, softstring wfiid, string status = OMQ::StatComplete, *softlist errors,
+            *string stepname) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (exists errors && inlist(h.workflowstatus, errors))
+                break;
+
+            #if (m_options.verose > 2) {
+            #    printf("wfiid %y status == %y (err: %y) h: %y\n", wfiid, status, errors, h);
+            #}
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        if (stepname) {
+            bool done;
+            while (!done) {
+                bool found;
+                foreach hash sh in (h.step_instance.iterator()) {
+                    if (sh.name == stepname) {
+                        if (sh.stepstatus == status) {
+                            if (m_options.verose > 2) {
+                                printf("wfiid %d step %y has status %y\n", wfiid, stepname, status);
+                            }
+                            done = True;
+                            break;
+                        }
+                        if (sh.stepstatus != OMQ::StatInProgress)
+                            throw "STEP-STATUS-ERROR", sprintf("wfiid %d step %y expecting status %y; got %y", wfiid,
+                                stepname, status, sh.stepstatus);
+                        found = True;
+                    }
+                }
+
+                if (m_options.verose > 2) {
+                    printf("wfiid %d step %y %sfound; sleeping %d us\n", wfiid, stepname, found ? "" : "not ",
+                        PollInterval);
+                }
+
+                # wait for status to change
+                usleep(PollInterval);
+                h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            }
+        }
+
+        assertEq(status, h.workflowstatus);
+    }
+}

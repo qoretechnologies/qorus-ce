@@ -1,0 +1,22 @@
+# This is a generated file, don't edit!
+type: job
+name: python-simple-test
+desc: Python simple test job
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: PythonSimpleTest
+lang: python
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+code: python-simple-test-1.0.qjob.py
+system-options:
+  stack-size:
+    type: byte-size
+    value: 1MB

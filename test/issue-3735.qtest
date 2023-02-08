@@ -1,0 +1,97 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3735
+
+class Issue3735 inherits Test {
+    public {}
+
+    private {
+        date test1;
+        hash<auto> dd;
+        softint wfiid;
+    }
+
+    constructor() : Test("Issue3735", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("restTest", \restTest());
+        addTestCase("apiTest", \apiTest());
+
+        set_return_value(main());
+    }
+
+    private restTest() {
+        # create an order instance
+        hash<auto> h = qrest.post("workflows/DUMMY-TEST/execSynchronous", {"staticdata": {}});
+        assertEq(OMQ::StatComplete, h.status);
+        assertEq(Type::Date, h.dynamicdata.test1.type());
+
+        # create random dynamic data
+        dd = {
+            "data-1": get_random_string(),
+            "data-2": get_random_string(),
+        };
+
+        qrest.put("orders/" + h.workflow_instanceid + "/updateDynamicData", {"newdata": dd});
+
+        hash<auto> h1 = qrest.get("orders/" + h.workflow_instanceid + "/dynamicdata");
+        assertEq(h.dynamicdata + dd, h1);
+        test1 = h1.test1;
+
+        dd = {
+            "data-1": get_random_string(),
+            "data-2": get_random_string(),
+        };
+        string yaml = make_yaml(dd);
+
+        qrest.put("orders/" + h.workflow_instanceid + "/yamlUpdateDynamicData", {"newdata": yaml});
+        h1 = qrest.get("orders/" + h.workflow_instanceid + "/dynamicdata");
+        assertEq(h.dynamicdata + dd, h1);
+
+        string data3 = get_random_string();
+        qrest.put("orders/" + h.workflow_instanceid + "/updateDynamicDataPath", {"path": "data-3", "value": data3});
+
+        h1 = qrest.get("orders/" + h.workflow_instanceid + "/dynamicdata");
+        assertEq(h.dynamicdata + dd + {"data-3": data3}, h1);
+
+        data3 = get_random_string();
+        yaml = make_yaml(data3);
+        qrest.put("orders/" + h.workflow_instanceid + "/yamlUpdateDynamicDataPath",
+            {"path": "data-3", "value": data3});
+
+        h1 = qrest.get("orders/" + h.workflow_instanceid + "/dynamicdata");
+        assertEq(h.dynamicdata + dd + {"data-3": data3}, h1);
+
+        dd."data-3" = data3;
+        wfiid = h.workflow_instanceid;
+    }
+
+    private apiTest() {
+        hash<auto> dd1 = {
+            "data-5": get_random_string(),
+            "data-6": get_random_string(),
+            "data-7": get_random_string(),
+        };
+
+        string value = get_random_string();
+        hash<auto> sd = {
+            "wfiid": wfiid,
+            "dd": dd1,
+            "path": "data-4",
+            "value": value,
+        };
+        hash<auto> h = qrest.post("workflows/ISSUE-3735/execSynchronous", {"staticdata": sd});
+        assertEq(OMQ::StatComplete, h.status);
+
+        hash<auto> h1 = qrest.get("orders/" + wfiid + "/dynamicdata");
+        assertEq(h.dynamicdata + dd + dd1 + {"data-4": value, "test1": test1}, h1);
+    }
+}

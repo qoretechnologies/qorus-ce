@@ -1,0 +1,695 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2007 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# Qorus Integration Engine offline (DB-based) RBAC tool
+# manipulates users, access groups, roles, permissions directly in the Qorus database
+
+%new-style
+%strict-args
+%require-our
+%require-types
+%enable-all-warnings
+%exec-class userTool
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# include qorus client library code
+%requires QorusClientBase
+
+# options for GetOpt
+const opts = (
+    "cascade"      : "c,cascade",
+
+    "g_add"        : "g,add-group=s@",
+    "g_edit"       : "t,update-group=s@",
+    "g_list"       : "S,list-groups:i+",
+    "g_info"       : "n,group-info=s@",
+    "gw_add"       : "b,add-group-wf=s@",
+    "gw_del"       : "z,del-group-wf=s@",
+    "gs_add"       : "j,add-group-svc=s@",
+    "gs_del"       : "x,del-group-svc=s@",
+
+    "genkeys"      : "K,generate-keys",
+
+    "del"          : "X,delete=s@",
+    "quiet"        : "q,quiet",
+    "ds"           : "D,datasource=s",
+    "url"          : "u,url=s",
+    "show"         : "W,show-url",
+    "sync"         : "s,synchronize",
+    "verbose"      : "v,verbose:i+",
+    "remote"       : "Q,remote=s",
+    "help"         : "h,help",
+);
+
+const group_attrs = (
+    "desc": True,
+    "workflows": True,
+    "services": True,
+    "jobs": True,
+    "enabled": True,
+);
+
+const SALT_SIZE = 40;
+
+class userTool {
+    private {
+        hash options;
+        hash o;
+        hash del;
+
+        hash gw_add;
+        hash gw_del;
+
+        hash gs_add;
+        hash gs_del;
+
+        bool have_all_perms;
+
+        AbstractDatasource db;
+
+        SQLInterface sqlif;
+
+        # map of group names to IDs
+        hash gmap;
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        # read in options from OMQ_DIR/etc/options
+        options = omqclient.getOptions();
+
+        try {
+            # process command-line
+            process_command_line();
+
+            if (!exists del && !o.sync
+                && !exists o.g_add && !exists o.g_edit && !exists o.g_info && !o.g_list
+                && !exists gw_add && !exists gs_add && !exists gw_del && !exists gs_del
+                && !o.genkeys) {
+                if (!o.quiet) {
+                    printf("missing options, -h or --help for help!\n");
+                }
+                thread_exit;
+            }
+
+            if (o.remote)
+                omqapi = omqclient.getRemote(o.remote);
+
+            sqlif = omqclient.getSQLIF();
+            db = sqlif.omqp;
+
+            if (o.genkeys)
+                omqclient.generateKeys();
+
+            foreach string group in (o.g_info)
+                groupInfo(group);
+
+            if (exists o.g_list)
+                listGroups();
+
+            if (exists o.g_add)
+                addGroups(o.g_add);
+
+            foreach string d in (del.group)
+                deleteGroup(d);
+
+            foreach string g in (o.g_edit)
+                updateGroup(g);
+
+            foreach string gw in (keys gw_add)
+                addWorkflowToGroup(gw, gw_add{gw});
+
+            foreach string gw in (keys gw_del)
+                delWorkflowFromGroup(gw, gw_del{gw});
+
+            foreach string gs in (keys gs_add)
+                addServiceToGroup(gs, gs_add{gs});
+
+            foreach string gs in (keys gs_del)
+                delServiceFromGroup(gs, gs_del{gs});
+
+            if (o.sync)
+                synchronize();
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf("%s:%d: %s: %s\n", ex.file, ex.line, ex.err, ex.desc);
+            if (exists db)
+                db.rollback();
+            exit(2);
+        }
+    } # constructor
+
+    process_command_line() {
+        GetOpt g(opts);
+        o = g.parse(\ARGV);
+        if (o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+
+        if (o.show) {
+            if (exists options."qorus-client"."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", options."qorus-client"."client-url", options."qorus-client"."proxy-url");
+            else
+                printf("%s\n", options."qorus-client"."client-url");
+            thread_exit;
+        }
+
+        if (o.help)
+            usage();
+
+        if (ARGV) {
+            stderr.printf("extraneous text %y on command line, use -h or --help for help\n", shift ARGV);
+            exit(1);
+        }
+
+        if (o.url)
+            omqapi.setURL(o.url);
+
+        if (o.del) {
+            foreach any arg in (o.del) {
+                any l = arg =~ x/^(group):(.*)/i;
+                if (!elements l)
+                    error("DELETE-ERROR", "expecting group:<name>; got: %y", arg);
+                if (!exists del.(l[0]))
+                    del.(l[0]) = ();
+                del.(l[0]) += l[1];
+            }
+        }
+
+        if (o.gw_add)
+            gw_add = process_u_r_obj(o.gw_add, "group", "workflow");
+        if (o.gw_del)
+            gw_del = process_u_r_obj(o.gw_del, "group", "workflow");
+
+        if (o.gs_add)
+            gs_add = process_u_r_obj(o.gs_add, "group", "service");
+        if (o.gs_del)
+            gs_del = process_u_r_obj(o.gs_del, "group", "service");
+
+        if (o.ds)
+            omqclient.setDatasourceFromText("omq=" + o.ds);
+    } #process_command_line
+
+    log(int ll, string fmt) {
+        if (!o.verbose || (o.quiet && ll >= LoggerLevel::INFO))
+            return;
+        vprintf(fmt + "\n", argv);
+    }
+
+    synchronize() {
+        try {
+            omqapi."reload-rbac"();
+            if (!o.quiet)
+                printf("RBAC database reloaded on %s\n", omqapi.getURL());
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR")
+                printf("ERROR: Qorus CE server at %y is down\n", omqapi.getURL());
+            else
+                printf("%s: %s\n", ex.err, ex.desc);
+            exit(2);
+        }
+    } # synchronize
+
+    # process lists of arguments in the format targ:obj1[,obj2...]
+    hash process_u_r_obj(list upm_list, string targ, string obj) {
+        hash h;
+        foreach string ur in (upm_list) {
+            (*string name, *string arg) = (ur =~ x/([^:]+):(.+)/);
+            if (!arg)
+                error(sprintf("%s-ERROR", toupper(targ)), "expected %s:%s, got: %y", targ, obj, ur);
+            if (h{name})
+                error(sprintf("%s-ERROR", toupper(targ)), "key %y given twice", name);
+            h{name} = split(",", arg);
+        }
+        return h;
+    }
+
+    # returns True for delta, False for replacement
+    static getUnique(reference<list<auto>> l) {
+        trim l;
+        hash<string, bool> h;
+        map h.$1 = True, l;
+        l = keys h;
+    }
+
+    static list getActions(softlist l, *code code) {
+        trim l;
+        *bool dt;
+        list rv = ();
+        foreach string k in (l) {
+            bool edt = inlist(k[0], ("+", "-"));
+            #printf("dt: %y edt: %y k: %y\n", dt, edt, k);
+            if (!exists dt) {
+                dt = edt;
+                if (!dt)
+                    rv += ("action": "delete-all");
+            } else if (dt != edt)
+                throw "ARG-ERROR", sprintf("invalid combination of delta and non-delta arguments: %y", l);
+            if (edt) {
+                string act = extract k, 0, 1;
+                rv += ("action": (act == "+" ? "add" : "delete"), "arg": code ? code(k) : k);
+            } else
+                rv += ("action": "add", "arg": code ? code(k) : k);
+        }
+        return rv;
+    }
+
+    deleteGroup(string group) {
+        if (group == DefaultGroupName)
+            error("DELETE-GROUP-ERROR", "cannot delete group \"DEFAULT\"");
+        # make sure group exists
+        any q = db.selectRow("select * from groups where name = %v", group);
+        if (!exists q)
+            error("DELETE-GROUP-ERROR", "group %y does not exist", group);
+        softint groupid = q.groupid;
+
+        hash h = sqlif.deleteGroup(groupid);
+
+        if (!o.quiet)
+            printf("- GROUP %y(%d) deleted (removed from roles: %d)\n", group, groupid, h.roles);
+    } # deleteGroup
+
+    addGroups(list groups) {
+        foreach string group in (groups) {
+            (*string name, *string arg) = (group =~ x/([^:]+):(.+)/);
+
+            if (!name || !arg)
+                error("ADD-GROUP-ERROR", "expecting add group argument in the format: \"name:arg=value[,...]\", got: %y", group);
+
+            # make sure group does not exist
+            if (exists (db.selectRow("select groupid from groups where name = %v", name)))
+                error("ADD-GROUP-ERROR", "group %y already exists", name);
+
+            # process options
+            *string opt = (arg =~ x/^(\w+=.+)/)[0];
+            if (!opt)
+                error("ADD-GROUP-ERROR", "expecting key=value, got: %y", opt);
+            hash h;
+            while (opt) {
+                (*string key, *string value) = (opt =~ x/([^=]+)=(.*)/);
+                if (!key || !value)
+                    error("ADD-GROUP-ERROR", "expecting key=value, got: %y", opt);
+                if (!group_attrs{key})
+                    error("ADD-GROUP-ERROR", "expecting key=%y, got: %y", group_attrs.keys(), key);
+                if (h{key})
+                    error("ADD-GROUP-ERROR", "%y set twice in %y", key, opt);
+
+                # see if there are additional arguments to remove, accept both commas and semi-colons as separators
+                opt = (value =~ x/[,;](\w+=.+)/)[0];
+                if (opt)
+                    splice value, value.size() - opt.size();
+
+                if (key == "desc" || key == "enabled") {
+                    h{key} = value;
+                    continue;
+                }
+                h{key} = value.split(",");
+                userTool::getUnique(\h{key});
+            }
+
+            if (!h.desc)
+                error("ADD-GROUP-ERROR", "group %y argument missing \"desc\" key", name);
+
+            # get workflow IDs
+            getWorkflowIds(\h.workflows);
+            # get service IDs
+            getUserServiceIds(\h.services);
+            # get job IDs
+            getJobIds(\h.jobs);
+
+            list wf_cmds = ();
+            map wf_cmds += ("action": "add", "arg": $1), h.workflows;
+            list svc_cmds = ();
+            map svc_cmds += ("action": "add", "arg": $1), h.services;
+            list job_cmds = ();
+            map job_cmds += ("action": "add", "arg": $1), h.jobs;
+
+            h.enabled = exists h.enabled ? parse_boolean(h.enabled) : True;
+
+            softint gid = sqlif.addGroup(name, h.desc, h.enabled, wf_cmds, svc_cmds, job_cmds);
+
+            if (!o.quiet) {
+                printf("+ GROUP %y(%d) enabled=%d (%s): created with %d workflow%s, %d service%s, %d job%s\n", name,
+                    gid, h.enabled, h.desc, elements h.workflows, (elements h.workflows == 1 ? "" : "s"),
+                    elements h.services, (elements h.services == 1 ? "" : "s"), elements h.jobs,
+                    (elements h.jobs == 1 ? "" : "s"));
+            }
+        }
+    }
+
+    private int checkWorkflowId(int wfid) {
+        if (!db.selectRow("select workflowid from workflows where workflowid = %v", wfid).workflowid)
+            error("WORKFLOW-ERROR", "workflowid %d does not exist", wfid);
+        return wfid;
+    }
+
+    private int getWorkflowId(string name, string version) {
+        *softint wfid = db.selectRow("select workflowid from workflows where name = %v and version = %v", name, version).workflowid;
+        if (!wfid)
+            error("WORKFLOW-ERROR", "workflow %s:%s does not exist", name, version);
+
+        return wfid;
+    }
+
+    private int getWorkflowId(string wf) {
+        if (wf =~ /^[0-9]+$/)
+            return checkWorkflowId(wf.toInt());
+        my (*string wn, *string ver) = (wf =~ x/([^:]+):(.+)/);
+        if (!ver)
+            error("WORKFLOW-ERROR", "invalid workflow value %y; expecting: \"name:version\"", wf);
+        return getWorkflowId(wn, ver);
+    }
+
+    private getWorkflowIds(reference list) {
+        # get workflow IDs
+        foreach any wf in (\list)
+            wf = getWorkflowId(wf);
+    }
+
+    private int checkUserServiceId(int id) {
+        *hash h = db.selectRow("select serviceid, service_type from services where serviceid = %v", id);
+        if (!h)
+            error("SERVICE-ERROR", "serviceid %d does not exist", id);
+        if (h.service_type != 'USER')
+            error("SERVICE-ERROR", "serviceid %d is a system service; only user services can be added to interface groups", id);
+
+        return id;
+    }
+
+    private int getUserServiceId(string name, string version) {
+        *softint svcid = db.selectRow("select serviceid from services where service_type = 'USER' and name = %v and version = %v", name, version).serviceid;
+        if (!svcid)
+            error("SERVICE-ERROR", "user service %s:%s does not exist", name, version);
+
+        return svcid;
+    }
+
+    private int getUserServiceId(string name) {
+        if (name =~ /^[0-9]+$/)
+            return checkUserServiceId(name.toInt());
+        my (*string sn, *string ver) = (name =~ x/([^:]+):(.+)/);
+        if (!ver)
+            error("SERVICE-ERROR", "invalid user service value %y; expecting: \"name:version\"", name);
+        return getUserServiceId(sn, ver);
+    }
+
+    private getUserServiceIds(reference list) {
+        foreach any svc in (\list)
+            svc = getUserServiceId(svc);
+    }
+
+    private int checkJobId(int id) {
+        if (!db.selectRow("select jobid from jobs where jobid = %v", id).jobid)
+            error("JOB-ERROR", "jobid %d does not exist", id);
+        return id;
+    }
+
+    private int getJobId(string name, string version) {
+        *softint jobid = db.selectRow("select jobid from jobs where name = %v and version = %v", name, version).jobid;
+        if (!jobid)
+            error("JOB-ERROR", "job %s:%s does not exist", name, version);
+
+        return jobid;
+    }
+
+    private int getJobId(string name) {
+        if (name =~ /^[0-9]+$/)
+            return checkJobId(name.toInt());
+        my (*string jn, *string ver) = (name =~ x/([^:]+):(.+)/);
+        if (!ver)
+            error("JOB-ERROR", "invalid job value %y; expecting: \"name:version\"", name);
+        return getJobId(jn, ver);
+    }
+
+    private getJobIds(reference list) {
+        # get job IDs
+        foreach any job in (\list)
+            job = getJobId(job);
+    }
+
+    updateGroup(string gi) {
+        # get group name
+        my (*string name, *string info) = gi =~ x/([^:]+):(.+)/;
+        if (!name || !info)
+            error("UPDATE-GROUP-ERROR", "expecting name:key=value, got: %y", gi);
+
+        if (name == DefaultGroupName)
+            error("UPDATE-GROUP-ERROR", "cannot update group \"DEFAULT\"");
+
+        # see if group exists and get groupid
+        int gid = get_group_id(name);
+
+        # workflow, service, and job commands
+        my (*list wc, *list sc, *list jc);
+
+        # process options
+        *string opt = (info =~ x/^(\w+=.+)/)[0];
+        if (!opt)
+            error("UPDATE-GROUP-ERROR", "expecting key=value, got: %y", opt);
+        hash h;
+        while (opt) {
+            my (*string key, *string value) = (opt =~ x/([^=]+)=(.*)/);
+            if (!key || !value)
+                error("UPDATE-GROUP-ERROR", "expecting key=value, got: %y", opt);
+            if (!group_attrs{key})
+                error("UPDATE-GROUP-ERROR", "expecting key=%y, got: %y", group_attrs.keys(), key);
+            if (h{key})
+                error("UPDATE-GROUP-ERROR", "%y set twice in %y", key, opt);
+
+            # see if there are additional arguments to remove, accept both commas and semi-colons as separators
+            opt = (value =~ x/[,;](\w+=.+)/)[0];
+            if (opt)
+                splice value, value.size() - opt.size();
+
+            if (key == "workflows")
+                wc = userTool::getActions(value.split(","), \getWorkflowId());
+            else if (key == "services")
+                sc = userTool::getActions(value.split(","), \getUserServiceId());
+            else if (key == "jobs")
+                jc = userTool::getActions(value.split(","), \getJobId());
+            else if (key == "enabled")
+                h.enabled = parse_boolean(value);
+            else
+                h{key} = value;
+        }
+
+        sqlif.updateGroup(gid, h.desc, h.enabled, wc, sc, jc);
+
+        if (!o.quiet)
+            printf("+ GROUP %y updated\n", name);
+    } # updateGroup
+
+    listGroups() {
+        any q = db.select("select * from groups");
+        context (q)
+            showGroup(%%, o.g_list);
+    }
+
+    groupInfo(string group) {
+        any q = db.selectRow("select * from groups where name = %v", group);
+        if (!exists q)
+            error("GROUP-ERROR", "GROUP %y does not exist", group);
+        showGroup(q, 2);
+    }
+
+    showGroup(hash g, int v) {
+        printf("+ GROUP: %y(%d) enabled=%d (%s) created: %y modified: %y\n", g.name, g.groupid, g.enabled,
+            g.description, g.created, g.modified);
+        if (v > 1) {
+            *hash<auto> rq = db.select("select name, version, w.workflowid from group_workflows gw "
+                "left join workflows w on (gw.workflowid = w.workflowid) where gw.groupid = %v", int(g.groupid));
+            context (rq)
+                printf("  * (WORKFLOW): %s:%s(%d)\n", %name, %version, %workflowid);
+
+            rq = db.select("select name, version, s.serviceid from group_services gs "
+                "left join services s on (gs.serviceid = s.serviceid) where gs.groupid = %v", int(g.groupid));
+            context (rq)
+                printf("  * (SERVICE): %s:%s(%d)\n", %name, %version, %serviceid);
+
+            rq = db.select("select name, version, j.jobid from group_jobs gj "
+                "left join jobs j on (gj.jobid = j.jobid) where gj.groupid = %v", int(g.groupid));
+            context (rq)
+                printf("  * (JOB): %s:%s(%d)\n", %name, %version, %jobid);
+        }
+    }
+
+    addWorkflowToGroup(string group, list workflows) {
+        if (group == DefaultGroupName)
+            error("UPDATE-GROUP-ERROR", "cannot update group \"DEFAULT\"");
+
+        int gid = get_group_id(group);
+
+        list orig = workflows;
+        getWorkflowIds(\workflows);
+
+        int cnt = 0;
+        foreach int wfid in (workflows) {
+            # see if group already has the workflow
+            if (!exists db.selectRow("select groupid from group_workflows where groupid = %v and workflowid = %v", gid, wfid)) {
+                db.exec("insert into group_workflows (groupid, workflowid) values (%v, %v)", gid, wfid);
+                ++cnt;
+            }
+            else if (!o.quiet)
+                printf("NOTICE: GROUP %y(%d) already has WORKFLOW %s(%y)\n", group, gid, orig[$#], wfid);
+        }
+        db.commit();
+        if (!o.quiet)
+            printf("+ GROUP %y(%d): %d workflow%s added\n", group, gid, cnt, cnt  == 1 ? "" : "s");
+    }
+
+    delWorkflowFromGroup(string group, list workflows) {
+        if (group == DefaultGroupName)
+            error("UPDATE-GROUP-ERROR", "cannot update group \"DEFAULT\"");
+
+        int gid = get_group_id(group);
+
+        list orig = workflows;
+        getWorkflowIds(\workflows);
+
+        int cnt = 0;
+        foreach int wfid in (workflows) {
+            int row = db.exec("delete from group_workflows where groupid = %v and workflowid = %v", gid, wfid);
+            cnt += row;
+            if (!row && !o.quiet)
+                printf("NOTICE: GROUP %y(%d) does not have WORKFLOW %s(%d)n\n", group, gid, orig[$#], wfid);
+        }
+        db.commit();
+        if (!o.quiet)
+            printf("- GROUP %y(%d): %d workflow%s removed\n", group, gid, cnt, cnt == 1 ? "" : "s");
+    }
+
+    addServiceToGroup(string group, list services) {
+        if (group == DefaultGroupName)
+            error("UPDATE-GROUP-ERROR", "cannot update group \"DEFAULT\"");
+
+        int gid = get_group_id(group);
+
+        list orig = services;
+        getUserServiceIds(\services);
+
+        int cnt = 0;
+        foreach int svcid in (services) {
+            # see if group already has the service
+            if (!exists db.selectRow("select groupid from group_services where groupid = %v and serviceid = %v", gid, svcid)) {
+                db.exec("insert into group_services (groupid, serviceid) values (%v, %v)", gid, svcid);
+                ++cnt;
+            }
+            else if (!o.quiet)
+                printf("NOTICE: GROUP %y(%d) already has SERVICE %s(%y)\n", group, gid, orig[$#], svcid);
+        }
+        db.commit();
+        if (!o.quiet)
+            printf("+ GROUP %y(%d): %d service%s added\n", group, gid, cnt, cnt == 1 ? "" : "s");
+    }
+
+    delServiceFromGroup(string group, list services) {
+        if (group == DefaultGroupName)
+            error("UPDATE-GROUP-ERROR", "cannot update group \"DEFAULT\"");
+
+        int gid = get_group_id(group);
+
+        list orig = services;
+        getUserServiceIds(\services);
+
+        int cnt = 0;
+        foreach int svcid in (services) {
+            int row = db.exec("delete from group_services where groupid = %v and serviceid = %v", gid, svcid);
+            cnt += row;
+            if (!row && !o.quiet)
+                printf("NOTICE: GROUP %y(%d) does not have SERVICE %s(%d)n\n", group, gid, orig[$#], svcid);
+        }
+        db.commit();
+        if (!o.quiet)
+            printf("- GROUP %y(%d): %d service%s removed\n", group, gid, cnt, cnt == 1 ? "" : "s");
+    }
+
+    private int get_group_id(string group) {
+        if (exists gmap{group})
+            return gmap{group};
+
+        *softint gid = db.selectRow("select groupid from groups where name = %v", group).groupid;
+        if (!exists gid)
+            error("GROUP-ERROR", "group %y does not exist", group);
+
+        gmap{group} = gid;
+        return gid;
+    }
+
+    static error(string err, string msg) {
+        throw err, vsprintf(msg, argv);
+    }
+
+    static warning(string err, string msg) {
+        printf("WARNING: %s: %s\n", err, vsprintf(msg, argv));
+    }
+
+    usage() {
+        printf("usage: %s [options]
+GROUP OPTIONS
+ -g,--add-group=ARG         adds an RBAC access group, arg format:
+                            name:key1=value1,key2=value2,... valid keys:
+                            desc,workflows,services,jobs,enabled: 'desc' is
+                            required, 'workflows', 'services', 'jobs' take
+                            comma-separated lists of strings as arguments; if
+                            'enabled' is not present, the default is true
+ -t,--update-group=ARG      updates an RBAC access group, arg format:
+                            name:key1=value1,key2=value2,.. keys: 'desc',
+                            'workflows','services','jobs','enabled'; 'desc'
+                            takes a string, the 'workflows', 'services', and
+                            'jobs' keys take comma-separated lists of strings
+ -n,--group-info=ARG        show information on the given group
+ -S,--list-groups           lists all groups (two S's gives more info)
+ -b,--add-group-wf=ARG      adds a workflow to an RBAC access group
+                            arg format: name=wfname:version,[wfname:version,...]
+ -z,--del-group-wf=ARG      deletes a workflow from an RBAC access group
+                            arg format: name=wfname:version,[wfname:version,...]
+ -j,--add-group-svc=ARG     adds a service to an RBAC access group
+                            arg format: name=svcname:version,[svcname:version,...]
+ -x,--del-group-svc=ARG     deletes a service from an RBAC access group
+                            arg format: name=svcname:version,[svcname:version,...]
+
+DELETION OPTIONS
+ -X,--delete=ARG            deletes an object; format: type:name
+                            allowed types: user,role,perm,group
+ -c,--cascade-delete        delete all references to object to be deleted
+
+ENCRYPTION OPTIONS
+ -K,--generate-keys         generates random encyption key files for sensitive
+                            data APIs, sets system options and exits; does not
+                            modify existing files
+
+OTHER OPTIONS
+ -D,--datasource=ARG        overrides systemdb param in option file
+                            ex: -Ddriver:user/pass@db[(encoding)[%host[:port]]]
+ -W,--show-url              show default Qorus system URL and exit
+ -u,--url=arg               sets Qorus URL (ex: http://host:port)
+ -s,--synchronize           synchronize changes with a running Qorus instance
+                            (calls omq.system.reload-rbac)
+ -q,--quiet                 do not display output unless there is an error
+ -Q,--remote=ARG            use the given remote Qorus connection
+ -v,--verbose               show more information
+ -h,--help                  this help text
+
+This script works directly on the Qorus database and therefore can be used when the Qorus server is down.
+Access to this program should only be granted to Qorus CE application administrators.
+", get_script_name());
+        exit(1);
+    } # usage
+}

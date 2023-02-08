@@ -1,0 +1,90 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3530Test
+
+class Issue3530Test inherits QorusPassiveWorkflowTest {
+    private {
+        # workflow instanceid of the synchronous workflow order
+        softint wfiid;
+    }
+
+    constructor() : QorusPassiveWorkflowTest("DUMMY-TEST", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        if (ENV.KUBERNETES_SERVICE_HOST) {
+            testSkip("this test cannot be run under Kubernetes");
+        }
+        hash<auto> sysinfo = qrest.get("system");
+        # NOTE: this test can only be run with internal debugging enabled and causes qorus-core to crash
+        if (!sysinfo."debug-internals") {
+            testSkip("this test can only be run with internal debugging enabled");
+        }
+
+        # ensure that DUMMY-TEST is remote
+        hash<auto> wf = qrest.get("workflows/DUMMY-TEST");
+        if (!wf.remote) {
+            qrest.put("workflows/DUMMY-TEST/setRemote", {"remote": True});
+        }
+        on_exit if (!wf.remote) {
+            qrest.put("workflows/DUMMY-TEST/setRemote", {"remote": False});
+        }
+
+        # create a signal file so that qorus-core will crash when the workflow exits
+        string signal_file = sprintf("%s/%s-%s-%s-%s-workflowStopped-1", tmp_location(),
+            sysinfo."instance-key", wf.name, wf.version, wf.workflowid);
+        {
+            File f();
+            f.open2(signal_file, O_CREAT | O_WRONLY | O_TRUNC);
+        }
+        # remove the file in case the test fails
+        on_exit unlink(signal_file);
+
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        try {
+            # the call will fail, because qorus-core will abort
+            execSynchronous(oh);
+            assertTrue(False);
+        } catch (hash<ExceptionInfo> ex) {
+            assertTrue(True);
+        }
+
+        # wait for qorus-core to be restarted
+        printf("waiting for qorus-core to be restarted: ");
+        date start = now_us();
+        while (True) {
+            try {
+                qrest.get("system/pid");
+            } catch (hash<ExceptionInfo> ex) {
+                #printf("%s: %s\n", ex.err, ex.desc);
+                date now = now_us();
+                if ((now - start) < 2m) {
+                    printf(".");
+                    flush();
+                } else {
+                    throw "TIMEOUT-ERROR", "qorus-core did not restart in the timeout period";
+                }
+                sleep(1);
+                continue;
+            }
+            break;
+        }
+        printf("\nqorus-core restarted (%y delay)\n", now_us() - start);
+    }
+}

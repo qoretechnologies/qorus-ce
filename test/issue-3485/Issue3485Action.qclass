@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Action {
+    auto action1(auto _data) {
+        UserApi::logInfo("Issue3485Action action1 was called: %y", _data);
+        hash res = {"d": _data, "action1": True};
+        return res;
+    }
+
+    auto errorAction(auto _data) {
+        throw "ERROR-ACTION", "action error";
+    }
+}

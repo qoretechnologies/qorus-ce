@@ -1,0 +1,91 @@
+# This is a generated file, don't edit!
+type: job
+name: qorus-log-rotator
+desc: >-
+    Rotates log files and optionally handles moving and compressing old log
+    files
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: QorusLogRotator
+groups:
+  - qorus-admin
+remote: false
+schedule:
+    minutes: "0"
+    hours: "3"
+    days: "*"
+    months: "*"
+    dow: "*"
+version: '6.0'
+code: qorus-log-rotator-v6.0.qjob
+config-items:
+  - name: qorus-log-archive-dir
+    default_value:
+        "arch"
+    description: >-
+        The directory where to move archived log files after rotation.
+
+
+        If this config item has no value, then files will not be moved after
+        rotation.
+
+
+        If set and the path is not absolute, then the path will be relative to the
+        Qorus log directory.
+    config_group: Qorus Log Rotator Main
+    type: "*string"
+    strictly_local: true
+  - name: qorus-log-compression
+    default_value:
+        "BZ2"
+    description: >-
+        The compression algorithm to use for log files:
+
+        - `BZ2`: [bzip2](http://en.wikipedia.org/wiki/Bzip2) compression; filename
+        extension: `.bz2`
+
+        - `GZ`: gzip compression ([RFC 1952](http://www.ietf.org/rfc/rfc1952.txt));
+        filename excension: `.gz`
+
+        - `NONE`: no compression; no changes to file name
+
+        - `Z`: zlib-based  *deflate* data compression ([RFC
+        1951](http://www.ietf.org/rfc/rfc1951.txt)); filename extension: `.Z`
+    config_group: Qorus Log Rotator Main
+    allowed_values:
+      - "BZ2"
+      - "GZ"
+      - "NONE"
+      - "Z"
+    strictly_local: true
+  - name: qorus-log-retention-days
+    default_value:
+        90
+    description: >-
+        The number of days that archived or already rotated log files will be kept.
+
+
+        If this config item has a value, then any archived files or rotated log
+        files will be deleted if they have a creation date older than this value as
+        a number of days from the current date.
+    config_group: Qorus Log Rotator Main
+    type: "*int"
+    strictly_local: true
+  - name: qorus-log-process-old-files
+    default_value:
+        true
+    description: >-
+        If this config item is set to `true` (the default), then all files that
+        still exist after rotation are assumed to be log files and will be rotated
+        manually.
+
+
+        This allows for handling log files for interfaces no longer running when the
+        log rotation action is executed, however it also means that all files in the
+        log directory will be treated as log files.
+    config_group: Qorus Log Rotator Main
+    type: bool
+    strictly_local: true

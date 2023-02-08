@@ -1,0 +1,36 @@
+type: config-item-values
+config-item-values:
+  - name: issue-3303-test-config-item-1
+    interface-type: step
+    interface-name: issue3303step
+    interface-version: "1.0"
+    value: 5534
+  - name: issue-3303-test-config-item-1
+    interface-type: job
+    interface-name: issue3303job
+    interface-version: "1.0"
+    value: 0
+  - name: issue-3303-test-config-item-1
+    interface-type: service
+    interface-name: issue3303service
+    interface-version: "1.0"
+    value: null
+  - name: issue-3303-test-config-item-2
+    interface-type: global
+    value: test_3
+  - name: issue-3303-test-config-item-3
+    interface-type: global
+    value:
+      test: value
+      test_2: value 2
+      int: 123
+  - name: issue-3303-test-config-item-4
+    interface-type: step
+    interface-name: issue3303step
+    interface-version: "1.0"
+    value: test_2
+  - name: issue-3303-test-config-item-5
+    interface-type: step
+    interface-name: issue3303step
+    interface-version: "1.0"
+    value: $static:order.id

@@ -1,0 +1,26 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+%requires RestClient
+
+%exec-class Issue3294Test
+
+class Issue3294Test inherits QorusServiceTest {
+    constructor(): QorusServiceTest("issue-3294", "user", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    private test() {
+        on_exit qrest.put("services/issue-3294/unload");
+        assertEq(1, omqservice.user."issue-3294".get());
+    }
+}
+
+

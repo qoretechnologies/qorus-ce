@@ -1,0 +1,16 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: GENERIC
+# version: 3.0
+# name: test-debug_func
+# desc: Test debug func
+
+%new-style
+%require-types
+%enable-all-warnings
+
+string sub getHello() {
+    return HELLO_WORLD;
+}
+
+# END

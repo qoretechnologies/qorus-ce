@@ -1,0 +1,73 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-flow-test-5
+desc: FSM Flow Test 5
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 242
+            'y': 69
+        name: If State
+        initial: true
+        desc: ''
+        type: if
+        id: Wr6Db0rAL
+        condition: '$xconfig:{if-config}'
+        execution_order: 1
+        language: qore
+        transitions:
+            -
+                state: '2'
+                branch: 'false'
+                language: qore
+            -
+                state: '3'
+                branch: 'true'
+                language: qore
+    '2':
+        position:
+            x: 93
+            'y': 230
+        initial: false
+        name: If False State
+        desc: ''
+        type: state
+        id: EYVgM97q1h
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:value":false}
+            parent:
+                interface-type: class
+                interface-name: FsmDepTest
+                interface-version: "1.0"
+    '3':
+        position:
+            x: 312
+            'y': 232
+        initial: false
+        name: If True State
+        desc: ''
+        type: state
+        id: wLhHc4vz2
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$pstate:value': true
+            parent:
+                interface-type: class
+                interface-name: FsmDepTest
+                interface-version: "1.0"

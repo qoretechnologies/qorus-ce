@@ -1,0 +1,27 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+$groups.regression.desc = "regression test group";
+
+const step_simple = (
+    "name": "skip_step:1.0",
+);
+
+const step_subwf = (
+    "name": "skip_step_subwf:1.0",
+    "subworkflow" : True,
+);
+
+const steps = (
+    step_simple,
+    step_subwf,
+);
+
+$workflows."SKIP-TEST"."1.0" = (
+    "author": "Petr Vanek (Qore Technologies, s.r.o.)",
+    "desc": "a test",
+    "steps": steps,
+    "groups": ("test", "regression"),
+);

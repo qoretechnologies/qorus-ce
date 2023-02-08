@@ -1,0 +1,44 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: java-test-mapper
+# version: 1.0
+# desc: Java test mapper
+# type: Mapper
+# author: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: input: {
+    "store_code": {},
+    "product_desc": {},
+    "ordered": {},
+    "total": {},
+    "filename": {},
+    "cost": {},
+    "in_transit": {},
+    "available": {},
+    "id": {},
+    "qorus_wfiid": {},
+    "product_code": {},
+    "uuid": {},
+}
+
+OPTION: output: {
+    "TransferId": {},
+    "Store": {},
+    "ProductCode": {},
+    "QuantityOrdered": {},
+    "QuantityAvailable": {},
+    "CostEur": {},
+    "Status": {},
+}
+
+FIELD:TransferId: "id"
+FIELD:Store: "store_code"
+FIELD:Status: ("constant": "InTransit")
+FIELD:ProductCode: "product_code"
+FIELD:QuantityOrdered: "ordered"
+FIELD:QuantityAvailable: "available"
+FIELD:CostEur: "cost"
+# END

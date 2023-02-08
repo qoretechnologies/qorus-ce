@@ -1,0 +1,50 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-dep-test
+desc: FSM Dependency Test
+groups:
+  - regression
+  - test
+states:
+    '1':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state1
+        initial: true
+        name: State 1
+        execution_order: 1
+        position:
+            x: 97.125
+            'y': 45.50390625
+        transitions:
+            -
+                state: '2'
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '2':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state2
+        initial: false
+        name: State 2
+        position:
+            x: 360.125
+            'y': 48.50390625
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"

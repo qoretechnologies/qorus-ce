@@ -1,0 +1,77 @@
+# type: STEP
+# version: 1.0
+# desc: async seg dummy test func
+# author: Qore Technologies, sro
+sub async_dummy_1() {
+    UserApi::logInfo("dummy 1");
+}
+# END
+
+# type: ARRAY
+# version: 1.0
+# desc: async seg dummy test func
+# author: Qore Technologies, sro
+list sub dummy_array_1() {
+    return range(0, 4);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: async seg dummy swf test func
+# author: Qore Technologies, sro
+sub dummy_swf_1() {
+    WorkflowApi::bindSubworkflow(("name": "ASYNC-WAITER"), ("staticdata": ("a": 1)));
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: async seg dummy end test func
+# author: Qore Technologies, sro
+sub dummy_end_1() {
+    UserApi::logInfo("dummy end 1");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: async seg dummy end test func
+# author: Qore Technologies, sro
+sub dummy_end_2() {
+    UserApi::logInfo("dummy end 2");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: async seg dummy test func
+# author: Qore Technologies, sro
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub waiter_dummy_1() {
+    UserApi::logInfo("dummy waiter 1");
+    try {
+        UserApi::callNetworkApi("omq.system.stop-workflow", "ASYNC-SEG-TEST");
+    } catch (hash<ExceptionInfo> ex) {
+        if (ex.err == "STOP-ERROR") {
+            UserApi::logInfo("stop error test OK");
+        } else {
+            rethrow;
+        }
+    }
+    try {
+        UserApi::callNetworkApi("omq.system.reset-workflow", "ASYNC-SEG-TEST");
+    } catch (hash<ExceptionInfo> ex) {
+        if (ex.err == "RESET-ERROR") {
+            UserApi::logInfo("reset error test OK");
+        } else {
+            rethrow;
+        }
+    }
+    WorkflowApi::leaveParentFeedback("key", "value");
+}
+# END

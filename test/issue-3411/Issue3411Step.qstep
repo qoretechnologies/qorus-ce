@@ -1,0 +1,34 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3411Step inherits Observable, QorusNormalStep {
+    private {
+        Issue3411StepTest testClass;
+    }
+
+    constructor() {
+        testClass = new Issue3411StepTest(self);
+    }
+
+    primary() {
+        UserApi::logInfo("primary method has been called");
+        notifyObservers("Issue3411Step::primary", {});
+    }
+}
+
+class Issue3411StepTest inherits Observer {
+    private {
+        Issue3411Step step;
+    }
+
+    constructor(Issue3411Step step) {
+        self.step = step;
+        self.step.registerObserver(self);
+    }
+
+    update(string id, hash<auto> data_) {
+        UserApi::logInfo("observer has been notified by: %y", id);
+    }
+}

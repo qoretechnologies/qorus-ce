@@ -1,0 +1,21 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$queues."async-test".desc = "asynchronous test queue";
+
+const async_test = 
+    ( "name"     : "async_test_1:1.0",
+      "endname"  : "async_test_end_1:1.0",
+      "queue"    : "async-test" );
+
+$workflows."ASYNC-TEST"."1.0" = 
+    ( "desc"          : "async step test workflow",
+      "author"        : "Qore Technologies, sro",
+      "steps"         : async_test,
+      "groups"        : "test",
+      );

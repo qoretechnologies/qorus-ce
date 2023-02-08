@@ -1,0 +1,19 @@
+# name: Issue3010Step
+# version: 1.0
+# desc: Simple worklfow step example
+# author: Qore Technologies, s.r.o.
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3010Step inherits QorusNormalStep {
+    primary() {
+        logInfo("Issue3010Step was called");
+    }
+}
+# END

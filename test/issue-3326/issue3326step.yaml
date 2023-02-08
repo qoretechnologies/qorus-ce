@@ -1,0 +1,40 @@
+type: step
+steptype: ASYNC
+arraytype: SERIES
+queue: issue3326queue
+name: issue3326step
+version: "1.0"
+desc: issue3326 array async test step
+author:
+  - Qore Technologies, s.r.o.
+code: issue3326step.qstep
+config-items:
+  - name: issue-3326-test-config-item-1
+    type: "*hash"
+    default_value:
+      test_key_1: test_1
+      test: asd
+      x: 123
+    description: test config item of type *hash
+    config_group: Test Group
+    strictly_local: false
+    value:
+      test_local: asdsad
+      x: 1234
+  - name: issue-3326-test-config-item-2
+    type: string
+    default_value: test_2
+    allowed_values:
+      - test_1
+      - test_2
+      - test_3
+    description: test config item of type string
+    config_group: Test Group
+    strictly_local: false
+    value: test_1
+  - name: issue-3326-test-config-item-3
+    type: "*float"
+    default_value: null
+    description: test config item of type *float
+    config_group: Test Group
+    value: 2.1231

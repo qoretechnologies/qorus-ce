@@ -1,0 +1,27 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3267Service inherits QorusService {
+    public {
+        *string val;
+    }
+
+    init() {
+        setConfigItemChangeCallback(\configCallback());
+    }
+
+    *string get() {
+        return getConfigItemValue("test");
+    }
+
+    *string getVar() {
+        return val;
+    }
+
+    private:internal configCallback(string config_item_name) {
+        val = getConfigItemValue(config_item_name);
+        logInfo("updating %y -> %y", config_item_name, val);
+    }
+}

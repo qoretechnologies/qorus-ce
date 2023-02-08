@@ -1,0 +1,349 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3303" + Qore::DirSep;
+
+        const JOB_NAME = "issue3303job";
+        const SERVICE_NAME = "issue3303service";
+        const STEP_NAME = "issue3303step";
+        const CLASS_NAME = "issue3303class";
+        const WORKFLOW_NAME = "issue3303workflow";
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:" + WORKFLOW_NAME + ":1.0",
+            "class:" + CLASS_NAME + ":1.0",
+            "step:" + STEP_NAME + ":1.0",
+            "service:" + SERVICE_NAME + ":1.0",
+            "job:" + JOB_NAME + ":1.0",
+        );
+
+        string configItemValues = srcDir + "config_item_values";
+
+        const EXPECTED_JOB_CONFIG_ITEMS = (
+            {
+                "name": "issue-3303-test-config-item-1",
+                "type": "*int",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": 1213,
+                "allowed_values": (0, 1213, 1232, 1235, 5534, NOTHING),
+                "value": 0,
+                "level": "job:$id",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-2",
+                "type": "string",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_1",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_3",
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-3",
+                "type": "*hash",
+                "desc": "test config item of type *hash",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": {
+                    "test_key_1": "test_1",
+                    "test_key_2": "test_2",
+                },
+                "value": {
+                    "test": "value",
+                    "test_2": "value 2",
+                    "int": 123,
+                },
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-4",
+                "type": "string",
+                "desc": "test config item of type string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_2",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_2",
+                "level": "default",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-5",
+                "type": "*string",
+                "desc": "test config item of type *string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "level": "default",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            }
+        );
+
+        const EXPECTED_SERVICE_CONFIG_ITEMS = (
+            {
+                "name": "issue-3303-test-config-item-1",
+                "type": "*int",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": 1213,
+                "allowed_values": (0, 1213, 1232, 1235, 5534, NOTHING),
+                "value": NOTHING,
+                "level": "service:$id",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-2",
+                "type": "string",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_1",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_3",
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-3",
+                "type": "*hash",
+                "desc": "test config item of type *hash",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": {
+                    "test_key_1": "test_1",
+                    "test_key_2": "test_2",
+                },
+                "value": {
+                    "test": "value",
+                    "test_2": "value 2",
+                    "int": 123,
+                },
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-4",
+                "type": "string",
+                "desc": "test config item of type string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_2",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_2",
+                "level": "default",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-5",
+                "type": "*string",
+                "desc": "test config item of type *string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "level": "default",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            }
+        );
+
+        const EXPECTED_STEP_CONFIG_ITEMS = (
+            {
+                "name": "issue-3303-test-config-item-1",
+                "type": "*int",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": 1213,
+                "allowed_values": (0, 1213, 1232, 1235, 5534, NOTHING),
+                "value": 5534,
+                "level": "step:$id",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-2",
+                "type": "string",
+                "desc": "child config item inheriting from the same config item defined by issue3303class:1.0 class",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_1",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_3",
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-3",
+                "type": "*hash",
+                "desc": "test config item of type *hash",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": {
+                    "test_key_1": "test_1",
+                    "test_key_2": "test_2",
+                },
+                "value": {
+                    "test": "value",
+                    "test_2": "value 2",
+                    "int": 123,
+                },
+                "level": "global",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-4",
+                "type": "string",
+                "desc": "test config item of type string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_2",
+                "allowed_values": ("test_1", "test_2", "test_3"),
+                "value": "test_2",
+                "level": "step:$id",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3303-test-config-item-5",
+                "type": "*string",
+                "desc": "test config item of type *string",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": NOTHING,
+                "value": "$static:order.id",
+                "level": "step:$id",
+                "is_set": True,
+                "is_templated_string": True,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+        );
+    }
+
+    constructor(): Test("QorusIssue3303ConfigItems", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private testInterfaceConfigItems(string interface, string name, list expected) {
+        printf("=START=============testInterfaceConfigItems===============\n");
+        printf("interface = %s, name = %s\n", interface, name);
+
+        code sort_closure = int sub(hash l, hash r) { return l.name <=> r.name; };
+
+        expected = sort(expected, sort_closure);
+
+        # Test GET all configs
+        auto rest_response = qrest.get(interface + "s/" + name + "/config");
+        rest_response = sort(rest_response, sort_closure);
+
+        softstring id = qrest.get(interface + "s/" + name + "/" + (interface == "workflow" ? "step" : interface) + "id");
+        # fill interface id to expected list
+        foreach auto cfg_item in (\expected) {
+            cfg_item.level = replace(cfg_item.level, "$id", id);
+        }
+
+        assertEq(expected, rest_response);
+
+        # Test GET specific config
+        foreach auto config in (expected) {
+            string uri_path = interface + "s/" + name + "/config/" + config.name;
+            rest_response = qrest.get(uri_path);
+            assertEq(config, rest_response);
+        }
+
+        printf("=END===============testInterfaceConfigItems===============\n");
+    }
+
+    private testInterfaceConfigItems() {
+        testInterfaceConfigItems("job", JOB_NAME, EXPECTED_JOB_CONFIG_ITEMS);
+        testInterfaceConfigItems("service", SERVICE_NAME, EXPECTED_SERVICE_CONFIG_ITEMS);
+        testInterfaceConfigItems("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME, EXPECTED_STEP_CONFIG_ITEMS);
+    }
+
+    private mainTest() {
+        printf("----------START oload interfaces-----------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("----------END oload interfaces-------------\n");
+
+        printf("------START import config item values------\n");
+        result = OloadTestHelper::oloadFiles(configItemValues);
+        assertEq(0, result.exit_code);
+        printf("-------END import config item values-------\n");
+
+        printf("----------START TEST CONFIG ITEMS----------\n");
+        testInterfaceConfigItems();
+        printf("----------END TEST CONFIG ITEMS------------\n");
+
+        printf("----------START delete interfaces----------\n");
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE, True);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+    }
+}

@@ -1,0 +1,770 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: attach function test
+# author: Qore Technologies, sro
+sub attach_test() {
+    UserApi::logInfo("attach function test");
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: detach function test
+# author: Qore Technologies, sro
+sub detach_test(string $stat) {
+    UserApi::logInfo("detach function test, stat: %y", $stat);
+    UserApi::logInfo("static data: %y", WorkflowApi::getStaticData());
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: array test detach function test
+# author: Qore Technologies, sro
+sub array_detach_test(string $stat) {
+    UserApi::logInfo("array test detach function test, stat: %y", $stat);
+}
+# END
+
+# type: ARRAY
+# version: 1.0
+# desc: array function test
+# author: Qore Technologies, sro
+sub array_test_array() {
+    my $key = WorkflowApi::getStepInfo().name;
+    my $r = UserApi::getOption("array-size");
+    if (UserApi::getOption("fast-exec") && ($key != "array_test_f1" || !$r))
+    	return True;
+
+    # 1 out of 10 times throw an error
+    if (!UserApi::getOption("no-errors")) {
+        if (!(rand() % 10))
+            WorkflowApi::stepError("TEST-ERROR");
+
+        # another chance: 1/10 return NOTHING
+        if (!(rand() % 10))
+            return;
+    }
+
+    # otherwise get array from stepname
+    UserApi::logInfo("KEY: %y", $key);
+    my $array = WorkflowApi::getDynamicData($key);
+
+    if (!exists $array) {
+        if ($key == "array_test_f1")
+            $r = UserApi::getOption("array-size");
+        if (!exists $r)
+            $r = (rand() % 10);
+
+        for (my $i; $i < $r; $i++)
+            $array[$i] = ( "key1" : rand() % 20,
+                "key2" : "this is key2",
+                "index" : $i );
+        my $h.$key = $array;
+        WorkflowApi::updateDynamicData($h);
+    }
+    return $array;
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: array test f1
+# author: Qore Technologies, sro
+sub array_test_f1($element) {
+    #UserApi::logInfo("workflow metadata=%n", getWorkflowMetadata());
+    my $si = WorkflowApi::getStepInfo();
+    WorkflowApi::setCustomStatus("1");
+    UserApi::logInfo("element %d/%d = %n", $si.index + 1, $si.array_size, $element);
+    doTest();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: array test f2
+# author: Qore Technologies, sro
+sub array_test_f2($element) {
+    UserApi::logInfo("element = %n", $element);
+    WorkflowApi::setCustomStatus("2");
+    doTest();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test function 1
+# author: Qore Technologies, sro
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub test_function_1() {
+    WorkflowApi::updateDynamicData(("test1":now_us()));
+    WorkflowApi::setCustomStatus("A");
+    doTest();
+    *hash<auto> v = WorkflowApi::getStaticData().test_option;
+    if (v) {
+        list<string> errs;
+        code check = sub (code api, string desc) {
+            auto val = api(v.option);
+            bool ok = val === v.value;
+            UserApi::logInfo("api %y: %y == %y (expecting %y) OK: %y", desc, v.option, val, v.value, ok);
+            if (!ok) {
+                string err = sprintf("api %y == %y expecting value %y; got %y", desc, v.option, v.value, val);
+                UserApi::logInfo("%s", err);
+                errs += err;
+            }
+        };
+        check(\WorkflowApi::getOption(), "WorkflowApi::getOption()");
+        check(\WorkflowApi::getOptionArgs(), "WorkflowApi::getOptionArgs()");
+        check(\UserApi::getOption(), "UserApi::getOption()");
+        if (errs) {
+            throw "OPTION-VALUE-ERROR", sprintf("the following errors occurred: %y", errs);
+        }
+    }
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test function 2
+# author: Qore Technologies, sro
+sub test_function_2() {
+    WorkflowApi::setCustomStatus("B");
+    doTest();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test function 3
+# author: Qore Technologies, sro
+sub test_function_3() {
+    WorkflowApi::setCustomStatus("C");
+    doTest();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: array test function 3
+# author: Qore Technologies, sro
+sub array_test_f3($element) {
+    UserApi::logInfo("element = %n", $element);
+    WorkflowApi::setCustomStatus("3");
+    doTest();
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: async test function
+# author: Qore Technologies, sro
+sub array_test_async($element) {
+    UserApi::logInfo("element = %n", $element);
+
+    WorkflowApi::setCustomStatus("Q");
+
+    # 10% chance of an error
+    if (UserApi::getOption("fast-exec") || UserApi::getOption("skip-async") || !(rand() % 10))
+    	UserApi::skipAsyncStep();
+    else if (!UserApi::getOption("no-errors") && !UserApi::getOption("no-async-errors") && !(rand() % 10))
+	    WorkflowApi::stepError("ASYNC-ERROR");
+    else {
+        my $key = sprintf("async-test-key-%s-%d",
+            format_date("YYYY-MM-DD-HH:mm:SS", now()),
+            (rand() % 10000));
+        #UserApi::logInfo("sending key: %s", $key);
+        UserApi::submitAsyncKey($key);
+    }
+}
+# END
+
+# type: SUBWORKFLOW
+# version: 2.0
+# desc: subworkflow array test function
+# author: Qore Technologies, sro
+sub array_subworkflow($element) {
+    UserApi::logInfo("element = %n", $element);
+
+    # if "fast-exec" is set, or a 10% chance of skipping the subworkflow
+    if (UserApi::getOption("fast-exec") || UserApi::getOption("skip-subworkflow") || !(rand() % 10)) {
+        UserApi::skipSubworkflow();
+        return;
+    }
+
+    # 20% chance of an error
+    if (!UserApi::getOption("no-errors") && !(rand() % 5)) {
+        WorkflowApi::stepError("TEST-ERROR");
+        return;
+    }
+
+    my $h.name = "SIMPLETEST";
+    $h.version = "1.0";
+
+    # create workflow data
+    my $key = sprintf("%s-%d-%d", WorkflowApi::getStepInfo().name,
+            WorkflowApi::getWorkflowInstanceData("workflow_instanceid"),
+            WorkflowApi::getStepInfo().index);
+
+    my $data.external_order_instanceid = $key;
+    $data.staticdata.data = $element;
+
+    UserApi::bindSubworkflow($h, $data);
+}
+# END
+
+# type: SUBWORKFLOW
+# version: 2.0
+# desc: subworkflow test function
+# author: Qore Technologies, sro
+sub test_subworkflow() {
+    # if "fast-exec" is set, or a 10% chance of skipping the subworkflow
+    if (UserApi::getOption("fast-exec") || UserApi::getOption("skip-subworkflow") || !(rand() % 10)) {
+        UserApi::skipSubworkflow();
+        return;
+    }
+
+    # 20% chance of an error
+    if (!UserApi::getOption("no-errors") && !(rand() % 5)) {
+        WorkflowApi::stepError("TEST-ERROR");
+        return;
+    }
+
+    my $h.name = "SIMPLETEST";
+    $h.version = "1.0";
+
+    # create workflow data
+    my $key = sprintf("%s-%d", WorkflowApi::getStepInfo().name,
+		WorkflowApi::getWorkflowInstanceData("workflow_instanceid"));
+
+    my $data.external_order_instanceid = $key;
+    $data.staticdata = (
+        "simpledata-key1" : rand() % 20,
+        "simpledata-key2" : "this is key2",
+        "a-random-number" : rand(),
+    );
+
+    my $r = UserApi::bindSubworkflow($h, $data);
+
+    UserApi::logInfo("subworkflow created, workflow_instance_id=%d", $r.workflow_instanceid);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: test function 1
+# author: Qore Technologies, sro
+sub TestFunction1() {
+    return "TestFunction1";
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: test function 2
+# author: Qore Technologies, sro
+sub TestFunction2() {
+    return "TestFunction2";
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: error handler test function
+# author: Qore Technologies, sro
+sub error_handler_test($err, $hash, $info) {
+    UserApi::logInfo("error handler test, err=%n, hash=%n, info=%n", $err, $hash, $info);
+}
+# END
+
+# type: VALIDATION
+# version: 1.0
+# desc: asynchronous validation test function
+# author: Qore Technologies, sro
+sub async_validation($arg) {
+    my $stat;
+    UserApi::logInfo("key=%n", $arg);
+    if (exists $arg)
+    	$stat = OMQ::StatComplete;
+    else
+	    $stat = OMQ::StatRetry;
+    UserApi::logInfo("returning status: %n", $stat);
+    return $stat;
+}
+# END
+
+# type: VALIDATION
+# version: 1.0
+# desc: validation test function
+# author: Qore Technologies, sro
+sub test_validation($arg) {
+    UserApi::logInfo("stepInfo=%n", WorkflowApi::getStepInfo());
+
+    if (exists $arg)
+    	UserApi::logInfo("validation arg=%n", $arg);
+
+    my $stat;
+
+    if (WorkflowApi::getStepInfo().name =~ /asyncxxxx/)
+	    $stat = OMQ::StatAsyncWaiting;
+    else {
+        # 75% chance of setting the step to complete
+        if (UserApi::getOption("fast-exec") || UserApi::getOption("no-errors") || rand() % 4)
+            $stat = OMQ::StatComplete;
+        else {
+            my $a = rand() % 10;
+            if (!$a)
+                $stat = OMQ::StatError;
+            else if ($a < 4)
+                $stat = OMQ::StatAsyncWaiting;
+            else if ($a < 8)
+                $stat = OMQ::StatRetry;
+            else if ($a == 9) {
+                if (rand() % 2) {
+                    WorkflowApi::stepError("TEST-VALIDATION-ERROR");
+                } else {
+                    throw "TEST-EXCEPTION";
+                }
+            }
+        }
+    }
+    #UserApi::logInfo("returning %N", $stat);
+    return $stat;
+}
+# END
+
+# type: GENERIC
+# version: 2.0
+# desc: test error function, provides the definitions for errors thrown by the test workflows
+# author: Qore Technologies, sro
+sub test_errors() {
+    return (
+        "ASYNC-ERROR": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        ),
+        "ASYNC-RECEIVE-ERROR": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        ),
+        "TEST-BUSINESS-ERROR": (
+            "desc"     : "test business error",
+            # if no severity is given, default=OMQ::ES_Major
+            # if no status is given, default=OMQ::StatError
+            "business" : True
+        ),
+        "TEST-VALIDATION-ERROR": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        ),
+        "TEST-INIT-ERROR": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        ),
+        "TEST-ERROR": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        ),
+        "TEST-EXCEPTION": (
+            "desc"     : "test error",
+            "severity" : OMQ::ES_Major,
+            "status"   : OMQ::StatRetry,
+        )
+    );
+}
+# END
+
+# type: GENERIC
+# name: doTest
+# version: 2.0
+# desc: test function for test workflows
+# author: Qore Technologies, sro
+sub addValue($d) {
+    my $v = "value-" + (rand() % 100);
+    if (inlist($v, $d))
+    	return sprintf("SKIPPED (%n)", $v);
+
+    if (!exists $d)
+    	$d = $v;
+    else if (type($d) != Type::List)
+	    $d = ($d, $v);
+    else
+    	$d += $v;
+
+    return $v;
+}
+
+sub test_keys() {
+    #my $k = getOrderKeys();
+
+    for (my int $i = 0; $i < 3; $i++) {
+        my $h;
+        my string $key = "key" + (rand() % 10);
+        if ($key == "key0" && UserApi::getOption("no-errors"))
+            $key = "key1";
+        my $value;
+        if (!(rand() % 4)) {
+            $value = ();
+            for (my $x = 0; $x < 3; $x++)
+            $value += addValue(\$h.$key);
+        }
+        else
+            $value = addValue(\$h.$key);
+
+        UserApi::logInfo("%s=%n", $key, $value);
+        WorkflowApi::setOrderKeys($h);
+    }
+}
+
+sub doTest() {
+    if (UserApi::getOption("throw-error"))
+        throw "RETRY-ERROR", "stop";
+
+    if (UserApi::getOption("fast-exec"))
+    	return;
+
+    if (WorkflowApi::getWorkflowInstanceData("mode") == OMQ::WM_Recovery)
+    	UserApi::logInfo("stepInfo=%y", WorkflowApi::getStepInfo());
+
+    my $hash{"key" + (rand() % 100)} = rand() % 100;
+    WorkflowApi::updateInstanceData($hash);
+    $hash{"key" + (rand() % 100)} = rand() % 100;
+    WorkflowApi::updateDynamicData($hash);
+    $hash{"key" + (rand() % 100)} = rand() % 100;
+    WorkflowApi::updateInstanceData($hash);
+    $hash{"key" + (rand() % 100)} = rand() % 100;
+    WorkflowApi::updateTempData($hash);
+
+    my $a = rand() % 20;
+
+    if (!UserApi::getOption("no-errors") && $a == 2) {
+        # 50% chance of throwing "TEST-BUSINESS-ERROR"
+        WorkflowApi::stepError(!(rand() % 2) ? "TEST-ERROR" : "TEST-BUSINESS-ERROR");
+    }
+
+    UserApi::logInfo("name: %y", WorkflowApi::getWorkflowInstanceData("name"));
+    UserApi::logInfo("options: %y (no-errors: %y)", UserApi::getOption(), UserApi::getOption("no-errors"));
+
+    if (WorkflowApi::getWorkflowInstanceData("name") == "SIMPLETEST") {
+        test_keys();
+	if (!UserApi::getOption("no-errors") && $a == 3)
+	    throw "OH-NO!!!!!!!!", "scary error occured";
+    }
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: test one time initialization function
+# author: Qore Technologies, sro
+sub test_onetimeinitialization() {
+    my string $wfn = WorkflowApi::getWorkflowMetadata().name;
+    UserApi::logInfo("one time initialization executing for workflow %n", $wfn);
+
+    if (!UserApi::getOption("no-errors") && !UserApi::getOption("no-init-error") && !(rand() % 30))
+        WorkflowApi::stepError("TEST-INIT-ERROR");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test function
+# author: Qore Technologies, sro
+sub test_init() {
+    if (!(rand() % 4))
+    	doTest();
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: async test function 1
+# author: Qore Technologies, sro
+sub async_test_f1() {
+    setCustomStatus("R");
+    if (UserApi::getOption("skip-async") || UserApi::getOption("fast-exec") || !(rand() % 5))
+	    UserApi::skipAsyncStep();
+    else {
+        my string $key = sprintf("async-test-key-%s-%d",
+            format_date("YYYY-MM-DD-HH:mm:SS", now()),
+            (rand() % 10000));
+        UserApi::submitAsyncKey($key);
+    }
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: async test function 2
+# author: Qore Technologies, sro
+sub async_test_f2() {
+    setCustomStatus("S");
+    if (UserApi::getOption("skip-async") || UserApi::getOption("fast-exec") || !(rand() % 5))
+    	UserApi::skipAsyncStep();
+    else {
+        my string $key = sprintf("async-test-key-%s-%d",
+            format_date("YYYY-MM-DD-HH:mm:SS", now()),
+            (rand() % 10000));
+        UserApi::submitAsyncKey($key);
+    }
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: async test function 3
+# author: Qore Technologies, sro
+sub async_test_f3() {
+    WorkflowApi::setCustomStatus("T");
+    if (UserApi::getOption("skip-async") || UserApi::getOption("fast-exec") || !(rand() % 5))
+    	WorkflowApi::skipAsyncStep();
+    else {
+        my string $key = sprintf("async-test-key-%s-%d",
+            format_date("YYYY-MM-DD-HH:mm:SS", now()),
+            (rand() % 10000));
+        WorkflowApi::submitAsyncKey($key);
+    }
+}
+# END
+
+# type: ASYNC-END
+# version: 1.0
+# desc: test async end function
+# author: Qore Technologies, sro
+sub async_test_f1_end($data) {
+    #if ($data.status == "ERROR")
+	#WorkflowApi::stepError("ASYNC-RECEIVE-ERROR");
+    UserApi::logInfo("data=%n", $data);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: ds test step 1
+# author: Qore Technologies, sro
+%new-style
+sub ds_test_step1() {
+    #UserApi::logInfo("workflow metadata=%n", getWorkflowMetadata());
+    DatasourcePool ds = UserApi::getDatasourcePool("omquser");
+    on_success ds.commit();
+    on_error ds.rollback();
+
+    hash what = (
+        "status"     : "N",
+        "id"         : 1,
+        "updated_id" : NULL,
+    );
+
+    SqlUtil::AbstractTable t = UserApi::getSqlTable(ds, "ds_test1");
+    t.del();
+    t.insertNoCommit(what);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: ds test lock function
+# name: ds_test_lock_table
+# author: Qore Technologies, sro
+%new-style
+int sub ds_test_lock_table(AbstractDatasource dsstage,
+        string tname,
+        hash whereHash)
+{
+    UserApi::logDebug("sleeping...");
+    UserApi::sleep(5s);
+    UserApi::logDebug("...woken up");
+    SqlUtil::AbstractTable t = UserApi::getSqlTable(dsstage, tname);
+    softint wfiid = WorkflowApi::getWorkflowInstanceData("workflow_instanceid");
+
+    hash columns = (
+        "status"                : "L",
+        "updated_id"            : wfiid,
+    );
+
+    UserApi::logDebug("Columns: %y", columns);
+
+    UserApi::logDebug("Where: %y", whereHash);
+
+    string sql;
+    on_exit UserApi::logDebug("SQL: %s", sql);
+
+    int rows = t.updateNoCommit(columns, whereHash, \sql);
+    UserApi::logInfo("%s: rows locked: %d", t.getSqlName(), rows);
+    return rows;
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: ds test step 2
+# author: Qore Technologies, sro
+%new-style
+sub ds_test_step2() {
+    #UserApi::logInfo("workflow metadata=%n", getWorkflowMetadata());
+    DatasourcePool ds = UserApi::getDatasourcePool("omquser");
+    on_success ds.commit();
+    on_error ds.rollback();
+
+    hash cond = (
+        "status"     : "N",
+        "id"         : 1,
+        "updated_id" : NULL,
+    );
+
+    ds_test_lock_table(ds, "ds_test1", cond);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: invalid connection init
+# author: Qore Technologies, sro
+%new-style
+sub invalid_connection_init() {
+    #UserApi::logInfo("workflow metadata=%n", getWorkflowMetadata());
+    DatasourcePool ds = UserApi::getDatasourcePool("xxx_invalid_connection_xxx");
+    on_success ds.commit();
+    on_error ds.rollback();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: invalid connection step 1
+# author: Qore Technologies, sro
+%new-style
+sub invalid_connection_step1() {
+    UserApi::logInfo("workflow metadata=%n", WorkflowApi::getWorkflowMetadata());
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: noop_step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub noop_step() {
+    UserApi::logInfo("noop step");
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: onetimeinit function with a delay
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+const DefaultDelay = 1s;
+
+sub delayed_onetimeinit() {
+    timeout delayms = UserApi::getOption("delay-ms") ?? DefaultDelay;
+    UserApi::logInfo("sleeping for %d ms", delayms);
+    UserApi::usleep(delayms * 1000);
+    UserApi::logInfo("done");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: order key set
+# author: Qore Technologies, sro
+sub order_key_set() {
+    WorkflowApi::setOrderKeys(("key1": "value"));
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: order key set
+# author: Qore Technologies, sro
+%new-style
+sub sqlutil_reset() {
+    QorusSystemRestHelper qrest();
+    UserApi::logDebug("sending service stop");
+    qrest.put("services/sqlutil/stop");
+    UserApi::logDebug("service stop sent");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: step function with a delay
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+const DefaultDelay = 1s;
+
+sub delayed_step() {
+    timeout delayms = UserApi::getOption("delay-ms") ?? DefaultDelay;
+
+    Mutex m();
+    Condition c();
+
+    UserApi::logInfo("sleeping for %d ms", delayms);
+
+    {
+        m.lock();
+        on_exit m.unlock();
+        c.wait(m, delayms);
+    }
+
+    UserApi::logInfo("done");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: connection automatic management
+# author: Qore Technologies, sro
+%new-style
+sub conn_test1() {
+    UserApi::logDebug("getting the connection just to tie it with the WF");
+    UserApi::getUserConnection("conn-test");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: WF status transition check
+# author: Qore Technologies, sro
+%new-style
+sub status_canceled_step1() {
+    throw "STATUS-CANCELED-ERROR", "cancelled";
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: WF status transition check error function
+# author: Qore Technologies, sro
+%new-style
+hash sub status_canceled_errorfunction() {
+    return (
+        "STATUS-CANCELED-ERROR" : (
+            "desc" : "testing WF going to canceled state",
+            "status" : "CANCELED",
+        ),
+    );
+}
+# END

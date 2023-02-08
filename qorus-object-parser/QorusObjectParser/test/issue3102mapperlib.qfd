@@ -1,0 +1,17 @@
+# type: GENERIC
+# version: 1.0
+# name: issue3102mapperlib
+# desc: mapper library
+# author: Qore Technologies
+
+%new-style
+
+string sub get_value(string value) {
+    return "test" + value;
+}
+
+string sub get_datasource(string datasource) {
+    return "test" + datasource;
+}
+
+# END

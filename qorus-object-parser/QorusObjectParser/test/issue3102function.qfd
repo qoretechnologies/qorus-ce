@@ -1,0 +1,66 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: test job function
+# name: issue3102test_function_1
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const InfoKeys = ("last_executed",);
+const PropDomain = "test";
+const PropKey = "test-job-error";
+
+sub issue3102test_function_1() {
+    bool do_error;
+    if (UserApi::propGet(PropDomain, PropKey)) {
+        do_error = True;
+        UserApi::propUpdate(PropDomain, PropKey);
+    }
+
+    # 25% chance of an error, 50% chance that the error will be a business error
+    if (do_error || !(rand() % 4))
+	JobApi::err("TEST-JOB-ERROR", "error description", ("hash-a": True), OMQ::ES_Major, rand() % 2 ? True : False);
+
+    hash jh = JobApi::getInfo();
+    UserApi::logInfo("info: %y", jh);
+    JobApi::saveInfo(("info-1": now_us()) + jh{InfoKeys});
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test step function
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub issue3102test_step() {
+    UserApi::logInfo("issue3102test_step was called");
+}
+# END
+
+# type: VALIDATION
+# version: 1.0
+# desc: test step function
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+string sub issue3102test_validation_step() {
+    UserApi::logInfo("issue3102test_validation_step was called");
+    return OMQ::StatComplete;
+}
+# END
+

@@ -1,0 +1,68 @@
+pre.fragment {
+        border: 1px solid #C4CFE5;
+        background-color: #000;
+	color: #9ff;
+        padding: 4px 6px;
+        margin: 4px 8px 4px 2px;
+        overflow: auto;
+        word-wrap: break-word;
+        line-height: 120%;
+        font-family: monospace, fixed;
+        font-size: 95%;
+}
+
+span.stringliteral {
+    color: #d9f
+}
+
+body {background-color:#1a1a1a;}
+
+/* outline numbering */
+body {counter-reset:section;}
+h1:not(.groupheader):not(.memtitle) {counter-reset:subsection;}
+h2:not(.groupheader):not(.memtitle) {counter-reset:subsubsection;}
+h1:not(.groupheader):not(.memtitle):before {
+    counter-increment:section;
+    content:counter(section) ". ";
+}
+h2:not(.groupheader):not(.memtitle):before {
+    counter-increment:subsection;
+    content:counter(section) "." counter(subsection) " ";
+}
+h3:not(.groupheader):not(.memtitle):before {
+    counter-increment:subsubsection;
+    content:counter(section) "." counter(subsection) "." counter(subsubsection) " ";
+}
+div.image img[src="Qorus-5-Connections.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Connection-Options.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-FSM-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Workflow-Info-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Workflow-Diagram-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Job-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Service-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Mapper-Info.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Mapper-Diagram.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Step-Info-Example.png"]{
+    width:960px;
+}
+div.image img[src="Qorus-5-Step-Code-Example.png"]{
+    width:960px;
+}

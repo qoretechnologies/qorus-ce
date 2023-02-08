@@ -1,0 +1,56 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - class
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  code:
+    type: string
+
+optional:
+  desc:
+    type: string
+    max-length: 4000
+  author:
+    type: list
+    element-type: string
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  class-name:
+    type: string
+    max-length: 160
+  base-class-name: # used only in the IDE
+    type: string
+    max-length: 160
+  class-connectors:
+    type: list
+    element-type: class-connector
+  config-items:
+    type: list
+    element-type: config-item
+  requires:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+  support-prefix:
+    type: bool
+    default: false
+  processor:
+    type: processor
+
+include-definitions:
+  - config-item_definition.yaml
+  - class-connector_definition.yaml
+  - processor_definition.yaml

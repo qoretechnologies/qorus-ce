@@ -1,0 +1,20 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: regression-out-rawsql-statement
+# version: 1.0
+# desc: Regression test for QorusRawSqlStatementOutboundMapper
+# type: QorusRawSqlStatementOutboundMapper
+# author: Petr Vanek (Qore Technologies, sro)
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: datasource: "omquser"
+OPTION: select: "select uuid from regression_example where in_transit = %v and qorus_wfiid = %v"
+OPTION: output: (
+    "uuid_mapped": {},
+    "some_const": {},
+)
+
+FIELD: "uuid_mapped"        : "uuid"
+FIELD: "some_const"         : ("constant" : "foobar")
+# END

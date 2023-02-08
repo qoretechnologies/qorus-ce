@@ -1,0 +1,25 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class FsmDepTest {
+    public {
+        const OutputDataItem = "fsm-connector-test-write-value";
+    }
+
+    auto writeValue(auto input_data) {
+    	int count = 0;
+        hash<auto> values;
+        hash<auto> output;
+        hash<auto> local_context = {"input": input_data};
+        foreach hash<auto> i in (UserApi::getConfigItemValue(OutputDataItem, NOTHING, False).pairIterator()) {
+            string key = sprintf("k%d", count++);
+            values{key} = UserApi::expandTemplatedValue(i.value, local_context);
+            output{key} = i.key;
+        }
+        UserApi::logDebug("writing output data: %y", (map {output{$1}: values{$1}}, keys values));
+        UserApi::logInfo("values: %y output: %y", values, output);
+        UserApi::updateOutputData(values, output);
+    }
+}

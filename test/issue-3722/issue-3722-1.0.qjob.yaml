@@ -1,0 +1,23 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3722
+desc: Test for issue 3722
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3722
+groups:
+  - regression
+  - test
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+classes:
+  - QoreTest
+code: issue-3722-1.0.qjob

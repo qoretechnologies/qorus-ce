@@ -1,0 +1,59 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue_1563_1564_1565
+
+class QorusIssue_1563_1564_1565 inherits Test {
+    constructor() : Test("Issue_1563_1564_1565_Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        qrest.put("jobs/test-trigger/setActive", {"active": True});
+        on_exit {
+            qrest.put("jobs/test-trigger/setActive", {"active": False});
+        }
+
+        # update test-trigger's schedule
+        hash<auto> h = qrest.put("jobs/test-trigger/schedule", ("schedule": "*/10 * * * *"));
+        assertTrue(h.schedule =~ /\*\/10/);
+        assertTrue(h.info =~ /0,10,20,30,40,50/);
+        assertEq("*/10", qrest.get("system/metadata/jrmap/test-trigger/minute"));
+        # reset test-trigger's schedule
+        h = qrest.put("jobs/test-trigger/schedule", ("schedule": "*/15 * * * *"));
+        assertTrue(h.schedule =~ /\*\/15/);
+        assertTrue(h.info =~ /0,15,30,45/);
+        assertEq("*/15", qrest.get("system/metadata/jrmap/test-trigger/minute"));
+
+        # set expiry date on test-trigger job
+        date date = now() - 7D;
+        h = qrest.put("jobs/test-trigger/setExpiry", ("date": date));
+        assertEq(date, h.expiry_date);
+        # clear expiry date on test-trigger job
+        h = qrest.put("jobs/test-trigger/setExpiry", ("date": NOTHING));
+        assertNothing(h.expiry_date);
+        assertTrue(h.info =~ /, started$/);
+
+        # deactivate test-trigger job
+        h = qrest.put("jobs/test-trigger/setActive", ("active": False));
+        assertFalse(h.active);
+        # activate test-trigger job
+        h = qrest.put("jobs/test-trigger/setActive", ("active": True));
+        assertTrue(h.active);
+        assertTrue(h.info =~ /set to active and started/);
+    }
+}

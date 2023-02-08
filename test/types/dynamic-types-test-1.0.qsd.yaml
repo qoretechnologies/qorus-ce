@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: service
+name: dynamic-types-test
+desc: "Dynamic types test service"
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: DynamicTypesTestService
+classes:
+  - QoreTest
+lang: qore
+remote: false
+version: "1.0"
+servicetype: USER
+code: dynamic-types-test-1.0.qsd
+methods:
+  - name: test
+    desc: run tests

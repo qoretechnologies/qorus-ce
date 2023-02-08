@@ -1,0 +1,12 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3768Test inherits QorusNormalStep {
+    primary() {
+        # this will throw an exception if the issue is not fixed
+        string value = getConfigItemValue("issue-3768-test");
+        logInfo("value: %y", value);
+    }
+}

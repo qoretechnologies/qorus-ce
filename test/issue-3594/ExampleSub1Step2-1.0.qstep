@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class ExampleSub1Step2 inherits QorusAsyncStep {
+    primary() {
+        skipAsyncStep();
+    }
+}

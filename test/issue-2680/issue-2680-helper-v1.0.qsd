@@ -1,0 +1,41 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2680-helper
+# serviceversion: 1.0
+# servicedesc: issue 2680 helper test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue2680Helper
+# autostart: false
+# remote: true
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class Issue2680Helper inherits QorusService {
+    # name: do_job
+    # desc: runs the issue-2680 job in the background for the deadlock test
+    do_job() {
+        startThread(\doJobIntern());
+    }
+
+    # name: do_reset
+    # desc: resets the issue-2680 job in the background for a deadlock test
+    do_reset() {
+        startThread(\doResetIntern());
+    }
+
+    # name: stop
+    # desc: stops the service
+    stop() {
+        # this method intentionally left blank
+    }
+
+    private doJobIntern() {
+        callRestApi("PUT", "jobs/issue-2680/run");
+    }
+
+    private doResetIntern() {
+        callRestApi("PUT", "jobs/issue-2680/reset");
+    }
+}

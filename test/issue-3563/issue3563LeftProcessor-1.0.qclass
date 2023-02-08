@@ -1,0 +1,15 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3563LeftProcessor inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto _data) {
+        UserApi::logInfo("Left Processor was called, %y", _data);
+        enqueue(_data.staticdata.exchange_rates);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

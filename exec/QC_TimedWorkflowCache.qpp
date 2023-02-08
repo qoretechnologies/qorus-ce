@@ -1,0 +1,102 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+    QC_TimedWorkflowCache.qpp
+ */
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+
+#include "QC_TimedWorkflowCache.h"
+
+typedef TimedDataCacheBase<int64> TimedDataCache;
+
+//! The TimedWorkflowCache class implements a timed cache for workflow instance ID values
+/**
+ */
+qclass TimedWorkflowCache [arg=TimedDataCache* tdc; ns=OMQ];
+
+//! Creates a new PerformanceCache object
+/**
+ */
+TimedWorkflowCache::constructor(object qorus_options, string max, string delay) {
+   self->setPrivate(CID_TIMEDWORKFLOWCACHE, new TimedDataCache(qorus_options, delay->c_str(), max->c_str()));
+}
+
+//! shuts down and destroys the cache
+/**
+ */
+TimedWorkflowCache::destructor() {
+   tdc->destructor();
+   tdc->deref(xsink);
+}
+
+//! throws an exception
+/**
+ */
+TimedWorkflowCache::copy() {
+   xsink->raiseException("COPY-ERROR", "TimedWorkflowCache objects may not be copied");
+}
+
+//!
+/**
+ */
+TimedWorkflowCache::terminate() {
+   tdc->terminate();
+}
+
+//!
+/**
+ */
+TimedWorkflowCache::requeue() {
+   tdc->requeue();
+}
+
+//! sets a value
+/** @return False = cached, True = cache full
+ */
+bool TimedWorkflowCache::set(softint wfiid, softint wfid) {
+   return (bool)tdc->set(wfiid, wfid);
+}
+
+//!
+/**
+ */
+TimedWorkflowCache::deleteKey(softint wfiid, softint wfid) {
+   tdc->deleteKey(wfiid, wfid);
+}
+
+//!
+/**
+ */
+list TimedWorkflowCache::purgeClass(softint wfid) {
+   return tdc->purgeClass(wfid);
+}
+
+//!
+/**
+ */
+*hash TimedWorkflowCache::getEvent() {
+   return tdc->getEvent();
+}
+
+//!
+/**
+ */
+string TimedWorkflowCache::toString() [flags=RET_VALUE_ONLY] {
+   return tdc->toString();
+}
+
+//!
+/**
+ */
+string TimedWorkflowCache::getSummary() [flags=RET_VALUE_ONLY] {
+   return tdc->getSummary();
+}

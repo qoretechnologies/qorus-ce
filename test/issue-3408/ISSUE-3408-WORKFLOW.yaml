@@ -1,0 +1,12 @@
+type: workflow
+name: ISSUE-3408-WORKFLOW
+version: "1.0"
+desc: test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+groups:
+  - test
+remote: false
+sla_threshold: 20
+steps: ["Issue3408Step:1.0"]

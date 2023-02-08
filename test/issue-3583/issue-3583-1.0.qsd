@@ -1,0 +1,18 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+hash<auto> sub get_option_local(string opt) {
+    return {
+        "ServiceApi::getOption": ServiceApi::getOption(opt),
+        "ServiceApi::getOptionArgs": ServiceApi::getOptionArgs(opt),
+        "UserApi::getOption": UserApi::getOption(opt),
+    };
+}
+
+class Issue3583 inherits QorusService {
+    hash<auto> getOption(string opt) {
+        return get_option_local(opt);
+    }
+}

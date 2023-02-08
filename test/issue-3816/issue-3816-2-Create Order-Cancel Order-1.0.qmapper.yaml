@@ -1,0 +1,24 @@
+# This is a generated file, don't edit!
+type: mapper
+name: issue-3816-2-Create Order-Cancel Order
+desc: mapper to bridge Create Order to Cancel Order in flow issue-3816-2
+mappertype: Mapper
+version: '1.0'
+fields:
+    workflow_instanceid:
+        name: workflow_instanceid
+options:
+    mapper-input:
+        type: factory
+        name: qorus-api
+        path: /workflows/create-order
+        supports_request: true
+        is_api_call: true
+        custom-fields: {}
+    mapper-output:
+        type: factory
+        name: qorus-api
+        path: /workflows/cancel-order
+        supports_request: true
+        is_api_call: true
+        custom-fields: {}

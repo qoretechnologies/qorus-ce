@@ -1,0 +1,18 @@
+service-method:
+  required:
+    name:
+      type: string
+    desc:
+      type: string
+  optional:
+      lock:
+        type: string
+        default: none
+      write:
+        type: bool
+        default: false
+      internal:
+        type: bool
+        default: false
+      author:
+        type: list

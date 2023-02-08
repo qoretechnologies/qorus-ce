@@ -1,0 +1,151 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# minimum qore version
+%requires qore >= 1.0
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+
+# treat excess args as errors
+%strict-args
+
+# require all types to be declared
+%require-types
+
+%require-our
+%exec-class ostop
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# Qorus client module
+%requires QorusClientBase
+
+const ostop_opts = {
+    "url"     : "url,u=s",
+    "proxy"   : "proxy-url,p=s",
+    "show"    : "show-url,W",
+    "all"     : "all,a",
+    "to"      : "t,timeout=i",
+    "lit"     : "l,literal:i+",
+    "reformat": "R,reformat",
+    "verbose" : "v,verbose",
+    "remote"  : "Q,remote=s",
+    "token"   : "k,token=s",
+    "help"    : "help,h",
+};
+
+class ostop {
+    private {
+        hash o;
+        hash options;
+        # to capture HTTP call info
+        hash info;
+    }
+
+    static private usage() {
+        printf(
+"usage: %s [options] {<execution ID> | <name [version]>}
+ex: ostop WORKFLOW 2.2
+ -a,--all            stop all workflows
+ -u,--url=ARG        sets Qorus URL (ex: http://user:pass@host:port)
+ -p,--proxy-url=ARG  set the proxy URL (ex: http://user:pass@host:port)
+ -W,--show-url       show default Qorus system URL
+ -t,--timeout=ARG    set HTTP timeout in seconds
+ -l,--literal        show literal REST API calls (more l's, more info)
+ -Q,--remote=ARG     use the given remote Qorus connection
+ -R,--reformat       reformat data with -l for better readability
+ -v,--verbose        verbose output
+ -k,--token=ARG      use the given token with HTTP requests to the Qorus server
+ -h,--help           this help text
+", get_script_name());
+        exit(1);
+    }
+
+    private processCommandLine() {
+        GetOpt g = new GetOpt(ostop_opts);
+        o = g.parse(\ARGV);
+        if (exists o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (o.show) {
+            if (exists options."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+            else
+                printf("%s\n", options."client-url");
+            exit(0);
+        }
+        if (o.help)
+            ostop::usage();
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        options = QorusClient::parseOptions("qorus-client");
+        processCommandLine();
+
+        if (!elements ARGV && !o.all)
+            ostop::usage();
+
+        if (o.all && elements ARGV) {
+            stderr.printf("excess arguments on the command line, aborting: %y\n", ARGV);
+            exit(1);
+        }
+
+        if (o.remote)
+            qrest = omqclient.getRemoteRest(o.remote);
+
+        if (exists o.url)
+            qrest.setURL(o.url);
+        if (exists o.proxy)
+            qrest.setProxyURL(o.proxy);
+
+        if (o.to) {
+            int to = o.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        list args = ARGV;
+        string cmd;
+        if (o.all)
+            cmd = "omq.system.stop-all-workflows";
+        else if (int(args[0]) == args[0]) {
+            args[0] = int(args[0]);
+            cmd = "omq.system.stop-workflow-instance";
+        }
+        else
+            cmd = "omq.system.stop-workflow";
+
+        try {
+            hash h;
+            if (o.all)
+                h = qrest.put(o, "exec?action=stopAll", NOTHING, NOTHING, \info);
+            else
+                h = qrest.put(o, "exec", ("action": "stopMany", "args": args), NOTHING, \info);
+
+            printf("%s\n", h.msg);
+            if (o.verbose)
+                map printf("%s: %y\n", $1.key, $1.value), h.workflows.pairIterator();
+        }
+        catch (hash ex) {
+            qrest.outputRestErrorMessage(ex, info);
+            thread_exit;
+        }
+    }
+}

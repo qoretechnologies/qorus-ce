@@ -1,0 +1,80 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: GENERIC
+# version: 1.0
+# desc: Test debug base errorfunction
+hash sub test_debug_errorfunction() {
+    return (
+
+        ERROR::PROPERTY_ERROR: (
+            "desc"          : "A required system property is not set",
+        ),
+
+        ERROR::BUSINESS_ERROR: (
+            "desc"          : "A common business error. See error detail for more info",
+            "business"      : True,
+        ),
+
+        ERROR::FILE_OPEN_ERROR: (
+            "desc"          : "error opening file, possibly due to some kind of unknown filesystem synchronization delay",
+            "status"        : OMQ::StatRetry,
+            "retry-delay"   : 1m,
+        ),
+    );
+
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# name: test_debug_init
+# desc: Test debug init
+%new-style
+sub test_debug_init() {
+    UserApi::logDebug("Initializing");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# name: test_debug_step1
+# desc: Test debug step 1
+
+%require-types
+%new-style
+%enable-all-warnings
+
+sub test_debug_step1() {
+    UserApi::logInfo("%y", getHello());
+}
+# END
+
+# type: VALIDATION
+# version: 1.0
+# name: test_debug_step1_val
+# desc: Test debug step 1 validation
+
+%require-types
+%new-style
+%enable-all-warnings
+
+string sub test_debug_step1_val() {
+    return OMQ::StatRetry;
+}
+
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: one time init function
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub test_debug_wf_one_time_init() {
+    UserApi::logDebug("Initializing");
+}
+# END

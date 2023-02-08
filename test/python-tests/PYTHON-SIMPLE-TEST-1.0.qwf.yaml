@@ -1,0 +1,14 @@
+# This is a generated file, don't edit!
+type: workflow
+name: PYTHON-SIMPLE-TEST
+desc: Python test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+steps:
+    [
+        "PythonSimpleTestStep1:1.0"
+    ]
+version: "1.0"
+classes:
+  - QoreTest

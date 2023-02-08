@@ -1,0 +1,980 @@
+#!/usr/bin/env qore
+#
+# The MIT License (MIT)
+#
+# Copyright (c) 2014 Petr Vanek <petr@yarpen.cz>
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+
+%new-style
+%exec-class Main
+
+%requires linenoise
+%requires SqlUtil
+
+%try-module xml
+%define NO_XML
+%endtry
+
+%try-module yaml
+%define NO_YAML
+%endtry
+
+%try-module json
+%define NO_JSON
+%endtry
+
+%try-module QorusClientBase
+%define NO_QORUS
+%endtry
+
+const VERSION = "0.3";
+
+
+const options = (
+        "help" : "help,h",
+        "version" : "version,v",
+    );
+
+const HELPSTR = "qdb
+===
+
+An universal database client for command line. Currently supported DBMS:
+* Oracle
+* Postgresql
+* MySQL (or clones/forks)
+
+Licensed under MIT license.
+support: https://github.com/pvanek/qdb
+
+
+## Requirements
+
+* Qore programming language: qore.org
+* Linenoise module for Qore
+* SqlUtil module for Qore
+
+
+Optional dependencies, Qore modules:
+
+* xml
+* json
+* yaml
+
+Optional dependencies, Qorus Integration Server modules:
+
+* QorusClientBase
+
+
+## Basic Usage
+
+```
+./qdb oracle:scott/tiger@dbname
+```
+
+The connection string is constructed as in [standard Qore connection](http://docs.qore.org/current/lang/html/group__dbi__functions.html#gad95f3a076d1818cc722c516543e29858) or it can use Qorus Integration Server dbparams alias.
+
+Then the SQL prompt appears to enter raw SQL statements.
+
+By default is the output of select statement limited to display only 100 rows. Use 'limit <integer>' command to modify this behavior.
+
+Press <TAB> for command/expansion automatic completion.
+There are more keyboard shortcuts avalable - see Qore Linenoise documentation.
+
+### Transaction Handling
+
+qdb disables potential autocommit for all DBMS. Commit has to be performed manually. Transaction in progress is rolled back by default on application exit.
+
+Status of transaction is displayed in SQL prompt - value after \"tran:\" string.
+
+Out of transaction:
+```
+SQL tran:n oracle:hr@orcl%10.211.55.7
+```
+
+In transaction:
+```
+SQL tran:Y oracle:hr@orcl%10.211.55.7
+```
+
+### Available commands
+
+Note: Some commands make sense on special DBMS only.
+
+* quit : rollback and exit the application
+* history [integer] : it shows history of commands. The latest items are displayed only if is the integer value provided.
+* commit : Commit current transaction. See \"Transaction Handling\".
+* rollback : Rollback current transaction. See \"Transaction Handling\".
+* limit [integer] : display current row limit or set the limit to integer value.  Values <= 0 mean unlimited.
+* verbose [integer] : set the verbosity level for describe commands
+* output [string] : set the data result display. See \"Supported Output Formats\"
+* describe objectname : show object properties. Eg. table's columns, PK, indexes, etc. You can increase verbose level to get more info.
+* desc objectname : an alias for describe
+* tables [filter] : list all tables. Optional filter is case insensitive substring or regular expression.
+* views [filter] : list all views. Optional filter is case insensitive substring or regular expression.
+* sequences [filter] : list all sequences. Optional filter is case insensitive substring or regular expression.
+* procedures [filter] : list all procedures. Optional filter is case insensitive substring or regular expression.
+* functions [filter] : list all functions. Optional filter is case insensitive substring or regular expression.
+* packages [filter] : list all packages. Optional filter is case insensitive substring or regular expression.
+* types [filter] : list all named types. Optional filter is case insensitive substring or regular expression.
+* mviews [filter] : list all materialized views. Optional filter is case insensitive substring or regular expression.
+* help or ? : display help message
+
+
+### Supported Output Formats
+
+There are bunch of output formats available. Current format can be obtained by ```output``` command.
+Using ```output xml``` you can switch standard output to XML.
+Currently available formats:
+
+* console - a classic command line \"tabular\" output
+* xml - XML output. The root tag is ```resultset``` and each row is using tag ```row```
+* json - one JSON document per statement
+* yaml - one YAML document per statement
+
+
+### Expansion Helpers
+
+Various string shortcuts can be expanded by <TAB> to longer strings to speed up typing.
+
+* sf : select * from
+* scf : select count(*) from
+
+
+## Sample Usage
+
+```
+lister:qdb pvanek$ ./qdb oracle:hr/hr@orcl%10.211.55.7:1521
+Current limit: 100
+Current verbosity: 0
+SQL tran:n oracle:hr@orcl%10.211.55.7> tables
+
+table
+--------------------
+REGIONS
+LOCATIONS
+DEPARTMENTS
+JOBS
+EMPLOYEES
+JOB_HISTORY
+COUNTRIES
+
+SQL tran:n oracle:hr@orcl%10.211.55.7> desc countries
+Name: COUNTRIES
+SQL Name: hr.COUNTRIES
+
+Columns:
+
+name                 native_type          size nullable def_val comment
+-------------------- -------------------- ---- -------- ------- --------------------
+country_id           char                    2        0         Primary key of countries table.
+country_name         varchar2               40        1         Country name
+region_id            number                  0        1         Region ID for the country. Foreign key to region_id column in the departments table.
+
+Primary Key:
+
+name                 native_type          size nullable def_val comment
+-------------------- -------------------- ---- -------- ------- --------------------
+country_id           char                    2        0         Primary key of countries table.
+
+Describe limited by verbosity. Use: \"verbose 1\" to show indexes and more
+SQL tran:n oracle:hr@orcl%10.211.55.7> select * from countries;
+
+country_id           country_name         region_id
+-------------------- -------------------- --------------------
+AU                   Australia                               3
+BR                   Brazil                                  2
+CH                   Switzerland                             1
+DE                   Germany                                 1
+EG                   Egypt                                   4
+HK                   HongKong                                3
+IN                   India                                   3
+JP                   Japan                                   3
+MX                   Mexico                                  2
+NL                   Netherlands                             1
+UK                   United Kingdom                          1
+ZM                   Zambia                                  4
+
+rows affected: 12
+Duration: <time: 0 seconds>
+
+SQL tran:Y oracle:hr@orcl%10.211.55.7> quit
+```
+
+
+";
+
+sub help(*int status)
+{
+    printf("Usage:\n");
+    printf("%s <connection>\n", get_script_name());
+    printf("   connection can be any Qore connection string.\n");
+    printf("   E.g.: pgsql:test/test@test%localhost\n");
+    printf("\n");
+    printf("Use internal command 'help' for more info\n");
+    printf("\n");
+    if (exists status)
+        exit(status);
+}
+
+sub get_version()
+{
+    printf("%s\n", VERSION);
+    exit(0);
+}
+
+
+class AbstractOutput
+{
+    private {
+        string m_type;
+    }
+
+    constructor(string type)
+    {
+        m_type = type;
+    }
+
+    string type() { return m_type; }
+
+    abstract putLine(hash row, string type, hash describe);
+    abstract putEndLine();
+
+} # class AbstractOutput
+
+
+class StdoutOutput inherits AbstractOutput
+{
+    constructor() : AbstractOutput("stdout")
+    {
+    }
+
+    putLine(hash row, string type, hash describe)
+    {
+        string mask;
+        list values;
+        string title;
+        list key;
+        string separator;
+
+        HashIterator it(row);
+        while (it.next())
+        {
+            hash desc;
+            if (exists describe{it.getKey()})
+                desc = describe{it.getKey()};
+            else
+                desc.maxsize = 20;
+
+            int max = desc.maxsize < it.getKey().size() ? it.getKey().size() : desc.maxsize;
+            if (desc.type == NT_DATE && max < 19)
+                max = 19;
+            push key, it.getKey();
+            title += sprintf("%%-%ds ", max);
+
+            switch (desc.type)
+            {
+                case NT_STRING:
+                    push values, it.getValue();
+                    mask += sprintf("%%-%ds ", max);
+                    separator += strmul("-", max) + " ";
+                    break;
+                case NT_DATE:
+                    push values, format_date("YYYY-MM-DD HH:mm:SS", it.getValue());
+                    mask += "%-s ";
+                    separator += strmul("-", 19) + " ";
+                    break;
+                default:
+                    push values, it.getValue();
+                    mask += sprintf("%%%ds ", max);
+                    separator += strmul("-", max) + " ";
+            }
+        }
+        mask = mask.substr(0, mask.size()-1) + "\n";
+
+        if (type == "header")
+        {
+            title = title.substr(0, title.size()-1) + "\n";
+            vprintf(title, key);
+            printf(separator + "\n");
+        }
+
+        vprintf(mask, values);
+    }
+
+    putEndLine() {}
+
+} # class StdoutOutput
+
+%ifndef NO_XML
+class XMLOutput inherits AbstractOutput
+{
+    constructor() : AbstractOutput("xml") {}
+
+    putLine(hash row, string type, hash describe)
+    {
+        if (type == "header")
+        {
+            printf("<xml version=\"1.0\" encoding=\"%s\">\n", get_default_encoding());
+            printf("<resultset>\n");
+        }
+        printf("%s\n", Xml::make_xml_fragment(("row": row), XGF_ADD_FORMATTING, get_default_encoding()));
+    }
+
+    putEndLine()
+    {
+        printf("</resultset>");
+    }
+
+} # class XMLOutput
+%endif
+
+%ifndef NO_YAML
+class YamlOutput inherits AbstractOutput
+{
+    constructor() : AbstractOutput("yaml") {}
+
+    putLine(hash row, string type, hash describe)
+    {
+        if (type == "header")
+        {
+            printf("---\n");
+        }
+        printf("  - %s", YAML::make_yaml(row));
+    }
+
+    putEndLine()
+    {
+        printf("...\n");
+    }
+} # class YamlOutput
+%endif
+
+%ifndef NO_JSON
+class JsonOutput inherits AbstractOutput
+{
+    constructor() : AbstractOutput("json") {}
+
+    putLine(hash row, string type, hash describe)
+    {
+        if (type == "header")
+        {
+            printf("[\n");
+            printf("    %s\n", make_json(row, JGF_ADD_FORMATTING));
+        }
+        else
+            printf("   ,%s\n", make_json(row, JGF_ADD_FORMATTING));
+    }
+
+    putEndLine()
+    {
+        printf("]\n");
+    }
+} # class JsonOutput
+%endif
+
+
+class Main
+{
+    private {
+        string connstr;
+        Datasource ds;
+        SqlUtil::Database db;
+        int limit = 100;
+        int verbose = 0;
+        *hash describe;
+        string output = "console";
+
+        hash outputs = ( "console" : new StdoutOutput(),
+%ifndef NO_XML
+                         "xml" : new XMLOutput(),
+%endif
+%ifndef NO_YAML
+                         "yaml" : new YamlOutput(),
+%endif
+%ifndef NO_JSON
+                         "json" : new JsonOutput(),
+%endif
+                       );
+
+        hash commands = ( "history" : "callHistory",
+                          "h" : "callHistory",
+                          "commit" : "callCommit",
+                          "rollback" : "callRollback",
+                          "tables" : "showTables",
+                          "views" : "showViews",
+                          "sequences" : "showSequences",
+                          "procedures" : "showProcedures",
+                          "functions" : "showFunctions",
+                          "packages" : "showPackages",
+                          "types" : "showTypes",
+                          "mviews" : "showMViews",
+                          "desc" : "describeObject",
+                          "describe" : "describeObject",
+                          "limit" : "setLimit",
+                          "verbose": "setVerbose",
+                          "output" : "setOutput",
+                          "quit" : "quit",
+                          "q" : "quit",
+                          "help" : "callHelp",
+                          "?" : "callHelp",
+                        );
+
+        hash expansions = (
+                          "sf" : "select * from ",
+                          "scf" : "select count(*) from ",
+                        );
+    }
+
+    constructor()
+    {
+        GetOpt go(options);
+        hash opts = go.parse(\ARGV);
+        if (opts.help)
+            help(0);
+        if (opts.version)
+            get_version();
+        if (!elements ARGV)
+            help(1);
+
+        connstr = string(ARGV[0]);
+%ifndef NO_QORUS
+	qorus_client_init2();
+        try {
+            ds = omqclient.getDatasource(connstr);
+        }
+        catch (hash ex) {
+#            printf("Qorus client found, but dbparams does not contain: %n\n", connstr);
+#            printf("    Continuing with regular connection\n");
+        }
+%endif
+
+        if (!exists ds)
+            ds = new Datasource(connstr);
+        ds.setAutoCommit(False);
+
+        db = new SqlUtil::Database(ds, ("native_case" : True) );
+
+        Linenoise::history_set_max_len(100);
+
+        try
+            Linenoise::history_load(getConfigFile());
+        catch (hash ex)
+            printf("History load: %s - %s\n", ex.err, ex.desc);
+
+        Linenoise::set_callback(\self.lineCallback());
+
+        #printf("Connected to: %n\n", ds.getClientVersion());
+        setLimit();
+        setVerbose();
+        setOutput();
+
+        mainLoop();
+    }
+
+
+    private mainLoop()
+    {
+        on_exit Linenoise::history_save(getConfigFile());
+
+        while (True)
+        {
+            *string line = Linenoise::line(getPrompt());
+            if (!exists line) {
+                printf("^C signal caught. Exiting.\n");
+                break;
+            }
+            else if (line == "")
+            {
+                # the empty line is returned on terminal resize
+                continue;
+            }
+
+            # TODO/FIXME: ; should be command separator. Allow multiline sql statements.
+            if (line[line.size()-1] == ";")
+                line = line.substr(0, line.size()-1);
+
+            if (!callCommand(line))
+            {
+                Linenoise::history_add(line);
+                callSQL(line);
+            }
+        }
+
+        if (ds.inTransaction())
+        {
+            printf("Connection is in transaction. Rollbacking...\n");
+            ds.rollback();
+        }
+    }
+
+
+    private list lineCallback(string str)
+    {
+        list ret = ();
+        HashIterator it(commands);
+        string rx = sprintf("^%s", str);
+        while (it.next())
+        {
+            if (it.getKey().regex(rx))
+               push ret, it.getKey()+" ";
+        }
+
+        HashIterator eit(expansions);
+        while (eit.next())
+        {
+            if (eit.getKey() == str)
+               push ret, eit.getValue();
+        }
+        return ret;
+    }
+
+
+    private bool callCommand(string line)
+    {
+        list strs = line.split(" ");
+        string cmd = shift strs;
+        if (has_key(commands, cmd))
+        {
+            call_object_method_args(self, commands{cmd}, strs);
+            return True;
+        }
+
+        return False;
+    }
+
+
+    private callSQL(string sql)
+    {
+        date start = now();
+        date end;
+
+        int count = 0;
+
+        try
+        {
+            bool header = False;
+            describe = NOTHING;
+            SQLStatement stmt(ds);
+            on_exit stmt.close();
+            stmt.prepareRaw(sql);
+            while (stmt.next())
+            {
+                any ret = stmt.fetchRow();
+
+                if (!exists describe)
+                    describe = stmt.describe();
+
+                switch (ret.typeCode())
+                {
+                    case NT_HASH:
+                        outputHash(ret, header);
+                        header = True;
+                        count++;
+                        break;
+                    case NT_INT:
+                        count += ret;
+                        break;
+                    default:
+                        printf("unhandled/raw DB result (res.type()): %N\n", ret);
+                }
+
+                if (limit > 0 && count >= limit)
+                {
+                    break;
+                }
+            }
+
+            outputs{output}.putEndLine();
+        }
+        catch (hash ex)
+        {
+            printf("\n");
+            printf("DB ERROR: %s: %s\n", ex.err, ex.desc);
+        }
+        end = now();
+
+        printf("\n");
+        if (limit > 0 && count >= limit)
+        {
+            printf("User row limit reached: %d\n", limit);
+        }
+        printf("rows affected: %d\n", count);
+        printf("Duration: %n\n", end - start);
+        printf("\n");
+    }
+
+
+    private outputHash(hash h, bool hasHeader)
+    {
+        outputs{output}.putLine(h, hasHeader ? "datarow" : "header", describe);
+    }
+
+
+    private callHistory()
+    {
+        list h = Linenoise::history();
+        ListIterator it(h);
+        int cnt = h.size();
+
+        any val = shift argv;
+        if (val != int(val))
+            val = NOTHING;
+        else
+            val = int(val);
+
+        while (it.next())
+        {
+            if (val && cnt-val > it.index())
+                continue;
+            printf("%4d: %s\n", it.index(), it.getValue());
+        }
+    }
+
+    private callHelp()
+    {
+        printf("commands list: %y\n", keys commands);
+        printf("%s\n", HELPSTR);
+    }
+
+    private string getPrompt()
+    {
+        string ret = sprintf("SQL tran:%s %s:%s@%s%%%s> ",
+                              ds.inTransaction() ? 'Y' : 'n',
+                              ds.getDriverName(),
+                              ds.getUserName(),
+                              ds.getDBName(),
+                              ds.getHostName()
+                             );
+        return ret;
+    }
+
+    private *string getConfigFile()
+    {
+        try
+        {
+            string pwd = getpwuid2(getuid()).pw_dir;
+            return sprintf("%s/.%s.cfg", pwd, get_script_name());
+        }
+        catch (hash ex)
+            printf("Config File ERROR: %s - %s\n", ex.err, ex.desc);
+        return NOTHING;
+    }
+
+    private callCommit()
+    {
+        try
+            ds.commit();
+        catch (hash ex)
+            printf("Commit ERROR: %s - %s\n", ex.err, ex.desc);
+    }
+
+    private callRollback()
+    {
+        try
+            ds.rollback();
+        catch (hash ex)
+            printf("Commit ERROR: %s - %s\n", ex.err, ex.desc);
+    }
+
+    private showObjects(string objType, *string filter) {
+        string method = sprintf("%sIterator", objType);
+        my ListIterator it = call_object_method(db, method);
+
+        printf("\n%ss\n", objType);
+        printf("-----------------------------\n");
+
+        while (it.next())
+        {
+            if (!exists filter)
+                printf("%s\n", it.getValue());
+            else if (it.getValue().upr().regex(filter.upr()))
+                printf("%s\n", it.getValue());
+        }
+
+        printf("\n");
+    }
+
+    private showTables()
+    {
+        showObjects("table", shift argv);
+    }
+
+    private showViews()
+    {
+        showObjects("view", shift argv);
+    }
+
+    private showSequences()
+    {
+        showObjects("sequence", shift argv);
+    }
+
+    private showFunctions()
+    {
+        showObjects("function", shift argv);
+    }
+
+    private showProcedures()
+    {
+        showObjects("procedure", shift argv);
+    }
+
+    private showPackages()
+    {
+        showObjects("package", shift argv);
+    }
+
+    private showTypes()
+    {
+        showObjects("type", shift argv);
+    }
+
+    private showMViews()
+    {
+        showObjects("materializedView", shift argv);
+    }
+
+    private setLimit()
+    {
+        any val = shift argv;
+        if (!exists val)
+        {
+            printf("Current limit: %s\n", limit ? limit : 'unlimited');
+            return;
+        }
+        if (val != int(val))
+        {
+            printf("Cannot set limit to value: %n. Use numeric value.\n", val);
+            return;
+        }
+
+        limit = val;
+    }
+
+
+    private setVerbose()
+    {
+        any val = shift argv;
+        if (!exists val)
+        {
+            printf("Current verbosity: %d\n", verbose);
+            return;
+        }
+        if (val != int(val) || val < 0)
+        {
+            printf("Cannot set verbosity to value: %n. Use numeric value >= 0\n", val);
+            return;
+        }
+
+        verbose = val;
+    }
+
+    private setOutput()
+    {
+        any val = shift argv;
+        if (!exists val)
+        {
+            printf("Current output method: %s. Available %n\n", output, keys outputs);
+            return;
+        }
+        if (!inlist(val, keys outputs))
+        {
+            printf("Cannot set output mode to to value: %n. Use string value from %n\n", val, keys outputs);
+            return;
+        }
+
+        output = val;
+    }
+
+
+    private quit()
+    {
+        ds.rollback();
+        exit(0);
+    }
+
+
+    private hash describeColumn(SqlUtil::AbstractColumn c)
+    {
+        return (
+             "name" : c.name,
+             "type" : c.native_type,
+             "size" : c.size,
+             "null" : c.nullable ? 'Y' : 'N',
+             "default" : c.def_val,
+             "comment" : c.comment,
+             );
+    }
+
+    private describeTable(string name)
+    {
+        SqlUtil::AbstractTable tab = db.getTable(name);
+        printf("Name: %s\n", tab.getName());
+        printf("SQL Name: %s\n", tab.getSqlName());
+
+        describe = (
+                "name" : ( "type" : NT_STRING, "maxsize" : 35 ),
+                "type" : ( "type" : NT_STRING, "maxsize" : 20 ),
+                "size" : ( "type" : NT_INT, "maxsize" : 6 ),
+                "null" : ( "type" : NT_STRING, "maxsize" : 1 ),
+                "default" : ( "type" : NT_STRING, "maxsize" : 22 ),
+                "comment" : ( "type" : NT_STRING, "maxsize" : 30 ),
+            );
+
+        {
+            # Columns
+            printf("\nColumns:\n");
+            HashIterator it = tab.describe().iterator();
+            bool hasHeader = False;
+            while (it.next())
+            {
+                 outputHash(describeColumn(it.getValue()), hasHeader);
+                 if (!hasHeader) hasHeader = True;
+            }
+        }
+
+        # PK
+        if (tab.getPrimaryKey().empty())
+        {
+            printf("\nPrimary Key: none\n");
+        }
+        else
+        {
+            printf("\nPrimary Key:\n");
+            HashIterator it = tab.getPrimaryKey().iterator();
+            bool hasHeader = False;
+            while (it.next())
+            {
+                outputHash(describeColumn(it.getValue()), hasHeader);
+                if (!hasHeader) hasHeader = True;
+            }
+        }
+
+        if (!verbose)
+        {
+            printf("\nDescribe limited by verbosity. Use: \"verbose 1\" to show indexes and more\n");
+            return;
+        }
+
+        # Indexes
+        if (tab.getIndexes().empty())
+        {
+            printf("\nIndexes: none\n");
+        }
+        else
+        {
+            my HashIterator it = tab.getIndexes().iterator();
+            while (it.next())
+            {
+                printf("\nIndex: %s (%s)\n", it.getValue().name, (it.getValue().unique ? 'unique' : 'non-unique'));
+
+                printf("Index Columns:\n");
+                HashIterator cit = it.getValue().columns.iterator();
+                bool hasHeader = False;
+                while (cit.next())
+                {
+                    outputHash(describeColumn(cit.getValue()), hasHeader);
+                    if (!hasHeader) hasHeader = True;
+                }
+            }
+        }
+
+        # Triggers
+        if (tab.getTriggers().empty())
+        {
+            printf("\nTriggers: none\n");
+        }
+        else
+        {
+            HashIterator it = tab.getTriggers().iterator();
+            while (it.next())
+            {
+                printf("Trigger: %s\n", it.getValue().name);
+                if (verbose > 1)
+                    printf("Source Code:\n%s\n", it.getValue().src);
+                else
+                    printf("\nDescribe limited by verbosity. Use: \"verbose 2\" to show source codes\n");
+            }
+        }
+    }
+
+    private bool describeObject(string name, string type)
+    {
+        ListIterator it(call_object_method(db, sprintf("list%ss", type)));
+        while (it.next())
+        {
+            if (it.getValue().upr() == name)
+            {
+                if (type == "Table")
+                    describeTable(name);
+                else
+                {
+                    ObjectIterator obj(call_object_method(db, sprintf("get%s", type), name));
+                    bool hasHeader = False;
+                    string src;
+                    while (obj.next())
+                    {
+                        if (obj.getKey() == "src")
+                        {
+                            src = obj.getValue();
+                            continue;
+                        }
+                        outputHash(obj.getValuePair(), hasHeader);
+                        if (!hasHeader) hasHeader = True;
+                    }
+                    if (verbose > 1)
+                        printf("Source Code:\n%s\n", src);
+                    else
+                        printf("\nDescribe limited by verbosity. Use: \"verbose 2\" to show source codes\n");
+
+                }
+
+                return True;
+            }
+        }
+        return False;
+    }
+
+    private describeObject()
+    {
+        *softstring name = shift argv;
+        if (!exists name)
+        {
+            printf("No object name provided\n");
+            return;
+        }
+
+        name = name.upr();
+        # find object type
+        list m = ("Table", "View", "Sequence", "Type", "Package", "Procedure", "Function", "MaterializedView");
+        foreach string i in (m)
+        {
+            try {
+	        if (describeObject(name, i))
+                    return;
+            }
+            catch (hash ex) {
+                printf("%s: %s\n", ex.err, ex.desc);
+            }
+        }
+    }
+
+} # class Main

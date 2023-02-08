@@ -1,0 +1,186 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: ftp-test
+# serviceversion: 1.0
+# servicedesc: test for the FTP server
+# remote: true
+# serviceauthor: Qore Technologies, s.r.o.
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the ftp-test service
+%requires FsUtil
+
+const DEFAULTS = (
+    "listeners" : (0,),
+);
+
+const EventType = "event-test";
+
+# FTP listener port
+our int $port;
+
+hash<auto> sub get_options() {
+    # get options for service
+    my any $props = UserApi::propGet("ftp-test");
+
+    my hash $h;
+
+    foreach my string $k in (DEFAULTS.keyIterator())
+        $h.$k = exists $props.$k ? $props.$k : DEFAULTS.$k;
+
+    if (!exists $h.dir) {
+        $h.dir = $ENV.OMQ_DIR + DirSep + "user/ftp-test" + DirSep + get_random_string();
+    }
+
+    return $h;
+}
+
+class MyFtpHandler inherits public AbstractFtpHandler {
+    constructor(string $dir) : AbstractFtpHandler($dir) {
+    }
+
+    *string authReceiveFile(string $cwd, string $orig, reference $path) {
+        UserApi::logInfo("authorizing receipt of file %s -> %s", $path, $path + ".tmp");
+        $path += ".tmp";
+    }
+
+    fileReceived(string $path) {
+        ++$stats."in".files;
+    	UserApi::logInfo("received file: dir: %y fn: %y", dirname($path), basename($path));
+    }
+
+    *string authChangeDir(string $cwd, string $orig, reference $path) {
+        UserApi::logInfo("authChangeDir: cwd: %y orig: %y path: %y", $cwd, $orig, $path);
+        my *string $err = AbstractFtpHandler::$.authChangeDir($cwd, $orig, \$path);
+        UserApi::logInfo("authChangeDir: cwd: %y orig: %y path: %y", $cwd, $orig, $path);
+        if ($err)
+            UserApi::logInfo("denying CWD: %s", $err);
+        else
+            UserApi::logInfo("authorizing CWD %s -> %s", $cwd, $path);
+        return $err;
+    }
+
+    *string authRename(string $cwd, string $orig, reference $path) {
+        my *string $err = AbstractFtpHandler::$.authRename($cwd, $orig, \$path);
+        if ($err)
+            UserApi::logInfo("denying RNFR: %s", $err);
+        else
+            UserApi::logInfo("authorizing RNFR %s", $cwd, $path);
+        return $err;
+    }
+
+    *string rename(string $cwd, string $orig_to, string $from, string $to) {
+        my *string $err = AbstractFtpHandler::$.rename($cwd, $orig_to, $from, $to);
+        if ($err)
+            UserApi::logInfo("RNTO error: %s", $err);
+        else
+            UserApi::logInfo("RNFR OK: %s - >%s", $from, $to);
+        return $err;
+    }
+
+    *string list(string $cwd, *string $path, reference $output) {
+        my *string $err = AbstractFtpHandler::$.list($cwd, $path, \$output);
+        if ($err)
+            UserApi::logInfo("LIST error: %s", $err);
+        else
+            UserApi::logInfo("LIST OK: %n", $path);
+        return $err;
+    }
+
+    *string nlst(string $cwd, *string $path, reference $output) {
+        my *string $err = AbstractFtpHandler::$.nlst($cwd, $path, \$output);
+        if ($err)
+            UserApi::logInfo("NLST error: %s", $err);
+        else
+            UserApi::logInfo("NLST OK: %n", $path);
+        return $err;
+    }
+
+    *string makeDir(string $cwd, string $orig, string $path) {
+        my *string $err = AbstractFtpHandler::$.makeDir($cwd, $orig, $path);
+        if ($err)
+            UserApi::logInfo("MKD error: %s", $err);
+        else
+            UserApi::logInfo("MKD OK: %s", $path);
+        return $err;
+    }
+
+    *string removeDir(string $cwd, string $orig, string $path) {
+        my *string $err = AbstractFtpHandler::$.removeDir($cwd, $orig, $path);
+        if ($err)
+            UserApi::logInfo("RMD error: %s", $err);
+        else
+            UserApi::logInfo("RMD OK: %s", $path);
+        return $err;
+    }
+
+    *string deleteFile(string $cwd, string $orig, string $path) {
+        my *string $err = AbstractFtpHandler::$.deleteFile($cwd, $orig, $path);
+        if ($err)
+            UserApi::logInfo("DELE error: %s", $err);
+        else
+            UserApi::logInfo("DELE OK: %s", $path);
+        return $err;
+    }
+}
+
+sub init() {
+    our hash $stats."in".files = 0;
+
+    our hash $opt = get_options();
+    UserApi::logInfo("starting with options: %y", $opt);
+
+    # create cdir if it does not exist
+    our bool $rmdir;
+    if (!is_dir($opt.dir)) {
+        mkdir_ex($opt.dir, 0700, True);
+        $rmdir = True;
+    }
+
+    my MyFtpHandler $handler($opt.dir);
+    foreach my any $l in ($opt.listeners)
+        $handler.addListener($l);
+
+    ServiceApi::bindFtp($handler);
+
+    get_port();
+}
+# END
+
+# desc: stops the service
+sub stop() {
+    if ($rmdir) {
+        remove_tree($opt.dir);
+    }
+}
+# END
+
+# desc: finds and retrieves the port for the listener
+int sub get_port() {
+    # get port
+    foreach my hash $rh in (ServiceApi::getServiceInfo().resources.iterator()) {
+        if ($rh.type == "FtpListener" && $rh.info.family == AF_INET) {
+            $port = $rh.info.port;
+            break;
+        }
+    }
+    if (!$port)
+        throw "FTP-ERROR", sprintf("cannot determine FTP port");
+
+    return $port;
+}
+# END
+
+# desc: returns the port number of the listener
+int sub port() {
+    return $port;
+}
+# END
+
+# desc: provides information about the service
+hash sub info() {
+    return $stats;
+}
+# END

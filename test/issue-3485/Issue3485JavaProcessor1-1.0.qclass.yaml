@@ -1,0 +1,31 @@
+# This is a generated file, don't edit!
+type: class
+name: Issue3485JavaProcessor1
+desc: Java processor test
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: AbstractDataProcessor
+lang: java
+processor:
+    {}
+version: "1.0"
+code: Issue3485JavaProcessor1-1.0-class/Issue3485JavaProcessor1.java
+config-items:
+  - name: pfx
+    config_group: Pipeline 1 Config
+    description: prefix
+    strictly_local: true
+  - name: crec
+    default_value:
+        {}
+    config_group: Pipeline 1 Config
+    description: Constant record
+    strictly_local: true
+    type: "*hash"
+  - name: raise_error
+    default_value:
+        false
+    config_group: Pipeline 1 Config
+    description: Raise error flag
+    strictly_local: true
+    type: bool

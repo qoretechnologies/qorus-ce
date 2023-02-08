@@ -1,0 +1,70 @@
+config-item:
+  required:
+    name:
+      type: string
+      max-length: 160
+    description:
+      type: string
+      optional-if-defined:
+        - parent
+      max-length: 4000
+    type:
+      type: string
+      optional-if-defined:
+        - parent
+      no-default-if-defined:
+        - parent
+      allowed-values:
+        ["int", "float", "bool", "string", "date", "hash", "list", "*int", "*float", "*bool", "*string", "*date",
+          "*hash", "*list", "any", "data-provider", "connection", "mapper", "value-map", "workflow", "service",
+          "job", "*data-provider", "*connection", "*mapper", "*value-map", "*workflow", "*service", "*job"]
+      default: string
+    sensitive:
+      type: bool
+      optional-if-defined:
+        - parent
+      no-default-if-defined:
+        - parent
+      default: false
+  optional:
+    parent:
+      type: parent
+    default_value:
+      type: any
+    is_default_value_templated_string:
+      type: bool
+      default: false
+    default_value_true_type: # only used in the IDE
+      type: string
+    strictly_local:
+      type: bool
+      default: false
+      no-default-if-defined:
+        - parent
+    config_group:
+      type: string
+      default: Default
+      no-default-if-defined:
+        - parent
+    allowed_values:
+      type: list
+    value:
+      type: any
+    is_value_templated_string:
+      type: bool
+      default: false
+    value_true_type: # only used in the IDE
+      type: string
+    prefix:
+      type: string
+      max-length: 120
+  definitions:
+    parent:
+      required:
+        interface-type:
+          type: string
+          allowed-values: ["class", "step", "job", "service"]
+        interface-name:
+          type: string
+        interface-version:
+          type: string

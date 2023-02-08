@@ -1,0 +1,22 @@
+# This is a generated file, don't edit!
+type: service
+name: issue-3537-test
+desc: issue 3537 test service
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3537Test
+classes:
+  - Issue3537Shared
+groups:
+  - regression
+  - test
+lang: qore
+remote: true
+version: "1.0"
+servicetype: USER
+code: issue-3537-test-1.0.qsd
+methods:
+  - name: get
+    desc: test method
+    internal: true

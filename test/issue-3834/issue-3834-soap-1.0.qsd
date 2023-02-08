@@ -1,0 +1,17 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3834Soap inherits QorusService {
+    hash<auto> getCompanyInfo(hash<auto> req) {
+        logInfo("getCompanyInfo request: %y", req);
+        return {
+            "body": {
+                "result": 1.0,
+            },
+            "docs": "text",
+            "logo": <abcd>,
+        };
+    }
+}

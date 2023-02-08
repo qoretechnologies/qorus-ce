@@ -1,0 +1,561 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires QUnit
+%requires Util
+%requires SqlUtil
+%requires QorusClientCore
+
+%include ../Classes/SchemaSnapshots.qc
+
+%exec-class Main
+
+our SQLInterface sqlif;
+
+class MockEvents {
+    hash getEventsOr(int event_id, list event_filter, timeout event_timeout_ms) {
+        return {
+            "events": (1,2,), # just to provide events.size() as true
+            "lastid": event_id + 1, # always return a value which will continue the loop = with increased event id
+        };
+    }
+}
+
+our hash Qorus;
+
+SqlUtil::AbstractTable sub get_sql_table_system_trans(auto _, string tname) {
+    return new SqlUtil::Table(sqlif.omqp, tname).getTable();
+}
+
+sub qlog(auto level, string msg) {
+    printf("%n: %d: %s\n", now(), level, vsprintf(msg, argv));
+}
+
+class Main inherits QUnit::Test {
+    private {
+        const OBJECT_ID = -10;
+
+        int m_seqNextval = -100;
+
+        AbstractDatasource m_ds;
+    }
+
+    constructor() : QUnit::Test("SchemaSnapshots.qc test", "1.0") {
+        QorusClient::init2();
+
+        Qorus = {
+            "events": new MockEvents(),
+        };
+
+        sqlif = omqclient.getSQLIF();
+        m_ds = sqlif.omqp;
+
+        # Workflows
+        addTestCase("snapshot stage data changes: wfiid insert", \testSnapshotStageDataChangesWfiidInsert());
+        addTestCase("snapshot stage data changes: wfiid update", \testSnapshotStageDataChangesWfiidUpdate());
+        # it must go before delete
+        addTestCase("snapshot refresh offline for workflows", \testRefreshSnapshotsOfflineWorkflows());
+        addTestCase("snapshot stage data changes: wfiid delete", \testSnapshotStageDataChangesWfiidDelete());
+        addTestCase("snapshot refresh offline for workflows after delete", \testRefreshSnapshotsOfflineWorkflowsDelete());
+        # processing test
+        addTestCase("snapshot offline processing: WF", \testSnapshotsOfflineWorkflows());
+        # system.info backend test
+        addTestCase("system info backend test: wf", \testSystemInfoBackendWorkflows());
+
+        # Jobs
+        addTestCase("system info backend test: jobs", \testSystemInfoBackendJobs());
+
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # just to clear ot in advance just to be sure...
+        globalTearDown();
+
+        # fake the metadata
+        m_ds.exec("insert into workflows
+                    (workflowid, name, version, description, author,
+                     remote, open, autostart, manual_autostart,
+                     enabled, sla_threshold, manual_sla_threshold, deprecated
+                    )
+                    values
+                    (%v, %v, %v, %v, %v,
+                     1, 1, 1, 1,
+                     1, 1, 1, 0
+                    )
+                  ", OBJECT_ID, "SNAPSHOT-TEST-FAKE-WF", "1.0", "an empty fake wf", "qtest");
+
+        m_ds.exec("insert into jobs
+                    (jobid, name, version, description, author,
+                     sessionid, active, remote,
+                     run_skipped, enabled, code, manually_updated
+                    )
+                    values
+                    (%v, %v, %v, %v, %v,
+                     0, 1, 1,
+                     1, 1, '# this is a code', 0
+                    )
+                  ", OBJECT_ID, "snapshot-test-fake-job", "1.0", "an empty fake job", "qtest");
+    }
+
+    globalTearDown() {
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        m_ds.exec("delete from workflow_instance_stats where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete from workflow_instance where workflowid = %v", OBJECT_ID);
+        m_ds.exec("delete from workflow_instance_stats_stage where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete from workflows where workflowid = %v", OBJECT_ID);
+
+        m_ds.exec("delete from job_instance_stats where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete from job_instance where jobid = %v", OBJECT_ID);
+        m_ds.exec("delete from job_instance_stats_stage where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete from jobs where jobid = %v", OBJECT_ID);
+    }
+
+    private date truncDateToHour(date dt) {
+        return date(format_date(AbstractSchemaSnapshotManager::DATE_MASK, dt), AbstractSchemaSnapshotManager::DATE_MASK);
+    }
+
+    private testSnapshotStageDataChangesWfiidInsert() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        date sysdate = now();
+
+        m_ds.exec("insert into workflow_instance
+                    (workflow_instanceid, workflowid, workflowstatus, status_sessionid,
+                     priority, started, synchronous, modified
+                    )
+                    values
+                    (%v, %v, 'Y', 0,
+                     1, %v, 0, %v
+                    )
+                ", m_seqNextval, OBJECT_ID, sysdate, sysdate);
+
+        auto wfiid_row = m_ds.selectRow("select * from workflow_instance where workflow_instanceid = %v",
+            m_seqNextval);
+        #printf("%N\n", wfiid_row);
+        assertEq(m_seqNextval, wfiid_row.workflow_instanceid, "WFIID equality");
+        assertEq(OBJECT_ID, wfiid_row.workflowid, "WFID equality");
+
+        auto stage_rows = m_ds.selectRows("select * from workflow_instance_stats_stage where objectid = %v", OBJECT_ID);
+        assertEq(1, stage_rows.size(), "there must be only one row in the DB");
+
+        hash stage_row = stage_rows[0];
+
+        assertEq(OBJECT_ID, stage_row.objectid, "object id equality");
+        assertEq("I", stage_row.dml_operation, "DML operation");
+        assertEq(NULL, stage_row.modified_orig, "original modified timestamp must be empty");
+        assertEq(truncDateToHour(sysdate), stage_row.modified_new, "new modified timestamp must be sysdate trunced");
+        assertEq(NOTHING, stage_row.status_old, "old status");
+        assertEq("Y", stage_row.status_new, "new status");
+    }
+
+    private testSnapshotStageDataChangesWfiidUpdate() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # all data are in one hour window
+        date sysdate = now();
+        list statuses = ("I", "E", "E", "R", "C");
+        list uniq_statuses = Util::uniq(statuses);
+
+        # let's create some status updates. E is here twice for a reason.
+        # we have to catch all updates grouped by status and modified in hour
+        # window
+        foreach string i in (statuses) {
+            m_ds.exec("update workflow_instance set workflowstatus = %v, modified = %v
+                    where workflow_instanceid = %v", i, sysdate, m_seqNextval);
+        }
+
+        auto rows = m_ds.selectRows("select * from workflow_instance_stats_stage
+                    where objectid = %v and dml_operation = %v order by created",
+                    OBJECT_ID, "U");
+        # -1 is here because of E used twice. It won't be registered as it is
+        # failing under the same hour window
+        assertEq(4, rows.size(), "all updates must be registered");
+
+        int ix = 0;
+        string prev_status = "Y";
+        foreach hash i in (rows) {
+            #printf("%N\n", i);
+            assertEq(uniq_statuses[ix], i.status_new, "new status equality");
+            assertEq(prev_status, i.status_orig, "old status equality");
+            prev_status = i.status_new;
+            ix++;
+        }
+    }
+
+    private testRefreshSnapshotsOfflineWorkflows()
+    {
+        qorusMustBeDown();
+
+        int rc;
+        string cout = backquote("schema-tool -s", \rc);
+        #printf("%s\n", cout);
+        delete cout;
+        assertEq(0, rc, "schema-tools -s returned != 0");
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # now stage must be empty
+        int cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage").cnt;
+        assertEq(0, cnt, "stage table must be empty after schema-tool -s run");
+
+        # now let's try the snapshot results (still offline)
+        auto rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v",
+            OBJECT_ID);
+        #printf("%N\n", rows);
+
+        assertEq(1, rows.size(), "only one row");
+
+        hash row = rows[0];
+        assertEq("C", row.status, "final status must be C");
+        assertEq(1, row.total_count, "total count must be 1");
+    }
+
+    private testSnapshotStageDataChangesWfiidDelete() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        m_ds.exec("delete from workflow_instance where workflow_instanceid = %v", m_seqNextval);
+
+        auto rows = m_ds.selectRows("select * from workflow_instance_stats_stage
+                    where objectid = %v and dml_operation = %v",
+                    OBJECT_ID, "D");
+        #printf("%N\n", rows);
+
+        assertEq(1, rows.size(), "only one D row is allowed");
+
+        hash row = rows[0];
+        assertEq(NULL, row.modified_new, "new modified must be empty");
+        assertEq(NULL, row.status_new, "new status must be empty");
+        assertEq("C", row.status_orig, "old status must be C");
+    }
+
+    private testRefreshSnapshotsOfflineWorkflowsDelete() {
+        qorusMustBeDown();
+
+        int rc;
+        string cout = backquote("schema-tool -s", \rc);
+        #printf("%s\n", cout);
+        delete cout;
+        assertEq(0, rc, "schema-tools -s returned != 0");
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # now stage must be empty
+        int cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage").cnt;
+        assertEq(0, cnt, "stage table must be empty after schema-tool -s run");
+
+        # now let's try the snapshot results (still offline)
+        auto rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v",
+            OBJECT_ID);
+
+        assertEq(0, rows.size(), "no row after delete row");
+    }
+
+    private testSnapshotsOfflineWorkflows() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        WfSchemaSnapshotManager manager();
+        manager.readDBSummary();
+
+        date sysdate = 2018-01-01T10:10:10;
+        date sysdate1 = sysdate + 1D;
+        date sysdate2 = sysdate1 + 1D;
+
+        m_ds.exec("insert into workflow_instance
+                    (workflow_instanceid, workflowid, workflowstatus, status_sessionid,
+                     priority, started, synchronous, modified
+                    )
+                    values
+                    (%v, %v, 'Y', 0,
+                     1, %v, 0, %v
+                    )
+                ", m_seqNextval, OBJECT_ID, sysdate, sysdate);
+
+        manager.runImplementationInDb();
+        int stage_cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage where objectid = %v", OBJECT_ID).cnt;
+        assertEq(0, stage_cnt, "stage must be empty");
+
+        auto rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v",
+                                    OBJECT_ID);
+        #printf("%N\n", rows);
+        assertEq(1, rows.size(), "there can be only one row");
+
+        hash row = rows[0];
+        assertEq("Y", row.status, "status Y");
+        assertEq(truncDateToHour(sysdate), row.modified, "dates must be equal");
+        assertEq(1, row.total_count, "count is 1");
+
+        m_ds.exec("insert into workflow_instance
+                    (workflow_instanceid, workflowid, workflowstatus, status_sessionid,
+                     priority, started, synchronous, modified
+                    )
+                    values
+                    (%v, %v, 'Y', 0,
+                     1, %v, 0, %v
+                    )
+                ", m_seqNextval-1, OBJECT_ID, sysdate1, sysdate1);
+        manager.runImplementationInDb();
+        stage_cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage where objectid = %v", OBJECT_ID).cnt;
+        assertEq(0, stage_cnt, "stage must be empty");
+
+        rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v order by modified",
+                                    OBJECT_ID);
+        #printf("%N\n", rows);
+        assertEq(2, rows.size(), "there can be only 2 rows");
+
+        row = rows[0];
+        assertEq("Y", row.status, "status Y");
+        assertEq(truncDateToHour(sysdate), row.modified, "dates must be equal");
+        assertEq(1, row.total_count, "count is 1");
+
+        row = rows[1];
+        assertEq("Y", row.status, "status Y");
+        assertEq(truncDateToHour(sysdate1), row.modified, "dates must be equal");
+        assertEq(1, row.total_count, "count is 1");
+
+        m_ds.exec("update workflow_instance set workflowstatus = %v, modified = %v where workflow_instanceid = %v",
+                  "C", sysdate2, m_seqNextval
+                 );
+        manager.runImplementationInDb();
+        stage_cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage where objectid = %v", OBJECT_ID).cnt;
+        assertEq(0, stage_cnt, "stage must be empty");
+
+        rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v order by modified",
+                                    OBJECT_ID);
+        #printf("%N\n", rows);
+        assertEq(2, rows.size(), "there can be only 2 rows");
+
+        assertEq("Y", rows[0].status, "status Y");
+        assertEq(truncDateToHour(sysdate1), rows[0].modified, "dates must be equal");
+        assertEq("C", rows[1].status, "status C");
+        assertEq(truncDateToHour(sysdate2), rows[1].modified, "dates must be equal");
+
+        m_ds.exec("delete from workflow_instance where workflow_instanceid = %v", m_seqNextval-1);
+        manager.runImplementationInDb();
+        stage_cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage where objectid = %v", OBJECT_ID).cnt;
+        assertEq(0, stage_cnt, "stage must be empty");
+
+        rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v order by modified",
+                                    OBJECT_ID);
+        #printf("%N\n", rows);
+        assertEq(1, rows.size(), "there can be only 1 row");
+
+        m_ds.exec("delete from workflow_instance where workflow_instanceid = %v", m_seqNextval);
+        manager.runImplementationInDb();
+        stage_cnt = m_ds.selectRow("select count(1) as cnt from workflow_instance_stats_stage where objectid = %v", OBJECT_ID).cnt;
+        assertEq(0, stage_cnt, "stage must be empty");
+
+        rows = m_ds.selectRows("select * from workflow_instance_stats where objectid = %v order by modified",
+                                    OBJECT_ID);
+        #printf("%N\n", rows);
+        assertEq(0, rows.size(), "there can be only 0 row");
+
+        # check status cache
+        hash cache = manager.getStatusCache();
+        hash cache_db = m_ds.select("select status, sum(total_count) total_count
+            from workflow_instance_stats group by status");
+        context (cache_db) {
+            assertEq(%total_count, cache{%status}, sprintf("unexpected val: %n vs. %n", %%, cache));
+            delete cache{%status};
+        }
+        # rest must be 0
+        foreach string i in (keys cache) {
+            assertEq(0, cache{i}, "remaining status must contain 0");
+        }
+        # end of status cache
+        # interface status cache
+        cache = manager.getInterfaceStatusCache();
+        cache_db = m_ds.select("select objectid, status, sum(total_count) total_count
+            from workflow_instance_stats group by objectid, status");
+        context (cache_db) {
+            assertEq(%total_count, cache{%objectid}{%status}, sprintf("unexpected val: %n vs. %n", %%, cache{%objectid}));
+            delete cache{%objectid}{%status};
+            if (!cache{%objectid}.size()) {
+                delete cache{%objectid};
+            }
+        }
+        assertEq(0, cache.size(), sprintf("iface cache must be empty: %n", cache));
+        # end of interface status cache
+    }
+
+    private testSystemInfoBackendWorkflows() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        WfSchemaSnapshotManager manager();
+
+        int wfiid_count = 10;
+        date sysdate = now() - 1D*wfiid_count;
+
+        for (int i = 0; i < wfiid_count; i++) {
+            date dt = sysdate + 1D*i;
+            m_ds.exec("insert into workflow_instance
+                    (workflow_instanceid, workflowid, workflowstatus, status_sessionid,
+                     priority, started, synchronous, modified
+                    )
+                    values
+                    (%v, %v, 'Y', 0,
+                     1, %v, 0, %v
+                    )
+                ", m_seqNextval-i, OBJECT_ID, dt, dt);
+        }
+
+        manager.runImplementationInDb();
+
+        #printf("%N\n", m_ds.selectRows("select * from workflow_instance_stats"));
+
+        for (int i = 0; i < wfiid_count; i++) {
+            date dt = sysdate + 1D*i;
+            #printf("%n\n", dt);
+            *hash report = SnapshotsInfoHelper::getReportWfs(dt);
+            #printf("%N\n", report);
+            # to find our WF
+            bool found = False;
+            context (report) {
+                if (%workflowid == OBJECT_ID) {
+                    found = True;
+                    assertEq(wfiid_count-i, %total, "sum check");
+                }
+            }
+
+            assertEq(True, found, "test WF must be found");
+        }
+
+        # test with wfid
+        *hash res = SnapshotsInfoHelper::getReportWfs(sysdate, OBJECT_ID);
+        #printf("%N\n", res);
+        assertEq(1, res.total.size(), "must exists");
+        assertEq(True, res.hasKey("name"), "this is a complete hash");
+        res = SnapshotsInfoHelper::getReportWfs(sysdate, 0);
+        assertEq(0, res.total.size(), "must not exists");
+
+        # test with deprecates
+        res = SnapshotsInfoHelper::getReportWfs(sysdate, OBJECT_ID, False);
+        assertEq(1, res.total.size(), "must exists");
+
+        # test with system_overview
+        res = SnapshotsInfoHelper::getReportWfs(sysdate, OBJECT_ID, False, True);
+        # printf("%N\n", res);
+        assertEq(False, res.hasKey("name"), "this is just a limitted hash");
+        assertEq(1, res.total.size(), "must exists");
+        assertEq(wfiid_count, res.total[0], "total count");
+    }
+
+    private testSystemInfoBackendJobs() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        JobSchemaSnapshotManager manager();
+        manager.readDBSummary();
+
+        int COUNT = 10;
+        date sysdate = now() - 1D*COUNT;
+
+        for (int i = 0; i < COUNT; i++) {
+            date dt = sysdate + 1D*i;
+            m_ds.exec("insert into job_instance
+                    (job_instanceid, jobid, sessionid, jobstatus,
+                     started, completed, modified
+                    )
+                    values
+                    (%v, %v, %v, %v,
+                     %v, %v, %v
+                    )
+                ", m_seqNextval-i, OBJECT_ID, 0, "C",
+                   dt, dt, dt);
+        }
+
+        manager.runImplementationInDb();
+
+        #printf("%N\n", m_ds.selectRows("select * from workflow_instance_stats"));
+
+        for (int i = 0; i < COUNT; i++) {
+            date dt = sysdate + 1D*i;
+            #printf("%n\n", dt);
+            *hash report = SnapshotsInfoHelper::getReportJobs(dt, OBJECT_ID);
+            # printf("%N\n", report);
+            assertEq(1, report.total.size(), "only one job");
+            assertEq(COUNT-i, report.total[0], "sum check");
+        }
+
+        # test with wfid
+        *hash res = SnapshotsInfoHelper::getReportJobs(sysdate, OBJECT_ID);
+        #printf("%N\n", res);
+        assertEq(1, res.total.size(), "must exists");
+        res = SnapshotsInfoHelper::getReportJobs(sysdate, 0);
+        assertEq(0, res.total.size(), "must not exists");
+
+        # check status cache
+        hash cache = manager.getStatusCache();
+        hash cache_db = m_ds.select("select status, sum(total_count) total_count
+            from job_instance_stats group by status");
+        context (cache_db) {
+            assertEq(%total_count, cache{%status}, sprintf("unexpected val: %n vs. %n", %%, cache));
+            delete cache{%status};
+        }
+        # rest must be 0
+        foreach string i in (keys cache) {
+            assertEq(0, cache{i}, "remaining status must contain 0");
+        }
+        # end of status cache
+        # interface status cache
+        cache = manager.getInterfaceStatusCache();
+        cache_db = m_ds.select("select objectid, status, sum(total_count) total_count
+            from job_instance_stats group by objectid, status");
+        context (cache_db) {
+            assertEq(%total_count, cache{%objectid}{%status}, sprintf("unexpected val: %n vs. %n", %%, cache{%objectid}));
+            delete cache{%objectid}{%status};
+            if (!cache{%objectid}.size()) {
+                delete cache{%objectid};
+            }
+        }
+        assertEq(0, cache.size(), "iface cache must be empty");
+        # end of interface status cache
+    }
+
+    private qorusMustBeDown() {
+        try {
+            qrest.get("remote");
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR") {
+                return;
+            }
+            rethrow;
+        }
+        throw "QORUS-IS-RUNNING", "This test can run only with Qorus off";
+    }
+
+} # class Main

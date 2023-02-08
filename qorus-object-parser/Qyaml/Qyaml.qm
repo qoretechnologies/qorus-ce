@@ -1,0 +1,616 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file Qyaml.qm YAML file parser for Qorus definition objects
+
+/*
+  Qorus Integration Engine
+
+  Copyright (C) 2003 - 2022 Qore Technologies, s.r.o., all rights reserved
+
+  **** NOTICE ****
+    All information contained herein is, and remains the property of Qore
+    Technologies, s.r.o. and its suppliers, if any.  The intellectual and
+    technical concepts contained herein are proprietary to Qore Technologies,
+    s.r.o. and its suppliers and may be covered by Czech, European, U.S. and
+    Foreign Patents, patents in process, and are protected by trade secret or
+    copyright law.  Dissemination of this information or reproduction of this
+    material is strictly forbidden unless prior written permission is obtained
+    from Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires yaml
+%requires Logger
+
+module Qyaml {
+    version = "1.0";
+    desc = "YAML file parser for Qorus definition objects";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+#! Main namespace for the Qyaml module
+public namespace Qyaml {
+
+    /**
+        Known qorus objects that can be defined in YAML format
+    */
+    public const KnownObjects = {
+        "job": True,
+        "service": True,
+        "step": True,
+        "workflow": True,
+        "function": True,
+        "class": True,
+        "constant": True,
+        "mapper": True,
+        "mapper-code": True,
+        "connection": True,
+        "value-map": True,
+        "queue": True,
+        "event": True,
+        "group": True,
+        "config-item-values": True,
+        "global-config-item-values": True,
+        "errors": True,
+        "type": True,
+        "pipeline": True,
+        "fsm": True,
+    };
+
+    /**
+        Helper function to resolve include-definitions in the given schema
+        @param file where include definitions need to be resolved
+        @param directory where definitions are located
+        @throw QYAML-ERROR in case include-definition cannot be found
+    */
+    hash<auto> sub include_definitions(string file, string directory) {
+        file = directory + file;
+        *hash<auto> schema = parse_yaml_file(file);
+        if (!exists schema) {
+            throw "QYAML-ERROR", sprintf("YAML validation schema is empty: %y", file);
+        }
+
+        map schema += include_definitions($1, directory), remove schema."include-definitions";
+        # move "sub-definitions" to the top level
+        if (schema.definitions) {
+            schema += remove schema.definitions;
+        }
+        return schema;
+    }
+
+    /**
+        Helper function to create Validator based on the given type
+
+        @param type one of the KnownObjects
+
+        @throw QYAML-ERROR in case type is unknown or schema is empty
+    */
+    public Validator sub create_validator(string type) {
+        if (!KnownObjects.hasKey(type)) {
+            throw "QYAML-ERROR", sprintf("unknown validator type: %s", type);
+        }
+
+        string directory = dirname(get_module_hash()."Qyaml".filename) + Qore::DirSep + "validation" + Qore::DirSep;
+
+        string file = directory + type + "_schema.yaml";
+        *hash<auto> schema = parse_yaml_file(file);
+        if (!exists schema) {
+            throw "QYAML-ERROR", sprintf("YAML validation schema is empty: %y", file);
+        }
+
+        map schema.definitions += include_definitions($1, directory), remove schema."include-definitions";
+
+        return new Validator(schema);
+    }
+
+    /**
+        Helper function to parse YAML file
+        @param file_path path to the YAML file
+        @throw QYAML-ERROR in case YAML is empty or file extension is incorrect
+        @throw YAML-PARSER-ERROR in case the given file has syntax errors
+    */
+    public auto sub parse_yaml_file(string file_path) {
+        if (file_path !~ /.yaml$/ && file_path !~ /.yml$/) {
+            throw "QYAML-ERROR", sprintf("%y: doesn't have the extension '.yaml'", file_path);
+        }
+
+        ReadOnlyFile file(file_path);
+        *string yaml = file.read(-1);
+        if (!exists yaml) {
+            throw "QYAML-ERROR", sprintf("YAML file %y is empty", file_path);
+        }
+        return parse_yaml(yaml);
+    }
+
+    /**
+        Parses given list of YAML files
+        @param file_paths list of YAML files
+
+        @return a hash keyed by file path where values are the parsed data
+
+        @throw QYAML-ERROR in case YAML is empty or in case the given file has syntax errors
+    */
+    public hash<string, hash<auto>> sub parse(list<string> file_paths) {
+        string file_path;
+        try {
+            hash<string, hash<auto>> rv;
+            foreach file_path in (file_paths) {
+                rv{file_path} = parse_yaml_file(file_path);
+            }
+            return rv;
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "YAML-PARSER-ERROR") {
+                throw "QYAML-PARSER-ERROR", sprintf("YAML document is invalid: %y: %s: %s", file_path, ex.err,
+                    ex.desc);
+            }
+            rethrow;
+        }
+    }
+
+    # this class is workaround of https://github.com/qorelanguage/qore/issues/3417
+    # holds parsed YAML data that will be changed (defaults will be filled)
+    public class ParsedYaml {
+        public {
+            hash data_;
+        }
+
+        constructor(hash parsed_yaml) {
+            data_ = parsed_yaml;
+        }
+    }
+
+    /**
+        Validator class for schema validation of parsed YAML data
+    */
+    public class Validator {
+        private {
+            int MaxRecursionDepth = 5;
+            int currentRecursionDepth;
+
+            const KnownTypes = {
+                "bool": True,
+                "string": True,
+                "integer": True,
+                "float": True,
+                "date": True,
+                "binary": True,
+                "list": True,
+                "hash": True,
+                "any": True,
+            };
+
+            hash<auto> schema;
+            *hash definitions;
+
+            ParsedYaml parsedYaml;
+
+            const QYAML_SCHEMA_ERROR = "QYAML-SCHEMA-ERROR";
+            const QYAML_VALIDATION_ERROR = "QYAML-VALIDATION-ERROR";
+
+            # collected errors from recursive calls
+            list<auto> errors;
+
+            static Logger logger;
+
+            # the following constants are used for recursive error print
+            # replace this to use other indentation string
+            const Indent = " ";
+            # final indentation = currentRecursionDepth * IdentRepetition
+            const IdentRepetition = 4;
+        }
+
+        /**
+            Constructs the Validator object.
+
+            @param schema the parsed YAML schema as a hash
+            @param current_recursion_depth recursion depth (internal use only)
+
+            @throw QYAML-SCHEMA-ERROR in case the given schema is incorrect
+
+            @note create_validator function should be used outside of the module
+        */
+        constructor(hash<auto> schema, int current_recursion_depth = 0) {
+            if (!logger) {
+                # default logger with no appenders
+                logger = new Logger("Qyaml");
+                logger.setLevel(Logger::LoggerLevel::INFO);
+            }
+
+            self.schema = schema;
+            self.currentRecursionDepth = current_recursion_depth;
+
+            definitions = schema{"definitions"};
+
+            logger.trace("Validator (%d) object constructed with schema: %y", currentRecursionDepth, schema);
+        }
+
+        /**
+            @param logger a Logger object
+         */
+        static setLogger(Logger logger) {
+            Validator::logger = logger;
+        }
+
+        /**
+            @param definitions a hash of the definitions to be added
+         */
+        addDefinitions(hash<auto> definitions) {
+            self.definitions += definitions;
+        }
+
+        private validationError(string file_path, string message) {
+            message = file_path + ": " + vsprintf(message, argv);
+            if (errors) {
+                string indent = strmul(Indent, currentRecursionDepth * IdentRepetition);
+                string one_indent = strmul(Indent, IdentRepetition);
+                message += "\npossible errors:\n";
+
+                # add one indentation after "possible errors" string
+                indent += currentRecursionDepth == 0 ? one_indent : "";
+
+                # 3 indentation are needed because of the "i) " string being added
+                string indent_plus3 = indent + strmul(Indent, 3);
+                int i = 1;
+                foreach hash<auto> exception in (errors) {
+                    message += indent + string(i++) + ") " + exception.err + ": ";
+                    message += replace(exception.desc, "\n", "\n" + indent_plus3) + "\n";
+
+                    if (logger.getLevel().getValue() <= Logger::LoggerLevel::DEBUG) {
+                        message += indent_plus3 + "call stack:\n";
+                        foreach hash<auto> line in (exception.callstack) {
+                            message += indent_plus3 + one_indent + sprintf("%s() called at %s (%s function)\n",
+                                                                           line.function, get_ex_pos(line), line.type);
+                        }
+                    }
+                }
+            }
+            throw QYAML_VALIDATION_ERROR, message;
+        }
+
+        private schemaError(string message) {
+            throw QYAML_SCHEMA_ERROR, vsprintf(message, argv);
+        }
+
+        private checkIfTypeIsKnown(string field_name, string type) {
+            if (!KnownTypes.hasKey(type)) {
+                list known_types = keys KnownTypes;
+                if (exists definitions) {
+                    known_types += keys definitions;
+                }
+                schemaError("field: %s has unknown type: %s, known types: %y",
+                    field_name, type, known_types);
+            }
+        }
+
+        # recursively checks type tag of the given field having user defined type
+        private checkUserTypes(string file_path, list<string> types, string field_name) {
+            logger.trace("checkUserTypes (%y): types: %y", field_name, types);
+
+            if (currentRecursionDepth >= MaxRecursionDepth) {
+                schemaError("maximum user type definition depth (%d) is exceeded, "
+                    "use 'hash' or 'list' as a type instead", MaxRecursionDepth);
+            }
+
+            bool ok = False;
+            foreach string type in (types) {
+                try {
+                    Validator user_type_validator(definitions{type}, currentRecursionDepth + 1);
+                    user_type_validator.addDefinitions(definitions);
+                    ParsedYaml parsed_yaml_object(parsedYaml.data_{field_name});
+                    user_type_validator.validate(file_path, parsed_yaml_object);
+                    parsedYaml.data_{field_name} = parsed_yaml_object.data_;
+                    ok = True;
+                } catch (hash<ExceptionInfo> ex) {
+                    if (ex.err === QYAML_VALIDATION_ERROR) {
+                        # ignore validation errors (other type might pass)
+                        errors += ex;
+                        continue;
+                    }
+                    rethrow;
+                }
+            }
+
+            if (!ok) {
+                validationError(file_path, "field: %s has unexpected type: %s, expected one of the types: %n",
+                      field_name, parsedYaml.data_{field_name}.type(), types);
+            }
+        }
+
+        # checks type tag of the given field
+        private checkType(string file_path, string field_name, hash<auto> schema_field) {
+            logger.trace("checkType (%y): schema: %y", field_name, schema_field);
+
+            if (!exists schema_field{"type"}) {
+                schemaError("schema %y field: %N\ndoesn't have type", field_name, schema_field);
+            }
+
+            bool ok = False;
+
+            list<string> user_types;
+            list<string> types = schema_field{"type"}.split("|");
+            trim types;
+            foreach string type in (types) {
+                bool user_type = exists definitions && definitions.hasKey(type);
+
+                if (!user_type) {
+                    checkIfTypeIsKnown(field_name, type);
+                }
+
+                if (user_type && KnownTypes.hasKey(type)) {
+                    schemaError("built-in type %y cannot be used to define user type; built-in types: %y\ndelete the type from"
+                        "definitions\n", type, keys KnownTypes);
+                }
+
+                # actual field type is equal to one of the schema types
+                # or the type is any then no check is needed
+                # or user type is used which must be defined as a hash
+                string this_type = parsedYaml.data_{field_name}.type();
+                if ((this_type == type)
+                    || (this_type == "hash" && user_type)
+                    || (type == "float" && parsedYaml.data_{field_name}.type() == "integer")
+                    || type == "any") {
+
+                    ok = True;
+
+                    if (user_type) {
+                        push user_types, type;
+                    }
+                }
+            }
+
+            if (!ok) {
+                validationError(file_path, "field: %s has unexpected type: %s, expected type: %s",
+                      field_name, parsedYaml.data_{field_name}.type(), schema_field{"type"});
+            }
+
+            logger.trace("checkType (%y): user types: %y", field_name, user_types);
+            if (user_types) {
+                checkUserTypes(file_path, user_types, field_name);
+            }
+        }
+
+        # checks max length + allowed-values of the given field
+        private checkValue(string file_path, string field_name, hash<auto> schema_field) {
+            logger.trace("checkValue (%y): schema: %y", field_name, schema_field);
+
+            if (exists schema_field{"max-length"} && parsedYaml.data_{field_name}.type() === "string" &&
+                parsedYaml.data_{field_name}.length() > schema_field{"max-length"}) {
+
+                validationError(file_path, "field: %s with value: %s (length = %d), has exceeded the maximum length: %y",
+                      field_name, parsedYaml.data_{field_name}, parsedYaml.data_{field_name}.length(),
+                      schema_field{"max-length"});
+            }
+
+            if (exists schema_field{"regex"} && parsedYaml.data_{field_name}.type() === "string" &&
+                !parsedYaml.data_{field_name}.regex(schema_field{"regex"})) {
+
+                validationError(file_path, "field: %s with value: %s has unexpected format, expected format: %y",
+                      field_name, parsedYaml.data_{field_name}, schema_field{"regex"});
+            }
+
+            if (!exists schema_field{"allowed-values"}) {
+                return;
+            }
+
+            foreach auto allowed_value in (schema_field{"allowed-values"}) {
+                if (allowed_value === parsedYaml.data_{field_name}) {
+                    return;
+                }
+            }
+            validationError(file_path, "illegal value: %y; expecting one of: %y",
+                  parsedYaml.data_{field_name}, schema_field{"allowed-values"});
+        }
+
+        # checks if all of the given elements in a list correspond to one of the element-types in the schema
+        # for user types recursion is used
+        private checkElementTypes(string file_path, string field_name, hash<auto> schema_field, list elements_, list<string> keys_) {
+            list<string> element_types = schema_field{"element-type"}.split("|");
+            trim element_types;
+            hash<auto> types = map {$1: True}, element_types;
+            hash<auto> user_types = map {$1: True}, element_types, exists definitions && definitions.hasKey($1);
+            hash<auto> basic_types = types - keys user_types;
+
+            logger.trace("checkElementTypes (%y): types: %y", field_name, types);
+            logger.trace("checkElementTypes (%y): user_types: %y", field_name, user_types);
+            logger.trace("checkElementTypes (%y): basic_types: %y", field_name, basic_types);
+
+            int i = 0;
+            foreach auto element in (elements_) {
+                bool ok = False;
+                foreach string type in (element_types) {
+                    if (basic_types{type} && type === element.type()) {
+                        ok = True;
+                        break;
+                    } else if (user_types{type}) {
+                        # check if it's a user type recursively
+                        try {
+                            Validator element_validator(definitions{type}, currentRecursionDepth + 1);
+                            element_validator.addDefinitions(definitions);
+
+                            if (element.typeCode() != NT_HASH) {
+                                continue;
+                            }
+                            ParsedYaml parsed_yaml_object(element);
+                            element_validator.validate(file_path, parsed_yaml_object);
+
+                            # and now save element to the original parsed YAML data
+                            if (schema_field{"type"} == "list") {
+                                parsedYaml.data_{field_name}[i] = parsed_yaml_object.data_;
+                            } else if (schema_field{"type"} == "hash") {
+                                parsedYaml.data_{field_name}{keys_[i]} = parsed_yaml_object.data_;
+                            }
+                            ok = True;
+                        } catch (hash<ExceptionInfo> ex) {
+                            if (ex.err === QYAML_VALIDATION_ERROR) {
+                                # ignore validation errors (other type might pass)
+                                errors += ex;
+                                continue;
+                            }
+                            rethrow;
+                        }
+                    }
+                }
+                i++;
+
+                if (!ok) {
+                    validationError(file_path, "element: %N\nof field: %y of type: %y has unexpected type: %s, expected type: %s",
+                                    element, field_name, schema_field{"type"}, element.type(),
+                                    schema_field{"element-type"});
+                }
+            }
+        }
+
+        private checkElements(string file_path, string field_name, hash<auto> schema_field) {
+            logger.trace("checkElements (%y): schema: %y", field_name, schema_field);
+
+            if (!exists schema_field{"element-type"}) {
+                return;
+            }
+
+            list elements_;
+            list<string> keys_ = ();
+            switch (schema_field{"type"}) {
+                case "list":
+                    elements_ = parsedYaml.data_{field_name};
+                    break;
+                case "hash":
+                    # for hashes consider keys always as strings
+                    elements_ = parsedYaml.data_{field_name}.values();
+                    keys_ = keys parsedYaml.data_{field_name};
+                    break;
+
+                default: return;
+            }
+
+            checkElementTypes(file_path, field_name, schema_field, elements_, keys_);
+        }
+
+        #! checks the given field
+        private bool checkMandatory(string file_path, string field_name, hash<auto> field, bool required) {
+            bool default_exists = exists field{"default"};
+            if (!parsedYaml.data_.hasKey(field_name) && !default_exists) {
+                # no field and no default value
+
+                if (!required) {
+                    return False;
+                }
+                if (field.hasKey("optional-if-defined")) {
+                    foreach string needed_field in (field{"optional-if-defined"}) {
+                        if (!parsedYaml.data_.hasKey(needed_field)) {
+                            validationError(file_path, "given YAML: %N\ndoesn't contain required field: %s; "
+                                  "the field can be option if the following fields are defined: %y",
+                                  parsedYaml.data_, field_name, field{"optional-if-defined"});
+                        }
+                    }
+                    return False;
+                }
+                if (field.hasKey("optional-if-one-defined")) {
+                    foreach string defined_field in (field{"optional-if-one-defined"}) {
+                        if (parsedYaml.data_.hasKey(defined_field)) {
+                            return False;
+                        }
+                    }
+                    validationError(file_path, "given YAML: %N\ndoesn't contain required field: %s; "
+                                    "the field can be option if one of the following fields is defined: %y",
+                                    parsedYaml.data_, field_name, field{"optional-if-one-defined"});
+                }
+
+                # the field is required + no default is given + it doens't have 'optional-if-defined'
+                validationError(file_path, "given YAML: %N\ndoesn't contain required field: %s", parsedYaml.data_, field_name);
+            } else if (!parsedYaml.data_.hasKey(field_name) && default_exists) {
+                # no field with default value
+
+                bool use_default = True;
+                if (field.hasKey("no-default-if-defined")) {
+                    foreach string needed_field in (field{"no-default-if-defined"}) {
+                        if (!parsedYaml.data_.hasKey(needed_field)) {
+                            use_default = True;
+                            break;
+                        } else {
+                            use_default = False;
+                        }
+                    }
+                }
+                if (field.hasKey("no-default-if-one-defined")) {
+                    foreach string defined_field in (field{"no-default-if-one-defined"}) {
+                        if (parsedYaml.data_.hasKey(defined_field)) {
+                            use_default = False;
+                            break;
+                        }
+                    }
+                }
+
+                if (use_default) {
+                    parsedYaml.data_{field_name} = field{"default"};
+                } else {
+                    return False;
+                }
+            }
+
+            return True;
+        }
+
+        #! checks all given fields
+        private checkFields(string file_path, hash<auto> fields, bool required) {
+            foreach auto iterator in (fields.pairIterator()) {
+                logger.trace("checking %sfield: %y", required ? "required ": "", iterator.key);
+
+                if (iterator.value.type() !== "hash") {
+                    schemaError("incorrect type: %y of schema field: %s, hash is expected",
+                        iterator.value.type(), iterator.key);
+                }
+
+                if (!checkMandatory(file_path, iterator.key, iterator.value, required)) {
+                    logger.trace("field %y is not mandatory", iterator.key);
+                    continue;
+                }
+
+                checkType(file_path, iterator.key, iterator.value);
+                checkValue(file_path, iterator.key, iterator.value);
+                checkElements(file_path, iterator.key, iterator.value);
+                logger.trace("%sfield: %y is OK", required ? "required ": "", iterator.key);
+            }
+        }
+
+        /**
+            Validates the given YAML data
+
+            @param file_path the path to the file
+            @param parsed_yaml ParsedYAML object. The object can be changed in case some fields are missing and they
+                   have default values in schema.
+
+            @throw QYAML-VALIDATION-ERROR in case validation has failed
+            @throw QYAML-SCHEMA-ERROR in case the given schema is not correct
+        */
+        validate(string file_path, ParsedYaml parsed_yaml) {
+            parsedYaml = parsed_yaml;
+            *hash<auto> required = schema{"required"};
+            *hash<auto> optional = schema{"optional"};
+
+            foreach string field in (keys parsedYaml.data_) {
+                if (required.hasKey(field)) {
+                    continue;
+                } else if (exists optional && optional.hasKey(field)) {
+                    continue;
+                }
+
+                validationError(file_path, "unexpected field found: %s; valid fields: %y; YAML: %N", field,
+                    keys (required + optional), parsedYaml.data_);
+                #validationError(file_path, "unexpected field found: %s in given YAML: %N", field, parsedYaml.data_);
+            }
+
+            if (exists required) {
+                checkFields(file_path, required, True);
+            }
+            if (exists optional) {
+                checkFields(file_path, optional, False);
+            }
+        }
+    }
+}

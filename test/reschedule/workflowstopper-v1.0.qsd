@@ -1,0 +1,29 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: workflowstopper
+# serviceversion: 1.0
+# servicedesc: stops workflows in a background thread - so it can be called from the workflows themselves
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+sub stop_intern(string $name, *string $ver) {
+    UserApi::callNetworkApi("omq.system.stop-workflow", $name, $ver);
+}
+
+sub init() {
+}
+# END
+
+# desc: stops the service
+sub stop() {
+}
+# END
+
+# desc: stops all execution instances of the given workflow
+int sub stop_workflows(string $name, *string $ver) {
+    return ServiceApi::startThread(\stop_intern(), $name, $ver);
+}
+# END

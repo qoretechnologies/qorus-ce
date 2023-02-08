@@ -1,0 +1,81 @@
+type: service
+name: issue3102service
+version: "1.0"
+desc: Test service written using YAML format
+author:
+  - Alzhan Turlybekov
+# modules:
+#   - ServiceModule1
+#   - ServiceModule2
+remote: true
+autostart: true
+#class-based: true always true for the new syntax
+class-name: issue3102service
+lang: qore
+classes:
+  - issue3102class
+constants:
+  - issue3102constant
+# functions:
+#   - func1
+#   - func2
+# mappers:
+#   - mapper1
+#   - mapper2
+vmaps:
+  - issue3102vmap
+groups:
+  - issue3102group
+resource:
+  - test-service-resource/swagger.yaml
+text-resource:
+  - test-service-resource/one.txt
+  - test-service-resource/two.txt
+bin-resource:
+  - test-service-resource/res1.bin
+template:
+  - css/*
+tags:
+  mytag: value
+  mytag2: value2
+methods:
+  - name: init
+    desc: init method
+  - name: getString
+    desc: returns a string
+  - name: echo
+    desc: returns the argument
+  - name: echoInternal
+    desc: returns the argument; internal only
+    internal: true
+  - name: getInt
+    desc: get an int
+  - name: throwException
+    desc: throws an exception
+    lock: read
+    write: false
+    author:
+      - Qore Technologies
+code: service.qsd
+config-items:
+  - name: issue-3102-test-config-item-1
+    parent:
+      interface-type: class
+      interface-name: issue3102class
+      interface-version: "1.0"
+  - name: issue-3102-test-config-item-2
+    type: string
+    default_value: test_2
+    allowed_values:
+      - test_1
+      - test_2
+      - test_3
+    description: test config item of type string
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3102-test-config-item-3
+    type: "*float"
+    default_value: null
+    description: test config item of type *float
+    config_group: Test Group
+    value: 2.1

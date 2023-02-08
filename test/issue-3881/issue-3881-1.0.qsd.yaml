@@ -1,0 +1,42 @@
+# This is a generated file, don't edit!
+type: service
+name: issue-3881
+desc: 'Test for issue #3881'
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3881
+remote: false
+version: '1.0'
+servicetype: USER
+code: issue-3881-1.0.qsd
+methods:
+  - name: init
+    desc: init
+  - name: getEvent
+    desc: returns any cached event
+  - name: event
+    desc: the event method
+config-items:
+  - name: path
+    description: the path to the directory to poll for events
+    config_group: Test
+    type: string
+    strictly_local: true
+events:
+  - type: factory
+    name: filepoller
+    options:
+        path:
+            type: string
+            value: $config:{path}
+        mask:
+            type: string
+            value: "*.txt"
+        poll_interval:
+            type: int
+            value: 1
+    handler:
+        type: method
+        value: event

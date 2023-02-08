@@ -1,0 +1,88 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires FsUtil
+%requires QUnit
+%requires QorusClientCore
+%requires QorusRemoteDevelopmentClient
+
+%exec-class Main
+
+public namespace RemoteDevelopment;
+
+class Main inherits QUnit::Test {
+
+    private {
+        const DUMMY_PLUGIN_NAME = "dummy-plugin";
+
+        const USER = "admin";
+        const PASS = "admin";
+        const DEFAULT_OPTIONS = {"reload": True, "validate": True, "verbosity-level": 1};
+        const DEPLOY_DIR = join_paths(get_script_dir(), "dummy-plugin/");
+
+        RemoteDevelopment::Client remoteDevClient(USER, PASS);
+    }
+
+    constructor(): Test("plugins-api", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("plugin registration", \pluginRegistration());
+
+        set_return_value(main());
+    }
+
+    deployDummyPlugin() {
+        DeployRequest request = new DeployRequest(remoteDevClient.createFileListFromDirectory(DEPLOY_DIR, True),
+                                                  USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        printf("Deployment response: %y\n", response);
+        assertEq(STATUS_FINISHED, response{"status"});
+    }
+
+    deleteDummyPlugin() {
+        DeleteRequest delete_request = new DeleteRequest({"service": ({"name": DUMMY_PLUGIN_NAME,
+                                                                       "version": "1.0"},),
+                                                          "options": DEFAULT_OPTIONS - "validate"},
+                                                         USER, NOTHING);
+        hash<auto> delete_response = remoteDevClient.post(delete_request, 60s);
+        printf("Deletion response: %y\n", delete_response);
+        assertEq(STATUS_FINISHED, delete_response{"status"});
+        qrest.put("services/" + DUMMY_PLUGIN_NAME + "/load");
+    }
+
+    bool contains (list<auto> a_list, auto value) {
+        bool found = False;
+        foreach string item in (a_list) {
+            if (item == value) {
+                found = True;
+                break;
+            }
+        }
+        return found;
+    }
+
+    setUp() {
+        deployDummyPlugin();
+    }
+
+    tearDown() {
+        deleteDummyPlugin();
+    }
+
+    private pluginRegistration() {
+        list<string> plugins = qrest.get("system/plugins");
+        assertTrue(contains(plugins, DUMMY_PLUGIN_NAME));
+
+        # now remove the dummy plugin and check if it's been deregistered
+        int plugins_cnt = plugins.size();
+        deleteDummyPlugin();
+        plugins = qrest.get("system/plugins");
+        assertEq(plugins_cnt - 1, plugins.size());
+        assertFalse(contains(plugins, DUMMY_PLUGIN_NAME));
+    }
+}

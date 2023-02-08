@@ -1,0 +1,33 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file SalesforceSoapConnection.qm Salesforce SOAP Connection Module
+
+%requires qore >= 1.0
+%requires(reexport) SalesforceSoapClient >= 1.2
+%requires WSDL
+%requires Util
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module SalesforceSoapConnection {
+    version = "1.1";
+    desc = "Qorus Salesforce.com SOAP Connection module";
+    author = "Qore Technologies, s.r.o.";
+    url = "http://qoretechnologies.com";
+}
+
+%requires QorusClientCore >= 3.2
+
+public namespace SalesforceSoapConnection {
+    #! this is the public function that returns a ConnectionScheme object to Qorus for the connection
+    public AbstractIterator sub get_schemes() {
+        softlist l = (
+            new ConnectionScheme("sfsoap", "SalesforceSoapConnection"),
+            new ConnectionScheme("sfsoaps", "SalesforceSoapConnection"),
+        );
+
+        return l.iterator();
+    }
+}

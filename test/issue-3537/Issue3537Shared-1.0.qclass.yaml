@@ -1,0 +1,9 @@
+# This is a generated file, don't edit!
+type: class
+name: Issue3537Shared
+desc: test for issue 3537
+author:
+  - Qore Technologies, s.r.o.
+lang: qore
+version: "1.0"
+code: Issue3537Shared-1.0.qclass

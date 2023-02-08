@@ -1,0 +1,6 @@
+mapper-method:
+  required:
+    name:
+      type: string
+    desc:
+      type: string

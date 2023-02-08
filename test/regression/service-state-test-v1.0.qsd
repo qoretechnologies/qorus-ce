@@ -1,0 +1,30 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: service-state-test
+# serviceversion: 1.0
+# servicedesc: service state test
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# TAG: qorus-example: true
+# ENDSERVICE
+
+# name: init
+# desc: initializes the http-test service
+sub init() {
+}
+# END
+
+# desc: saves service state data
+sub save(*hash h) {
+    ServiceApi::saveStateData(h);
+}
+# END
+
+# desc: retrieves service state data
+*hash sub get() {
+    return ServiceApi::getStateData();
+}
+# END

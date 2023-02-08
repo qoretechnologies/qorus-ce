@@ -1,0 +1,350 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires SqlUtil
+%requires QUnit
+%requires QorusClientCore
+%requires process
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        const INTERFACES_TO_DELETE = (
+            "workflow:ISSUE-3010-WORKFLOW:1.0",
+            "workflow:ISSUE-3010-WORKFLOW2:1.0",
+            "step:issue_3010_step:1.0",
+            "class:Issue3010Step:1.0",
+            "service:issue-3010-service:1.0",
+            "job:issue-3010-job:1.0",
+            "function:issue-3010-function:1.0",
+            "constant:issue-3010-constant:1.0",
+            "mapper:issue-3010-mapper:1.0",
+            "uconn:issue-3010-user-connection",
+            "remote:issue-3010-remote-connection",
+            "datasource:issue-3010-datasource-connection",
+            "vmap:issue-3010-value-map",
+            "queue:issue-3010-queue",
+        );
+
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3010" + Qore::DirSep;
+
+        hash<auto> selectMethods = {
+            "workflow": \selectWorkflows(),
+            "step": \selectSteps(),
+            "class": \selectClasses(),
+            "service": \selectServices(),
+            "job": \selectJobs(),
+            "function": \selectFunctions(),
+            "constant": \selectConstants(),
+            "mapper": \selectMappers(),
+            "uconn": \selectUserConnections(),
+            "remote": \selectRemoteConnections(),
+            "datasource": \selectDatasourceConnections(),
+            "vmap": \selectValueMaps(),
+            "queue": \selectQueues(),
+        };
+    }
+
+    constructor(): Test("OloadDeletionTest", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("positiveDeletionTest", \positiveDeletionTest());
+        addTestCase("positiveDeletionByIdTest", \positiveDeletionByIdTest());
+        addTestCase("negativeDeletionTest", \negativeDeletionTest());
+        addTestCase("negativeDeletionByIdTest", \negativeDeletionByIdTest());
+        set_return_value(main());
+    }
+
+    private list<auto> selectInterfaces(string type, hash<auto> select_hash) {
+        AbstractTable interfaceTable = new Table(omq, type).getTable();
+        return interfaceTable.selectRows(select_hash);
+    }
+
+    private list<auto> selectWorkflows() {
+        return selectInterfaces("workflows", {
+            "columns": (cop_as("workflowid", "id"), "name"),
+            "where": {
+                "name": op_like("%ISSUE-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectSteps() {
+        return selectInterfaces("steps", {
+            "columns": (cop_as("stepid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue_3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectClasses() {
+        return selectInterfaces("classes", {
+            "columns": (cop_as("classid", "id"), "name"),
+            "where": {
+                "name": op_like("%Issue3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectServices() {
+        return selectInterfaces("services", {
+            "columns": (cop_as("serviceid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectJobs() {
+        return selectInterfaces("jobs", {
+            "columns": (cop_as("jobid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectFunctions() {
+        return selectInterfaces("function_instance", {
+            "columns": (cop_as("function_instanceid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectConstants() {
+        return selectInterfaces("constants", {
+            "columns": (cop_as("constantid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectMappers() {
+        return selectInterfaces("mappers", {
+            "columns": (cop_as("mapperid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "version": "1.0",
+            },
+        });
+    }
+
+    private list<auto> selectDatasourceConnections() {
+        return selectInterfaces("connections", {
+            "columns": ("name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "connection_type": "DATASOURCE"
+            },
+        });
+    }
+
+    private list<auto> selectUserConnections() {
+        return selectInterfaces("connections", {
+            "columns": ("name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "connection_type": "USER"
+            },
+        });
+    }
+
+    private list<auto> selectRemoteConnections() {
+        return selectInterfaces("connections", {
+            "columns": ("name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+                "connection_type": "REMOTE"
+            },
+        });
+    }
+
+    private list<auto> selectValueMaps() {
+        return selectInterfaces("value_maps", {
+            "columns": ("id", "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+            },
+        });
+    }
+
+    private list<auto> selectQueues() {
+        return selectInterfaces("queues", {
+            "columns": (cop_as("queueid", "id"), "name"),
+            "where": {
+                "name": op_like("%issue-3010%"),
+            },
+        });
+    }
+
+    private deployAllFiles() {
+        Dir dir();
+        dir.chdir(srcDir);
+
+        list<auto> files = dir.listFiles();
+        files = map srcDir + Qore::DirSep + $1, files;
+
+        list<auto> args = ("-l", "-R", "-v") + files;
+        hash<auto> result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(0, result.exit_code);
+
+        # issue #3617: check timeout values in Qorus connections
+        hash<auto> info = qrest.get("remote/qorus/issue-3010-remote-connection");
+        assertEq(2, info.opts.connect_timeout);
+        assertEq(2, info.opts."timeout");
+    }
+
+    private positiveDeletionTest() {
+        if (m_options.verbose > 2) {
+            printf("=======positiveDeletionTest START=======\n");
+        }
+        deployAllFiles();
+
+        foreach auto method in (selectMethods.pairIterator()) {
+            list<auto> result = call_function(method.value);
+            if (m_options.verbose > 2) {
+                printf("%d %s in the database\n", elements result, method.key);
+            }
+            assertEq(method.key == "workflow" ? 2 : 1 , elements result, "1st select: " + method.key);
+        }
+
+        list<auto> args = ("-l", "-R");
+        args += map sprintf("-X%s", $1), INTERFACES_TO_DELETE;
+        hash<auto> deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        {
+            on_error {
+                if (deletion_result.stdout) {
+                    printf("%s\n", deletion_result."stdout");
+                }
+                if (deletion_result.stdout) {
+                    printf("%s\n", deletion_result."stderr");
+                }
+            }
+            assertEq(0, deletion_result.exit_code);
+            assertNRegex("UNKNOWN-", deletion_result{"stdout"});
+        }
+
+        foreach auto method in (selectMethods.pairIterator()) {
+            list<auto> result = call_function(method.value);
+            if (m_options.verbose > 2) {
+                printf("%d %s in the database\n", elements result, method.key);
+            }
+            assertEq(0, elements result, "2nd select: " + method.key);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("========positiveDeletionTest END========\n");
+        }
+    }
+
+    private positiveDeletionByIdTest() {
+        if (m_options.verbose > 2) {
+            printf("=====positiveDeletionByIdTest START=====\n");
+        }
+        deployAllFiles();
+
+        foreach auto method in (selectMethods.pairIterator()) {
+            list<auto> result = call_function(method.value);
+            if (m_options.verbose > 2) {
+                printf("%d %s in the database\n", elements result, method.key);
+            }
+            assertEq(method.key == "workflow" ? 2 : 1 , elements result, "id select: " + method.key);
+        }
+
+        foreach auto method in (selectMethods.pairIterator()) {
+            if (inlist(method.key, ("uconn", "remote", "datasource"))) {
+                # connections cannot be deleted by id
+                continue;
+            }
+
+            list<auto> args = ("-R", "-v");
+            list<auto> result = call_function(method.value);
+            args += map sprintf("--delete-id=%s:%s", method.key, $1.id), result;
+
+            hash<auto> deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+            on_error printf("%s\n", deletion_result."stdout");
+            assertEq(0, deletion_result.exit_code, "delete by id: " + method.key + " (rc)");
+            assertNRegex("UNKNOWN-", deletion_result{"stdout"}, "delete by id: " + method.key + " (regex)");
+        }
+
+        if (m_options.verbose > 2) {
+            printf("======positiveDeletionByIdTest END======\n");
+        }
+    }
+
+    private negativeDeletionTest() {
+        if (m_options.verbose > 2) {
+            printf("=======negativeDeletionTest START=======\n");
+        }
+
+        list<auto> args = ("-R", "-v");
+        args += sprintf("-X=asd:Issue3010Step:1.0");
+        hash deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(1, deletion_result.exit_code);
+        assertRegex("unknown or missing object type", deletion_result{"stderr"});
+
+        args = ("-R", "-v");
+        args += sprintf("-X=step:Issue3010Step");
+        deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(1, deletion_result.exit_code);
+        assertRegex("missing name and/or version.*name=\"Issue3010Step\", ver=<NOTHING>", deletion_result{"stderr"});
+
+        args = ("-R", "-v");
+        args += ("-X=step:TestUnknownStepIssue3010:1.0");
+        deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(0, deletion_result.exit_code);
+        assertRegex("UNKNOWN-.*TestUnknownStepIssue3010", deletion_result{"stdout"});
+
+        args = ("-R", "-v");
+        args += ("-X=step:TestUnknownStepIssue3010:1.0", "-X=step:XXXInvalidStep:1.0");
+        deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(0, deletion_result.exit_code);
+        assertRegex("UNKNOWN-.*TestUnknownStepIssue3010", deletion_result{"stdout"});
+
+        if (m_options.verbose > 2) {
+            printf("========negativeDeletionTest END========\n");
+        }
+    }
+
+    private negativeDeletionByIdTest() {
+        if (m_options.verbose > 2) {
+            printf("=====negativeDeletionByIdTest START=====\n");
+        }
+
+        list<auto> args = ("-R", "-v");
+        args += sprintf("--delete-id=asd:1");
+        hash<auto> deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(1, deletion_result.exit_code);
+        assertRegex("unknown or missing object type", deletion_result{"stderr"});
+
+        args = ("-R", "-v");
+        args += sprintf("--delete-id=step:999979999");
+        deletion_result = OloadTestHelper::runOload(args, m_options > 2);
+        assertEq(0, deletion_result.exit_code);
+        assertRegex("UNKNOWN-.*999979999", deletion_result{"stdout"});
+
+        if (m_options.verbose > 2) {
+            printf("======negativeDeletionByIdTest END======\n");
+        }
+    }
+} # class Main
+

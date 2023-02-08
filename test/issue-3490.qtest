@@ -1,0 +1,103 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusWorkflowTest {
+    private {
+        const ParentWorkflowName = "ISSUE-3490-PARENT";
+        const ChildWorkflowName = "ISSUE-3490-CHILD";
+    }
+
+    constructor() : QorusWorkflowTest(ParentWorkflowName, "1.0", \ARGV, Opts) {
+        addTestCase(ParentWorkflowName, \mainTest());
+
+        set_return_value(main());
+    }
+
+    mainTest() {
+        # ensure workflows are enabled
+        hash<auto> pwf = qrest.get("workflows/" + ParentWorkflowName);
+        hash<auto> cwf = qrest.get("workflows/" + ChildWorkflowName);
+
+        if (!pwf.enabled) {
+            qrest.put("workflows/" + ParentWorkflowName + "/enable");
+        }
+        if (pwf.autostart) {
+            qrest.put("workflows/" + ParentWorkflowName + "/setAutostart", {"autostart": 0});
+        }
+        if (!cwf.enabled) {
+            qrest.put("workflows/" + ChildWorkflowName + "/enable");
+        }
+        if (!cwf.autostart) {
+            qrest.put("workflows/" + ChildWorkflowName + "/setAutostart", {"autostart": 1});
+        }
+        on_exit {
+            qrest.put("workflows/" + ChildWorkflowName + "/setAutostart", {"autostart": 0});
+        }
+
+        # set remote = true
+        if (pwf.remote) {
+            qrest.put("workflows/" + ParentWorkflowName + "/setRemote", {"remote": True});
+        }
+        if (!cwf.remote) {
+            qrest.put("workflows/" + ChildWorkflowName + "/setRemote", {"remote": True});
+        }
+        doWorkflowTest();
+
+        qrest.put("workflows/" + ParentWorkflowName + "/setRemote", {"remote": False});
+        qrest.put("workflows/" + ChildWorkflowName + "/setRemote", {"remote": False});
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        ExecSynchronousOrder action({
+            "name": ParentWorkflowName,
+            "staticdata": {},
+        });
+        exec(action);
+
+        hash<auto> dd = action.result().dynamicdata;
+        #printf("dd: %y\n", dd);
+        waitForOrderStatus(dd.child1, StatEventWaiting);
+        waitForOrderStatus(dd.child2, StatEventWaiting);
+        waitForOrderStatus(dd.child3, StatEventWaiting);
+        qrest.put("workflows/" + ChildWorkflowName + "/reset");
+        qrest.put("sync-events/issue-3490/" + dd.child1 + "/post");
+        qrest.put("sync-events/issue-3490/" + dd.child2 + "/post");
+        qrest.put("sync-events/issue-3490/" + dd.child3 + "/post");
+        waitForOrderStatus(dd.child1);
+        waitForOrderStatus(dd.child2);
+        waitForOrderStatus(dd.child3);
+    }
+
+    waitForOrderStatus(softstring wfiid, string status = OMQ::StatComplete, *softlist<string> errors) {
+        date start = now_us();
+        hash<auto> h;
+        while (True) {
+            h = qrest.get("orders/" + wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (errors && inlist(h.workflowstatus, errors))
+                break;
+
+            if ((now_us() - start) > 10s) {
+                throw "TIMEOUT";
+            }
+
+            # wait for status to change
+            usleep(250ms);
+        }
+
+        #UserApi::logInfo("wfiid %d has status %y", wfiid, h.workflowstatus);
+
+        assertEq(status, h.workflowstatus);
+    }
+}

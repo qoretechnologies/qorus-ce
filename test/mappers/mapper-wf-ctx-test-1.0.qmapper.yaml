@@ -1,0 +1,67 @@
+# This is a generated file, don't edit!
+type: mapper
+name: mapper-wf-ctx-test
+desc: test for wf context
+author:
+  - Qore Technologies, s.r.o.
+context:
+    iface_kind: workflow
+    name: STATIC-DATA-TEST:1.0
+fields:
+    test:
+        context: '$static:{key}'
+options:
+    mapper-input:
+        can_manage_fields: true
+        custom-fields: {}
+        name: qore
+        path: /hash
+        type: type
+    mapper-output:
+        can_manage_fields: true
+        custom-fields:
+            test:
+                canBeNull: false
+                desc: test
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: test
+                parentPath: false
+                path: test
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softstring
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - date
+                        - number
+                    types_returned:
+                        - string
+        name: qore
+        path: /hash
+        type: type
+mappertype: Mapper
+version: "1.0"

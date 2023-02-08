@@ -1,0 +1,90 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3477
+
+class Issue3477 inherits QorusServiceTest {
+    private {
+        const ServiceName = "issue-3477-test";
+    }
+
+    constructor() : QorusServiceTest(ServiceName, "1.0", \ARGV, Opts) {
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        hash<auto> info = qrest.get("services/" + ServiceName);
+        if (!info.remote) {
+            qrest.put("services/" + ServiceName + "/setRemote", {"remote": True});
+        }
+        if (!info.autostart) {
+            qrest.put("services/" + ServiceName + "/setAutostart", {"autostart": True});
+        }
+        if (!info.status == "loaded") {
+            qrest.put("services/" + ServiceName + "/load");
+        }
+
+        # get process ID
+        string proc_id = sprintf("qsvc-user-issue-3477-test-v1.0-%d-stateful", info.serviceid);
+
+        # get current service info
+        waitForServiceNotPid(proc_id, -1);
+
+        # get new process info
+        info = qrest.get("services/" + ServiceName);
+        on_exit {
+            qrest.put("services/" + ServiceName + "/setAutostart", {"autostart": False});
+            qrest.put("services/" + ServiceName + "/unload");
+        }
+
+        assertEq("dummy\n", qrest.get("services/" + ServiceName + "/resource_files/dummy.txt/data"));
+
+        system("qctl kill " + info.processes[0].id);
+
+        #printf("info: %N\n", info);
+        # wait for service to be restarted
+        waitForServiceNotPid(info.processes[0].id, info.processes[0].pid);
+
+        # unload service
+        qrest.put("services/" + ServiceName + "/unload");
+    }
+
+    private waitForServiceNotPid(string proc_id, int pid, timeout max_wait = 15s) {
+        date start = now_us();
+        date timeout = now_us() + max_wait;
+        while (True) {
+            *hash<auto> proc_info;
+            hash<auto> info;
+            try {
+                proc_info = qrest.get("system/processes/" + proc_id, NOTHING, \info).body;
+            } catch (hash<ExceptionInfo> ex) {
+                # 404 Not Found = no process; ignore
+                if (info."response-headers".status_code != 404) {
+                    rethrow;
+                }
+            }
+            if (proc_info && proc_info.pid != pid) {
+                if (m_options.verbose > 2) {
+                    printf("proc %y restarted with PID %d; continuing; elapsed time: %y / max: %y\n", proc_id,
+                        proc_info.pid, now_us() - start, milliseconds(max_wait));
+                }
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "PROCESS-TIMEOUT-ERROR", sprintf("process %y did not get a new PID (current %y) in the timeout "
+                    "period (info: %y); elapsed time: %y / max: %y", proc_id, proc_info.pid, proc_info,
+                    now_us() - start, milliseconds(max_wait));
+            }
+            # sleep for 1/4 of a second and check again
+            usleep(250ms);
+        }
+    }
+}

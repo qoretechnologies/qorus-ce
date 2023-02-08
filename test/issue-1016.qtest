@@ -1,0 +1,132 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    constructor(): Test("Issue 1016", "1.0") {
+        QorusClient::initFast();
+        addTestCase("main", \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        qrest.put("workflows/CONN-TEST/setAutostart", {"autostart": 1});
+        on_exit qrest.put("workflows/CONN-TEST/setAutostart", {"autostart": 0});
+
+        hash<auto> oh = {
+            "staticdata": {"a": 1},
+        };
+        softint wfiid = qrest.post("workflows/CONN-TEST/createOrder", oh).workflow_instanceid;
+        log("created wfiid %d", wfiid);
+
+        # set system-wide manage-interfaces to True
+        bool mi_systemwide = qrest.get("system/options/manage-interfaces/value");
+        log("system global manage-interfaces value: %y", mi_systemwide);
+        on_exit if (!mi_systemwide) {
+            qrest.put("system/options/setOptions", {"manage-interfaces": mi_systemwide});
+        }
+        if (!mi_systemwide) {
+            qrest.put("system/options/setOptions", {"manage-interfaces": True});
+        }
+
+        # verify that that the system global "manage-interfaces" option is enabled
+        assertEq(True, qrest.get("system/options/manage-interfaces/value"));
+
+        # ensure that any such workflow option is removed
+        qrest.put("workflows/CONN-TEST/setOptions", {"options": {"manage-interfaces": NOTHING}});
+        {
+            *hash<auto> opts = qrest.get("workflows/CONN-TEST/options");
+            assertEq(NOTHING, opts."manage-interfaces");
+        }
+
+        # get a working URL
+        string url = qrest.getURL();
+
+        # get original URL for connection
+        string orig_url = qrest.get("remote/user/conn-test/url");
+        qrest.put("remote/user/conn-test", {"url" : url});
+        on_exit qrest.put("remote/user/conn-test", {"url": orig_url});
+        hash<auto> h = qrest.put("remote/user/conn-test/ping");
+        assertTrue(h.ok);
+
+        # wait for the WF to start
+        int ec = qrest.get("workflows/CONN-TEST/exec_count");
+        assertEq(1, ec); # WF should start
+        qrest.put("remote/user/conn-test", {"url": orig_url});
+        h = qrest.put("remote/user/conn-test/ping");
+        assertFalse(h.ok);
+        # ping twice
+        h = qrest.put("remote/user/conn-test/ping");
+        assertFalse(h.ok);
+        # verify connection dependency; wait for 20s for dependency to appear
+        {
+            auto conn_list;
+            date now = now_us();
+            while (True) {
+                conn_list = qrest.get("workflows/CONN-TEST/connections");
+                if (conn_list) {
+                    break;
+                }
+                if ((now_us() - now) > 20s) {
+                    throw "CONNECTION-ERROR", "connection dependency for the CONN-TEST workflow did not appear in 20s";
+                }
+                usleep(100ms);
+            }
+            log("CONN-TEST connection dependencies: %y", conn_list);
+            assertEq(1, conn_list.size());
+            assertEq({"type": "USER-CONNECTION", "name": "conn-test", "up": False}, conn_list[0]);
+        }
+        waitForWorkflowStop("CONN-TEST");
+
+        bool mi_tmp = qrest.get("system/options/manage-interfaces/value");
+        assertTrue(mi_tmp);
+
+        # change manage-interfaces for the WF to False
+        qrest.put("workflows/CONN-TEST/setOptions", {"options": {"manage-interfaces": False}});
+        # restore option on exit
+        on_exit qrest.put("workflows/CONN-TEST/setOptions", {"options": {"manage-interfaces": True}});
+        # set to an invalid URL
+        qrest.put("remote/user/conn-test", {"url": "http://localhost:1"});
+        qrest.put("remote/user/conn-test/ping");
+        # ping twice
+        qrest.put("remote/user/conn-test/ping");
+
+        # the workflow should not start
+        waitForWorkflowStop("CONN-TEST");
+    }
+
+    waitForWorkflowStop(softstring wfname_or_id, timeout max_wait = 15s) {
+        date timeout = now_us() + max_wait;
+        while (True) {
+            int ec = qrest.get("workflows/" + wfname_or_id + "/exec_count");
+            if (!ec) {
+                if (m_options.verbose > 2) {
+                    printf("workflow %y has stopped; continuing test\n", wfname_or_id);
+                }
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "WORKFLOW-TIMEOUT-ERROR", sprintf("workflow %y did not stop in the timeout period",
+                    wfname_or_id);
+            }
+            usleep(100ms);
+        }
+    }
+
+    log(string fmt) {
+        if (m_options.verbose < 3) {
+            return;
+        }
+        vprintf(fmt + "\n", argv);
+    }
+}
+

@@ -1,0 +1,27 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3102mapper2
+# version: 1.0
+# desc: mapper old syntax test
+# type: InboundTableMapper
+# author: Qore Technologies
+# functions: issue3102mapperlib
+# parse-options: PO_NEW_STYLE
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: datasource: get_datasource("test")
+OPTION: table: "test_table"
+OPTION: input: {
+    "test": {"desc": "hash data"},
+}
+OPTION: runtime: (
+    "output-5": now(),
+)
+OPTION: name: "test mapper"
+
+FIELD: "output-1": {"sequence": "test_sequence"}
+FIELD: "output-2": {"constant": get_value("testdata")}
+FIELD: "output-3": "test.test1"
+FIELD: "output-4": {"code": string sub(any ignored, hash rec) { return rec.test1 + "_" + rec.test2; } }
+# END

@@ -1,0 +1,25 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: mapper-api-test
+# version: 1.0
+# desc: mapper api test
+# type: Mapper
+# author: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: input: (
+    "input-1": {},
+)
+
+OPTION: output: (
+    "config-item-1": {},
+    "ctx-1": {},
+    "template-1": {},
+)
+
+FIELD:config-item-1: ("code": auto sub (auto ignored, hash<auto> rec) { return MapperApi::getGlobalConfigItemValue("test-item"); } )
+FIELD:ctx-1: {"context": "$local:workflow_instanceid"}
+FIELD:template-1: {"name": "input-1", "template": True}
+# END

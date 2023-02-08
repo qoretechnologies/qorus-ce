@@ -1,0 +1,4 @@
+#!/bin/sh
+
+grep "$*" Classes/* bin/* lib/* system/* qlib-qorus/* qlib/* qlib-yaml/* qlib-xml/* qlib-json/* qlib-oracle/* qlib-ssh2/*
+

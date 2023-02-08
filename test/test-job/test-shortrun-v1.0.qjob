@@ -1,0 +1,22 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: test-shortrun
+# version: 1.0
+# desc: test job - short running
+# author: Qore Technologies, sro
+# single-instance: false
+# active: false
+# run-skipped: false
+##duration: 5
+##schedule: min hour day month dow
+# schedule: * * * * *
+# define-group: test: test interfaces
+# define-group: extra-test: extra test objects
+# groups: test, extra-test
+
+sub run() {
+    UserApi::logInfo("START test shortrun job");
+
+    UserApi::logInfo("END");
+}
+# END

@@ -1,0 +1,63 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# desc: reschedule test function
+# author: Qore Technologies, sro
+sub reschedule_test_1() {
+    # test for issue #2495
+    my auto $parent_wfiid = WorkflowApi::parentWfiid();
+    if (!$parent_wfiid) {
+        throw "ISSUE-2495-ERROR", "no parent wfiid found for RESCHEDULE order";
+    }
+    UserApi::logInfo("parent wfiid: %y", $parent_wfiid);
+    # do nothing here; the action happens in the attach function
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: reschedule attach function
+# author: Qore Technologies, sro
+sub reschedule_attach() {
+    # test for issue #2495
+    my auto $parent_wfiid = WorkflowApi::parentWfiid();
+    if (!$parent_wfiid) {
+        throw "ISSUE-2495-ERROR", "no parent wfiid found for RESCHEDULE order";
+    }
+    UserApi::logInfo("parent wfiid: %y", $parent_wfiid);
+
+    UserApi::logInfo("initstatus=%y", WorkflowApi::getWorkflowInstanceData("initstatus"));
+
+    # get default options from system properties
+    my any $opt = UserApi::propGet("reschedule");
+
+    # overwrite options with any set on the workflow level
+    my hash $wo = WorkflowApi::getOption("reschedule", "iterations", "stop");
+    foreach my string $key in (keys $wo)
+        if (exists $wo.$key)
+            $opt.$key = $wo.$key;
+
+    # convert all options to integer values
+    map $opt.$1 = int($opt.$1), keys $opt;
+
+    my int $iters = int(WorkflowApi::getDynamicData("iterations"));
+
+    UserApi::logInfo("using options: %n, iteration %d", $opt, $iters);
+
+    if ($opt.reschedule) {
+        if ($iters >= $opt.iterations) {
+            UserApi::logInfo("not rescheduling after %d iterations (max %d)", $iters, $opt.iterations);
+            return;
+        }
+        WorkflowApi::updateDynamicData(("iterations" : ++$iters));
+        WorkflowApi::rescheduleOrder(now_us() + seconds($opt.reschedule));
+    }
+
+    if ($opt.stop) {
+        UserApi::logInfo("stopping all RESCHEDULE execution instances");
+        $omqservice.user.workflowstopper.stop_workflows("RESCHEDULE");
+    }
+}
+# END

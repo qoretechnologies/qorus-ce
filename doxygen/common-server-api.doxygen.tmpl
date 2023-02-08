@@ -1,0 +1,645 @@
+/** @page commonserverapi Qorus Common Server API
+
+    @tableofcontents
+
+    This section covers APIs and API concepts common to all Qorus user code, workflows, services, and jobs for the
+    %Qore programming language.  %Qore APIs are automatically imported in Java and %Python code in Qorus, so all %Qore
+    APIs that can be imported into each language are also available in Java and %Python code in Qorus.
+
+    @section systemutilclasses Qorus System Utility Classes
+
+    The following %Qore modules are imported into all user objects:
+    |!Name|!Description
+    |@ref jsonintro "json"|provides APIs for JSON data serialization and deserialization support
+    |@ref mimeintro "Mime"|provides MIME definitions and functionality
+    |@ref mapperintro "Mapper"|provides a data-mapping API
+    |@ref soapclientintro "SoapClient"|provides a SOAP client API
+    |@ref sqlutilintro "SqlUtil"|provides high-level APIs for programmatic DML (SQL data manipulation), DDL \
+        (creating, querying, manipulating database definitions), and DBA operations
+    |@ref tablemapperintro "TableMapper"|provides high-level APIs for mapping data to and from database tables
+    |@ref utilintro "Util"|provides utility APIs
+    |@ref uuidintro "uuid"|provides an API for generating UUIDs
+    |@ref xmlintro "xml"|provides APIs for parsing, validating, and generating XML documents
+    |@ref yamlintro "yaml"|provides APIs for %Qore's YAML-based data serialization and deserialization support
+
+    The following %Qore classes are imported into all user objects:
+    |!%Qore/%Python/Java Class|!Description
+    |@ref OMQ::AbstractFsRemoteReceive "OMQ::AbstractFsRemoteReceive"|provides an API for streaming data from a \
+        remote filesystem through a remote Qorus instance
+    |@ref OMQ::AbstractParallelStream "OMQ::AbstractParallelStream"|provides an abstract base class for streaming \
+        data to or from a remote database through a remote Qorus instance and also provides static helper methods
+    |@ref OMQ::DbRemote "OMQ::DbRemote"|provides an API wrapper for all @ref system_sqlutil "system.sqlutil" service \
+        methods
+    |@ref OMQ::DbRemoteReceive "OMQ::DbRemoteReceive"|provides an API for streaming data from a remote database \
+        through a remote Qorus instance
+    |@ref OMQ::DbRemoteSend "OMQ::DbRemoteSend"|provides an API for streaming data to a remote database through a \
+        remote Qorus instance
+    |@ref OMQ::FsRemote "OMQ::FsRemote"|provides an API wrapper for all @ref system_fs "system.fs" service methods
+    |@ref OMQ::FsRemoteSend "OMQ::FsRemoteSend"|provides an API for streaming data to a remote filesystem through a \
+        remote Qorus instance
+    |@ref OMQ::QorusInboundTableMapper "OMQ::QorusInboundTableMapper"|provides an API for mapping data to a DB table
+    |@ref OMQ::QorusInboundTableMapperIterator "OMQ::QorusInboundTableMapperIterator"|provides an iterator-based API \
+        for mapping data to a DB table
+    |@ref OMQ::QorusRawSqlStatementOutboundMapper "OMQ::QorusRawSqlStatementOutboundMapper"|provides an API for \
+        mapping from SQL statement using direct SQL statements passed in
+    |@ref OMQ::QorusRemoteServiceHelper "OMQ::QorusRemoteServiceHelper"|provides an API for calling service methods \
+        in remote Qorus instances
+    |@ref OMQ::QorusSqlStatementOutboundMapper "OMQ::QorusSqlStatementOutboundMapper"|provides an API for mapping \
+        from SQL statement using SqlUtil
+    |@ref OMQ::QorusSystemAPIHelper "OMQ::QorusSystemAPIHelper"|provides an API for calling RPC API methods in \
+        remote Qorus instances
+    |@ref OMQ::QorusSystemRestHelperBase "OMQ::QorusSystemRestHelper"|provides an API for using the REST API in \
+        remote Qorus instances
+    |@ref OMQ::UserApi::UserApi "OMQ::UserApi"|the main Qorus API class
+
+    @note %Python and Java code require explicit imports to dynamically import %Qore classes; see:
+    - @ref python_development
+    - @ref javadevelopment
+
+    The main Qorus API class is the @ref OMQ::UserApi::UserApi "UserApi" class, available in Java as
+    \c qore.OMQ.UserApi.UserApi and in Python as simply \c UserApi.
+
+    @section systemloggingapi Qorus Logging Methods
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::logTrace() "UserApi::logTrace()"|outputs information in the relevant log file with \c TRACE priority
+    |@ref OMQ::UserApi::UserApi::logDebug() "UserApi::logDebug()"|outputs information in the relevant log file with \c DEBUG priority
+    |@ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"|outputs information in the relevant log file with \c INFO priority
+    |@ref OMQ::UserApi::UserApi::logWarn() "UserApi::logWarn()"|outputs information in the relevant log file with \c WARN priority
+    |@ref OMQ::UserApi::UserApi::logError() "UserApi::logError()"|outputs information in the relevant log file with \c ERROR priority
+    |@ref OMQ::UserApi::UserApi::logFatal() "UserApi::logFatal()"|outputs information in the relevant log file with \c FATAL priority
+
+    All Qorus APIs are dynamically imported into %Python and Java.
+
+    @par Example %Python call:
+    @code{.py}
+    UserApi.logInfo("log message")
+    @endcode
+
+    @par Example %Java call:
+    @code{.java}
+    // this import is not necessary
+    import qore.OMQ.UserApi.UserApi;
+
+    UserApi.logInfo("log message");
+    @endcode
+
+    @section systeminfoapi Qorus System Information API
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::getActiveJobs() "UserApi::getActiveJobs()"|returns information about active jobs
+    |@ref OMQ::UserApi::UserApi::getGlobalConfigItemValue() "UserApi::getGlobalConfigItemValue()"|returns the value of the given configuration item on global level
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowInfo() "UserApi::getRunningWorkflowInfo()"|returns information about a running workflow execution instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowList() "UserApi::getRunningWorkflowList()"|returns information about running workflow execution instances
+    |@ref OMQ::UserApi::UserApi::getServiceInfo() "UserApi::getServiceInfo()"|returns information about a service
+    |@ref OMQ::UserApi::UserApi::getSessionId() "UserApi::getSessionId()"|returns the current @ref appsessionmodel "application session ID"
+    |@ref OMQ::UserApi::UserApi::getSystemInfo() "UserApi::getSystemInfo()"|returns information about the system
+    |@ref OMQ::UserApi::UserApi::getSystemServiceInfo() "UserApi::getSystemServiceInfo()"|returns information about a system service
+    |@ref OMQ::UserApi::UserApi::getUserServiceInfo() "UserApi::getUserServiceInfo()"|returns information about a user service
+    |@ref OMQ::UserApi::UserApi::qorusGetLocalUrl() "UserApi::qorusGetLocalUrl()"|returns a URL for the current system
+    |@ref OMQ::UserApi::UserApi::runtimeProperties() "UserApi::runtimeProperties()"|returns information about runtime @ref defines "system defines"
+
+    All Qorus APIs are dynamically imported into %Python and Java.
+
+    @par Example %Python call:
+    @code{.py}
+    info: dict = UserApi.getSystemInfo()
+    @endcode
+
+    @par Example %Java call:
+    @code{.java}
+    import qore.OMQ.UserApi.UserApi;
+    import org.qore.jni.Hash;
+
+    Hash info = UserApi.getSystemInfo();
+    @endcode
+
+    @section systemconnapi Qorus System Connection API
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::getDatasourceDedicated() "UserApi::getDatasourceDedicated()"\
+        |returns a dedicated @ref Qore::SQL::Datasource object
+    |@ref OMQ::UserApi::UserApi::getDatasourcePool() "UserApi::getDatasourcePool()"\
+        |returns a shared @ref Qore::SQL::DatasourcePool object
+    |@ref OMQ::UserApi::UserApi::getRemoteRestConnection() "UserApi::getRemoteRestConnection()"\
+        |returns a @ref OMQ::QorusSystemRestHelperBase "QorusSystemRestHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRemoteRpcConnection() "UserApi::getRemoteRpcConnection()"\
+        |returns a @ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getUserConnection() "UserApi::getUserConnection()"\
+        |returns the given @ref userconn "user connection" object
+
+    All Qorus APIs are dynamically imported into %Python and Java.
+
+    @par Example %Python call:
+    @code{.py}
+    from qore.SQL import DatasourcePool
+
+    dsp: DatasourcePool = UserApi.getDatasourcePool("omquser")
+    @endcode
+
+    @par Example %Java call:
+    @code{.java}
+    import qore.OMQ.UserApi.UserApi;
+    import qore.Qore.SQL.DatasourcePool;
+
+    DatasourcePool dsp = UserApi.getDatasourcePool("omquser");
+    @endcode
+
+    @section systemstreamapi Qorus High-Level Streaming API
+
+    The following classes provide @ref stream-api to iterate with remote Qorus instances
+
+    |!%Qore/%Python/Java Class|!Description
+    |@ref OMQ::AbstractFsRemoteReceive "AbstractFsRemoteReceive"|provides an API for streaming data from a remote filesystem through a remote Qorus instance
+    |@ref OMQ::AbstractParallelStream "AbstractParallelStream"|provides an abstract base class for streaming data to or from a remote database through a remote Qorus instance and also provides static helper methods
+    |@ref OMQ::DbRemote "DbRemote"|provides an API wrapper for all @ref system_sqlutil "system.sqlutil" service methods
+    |@ref OMQ::DbRemoteReceive "DbRemoteReceive"|provides an API for streaming data from a remote database through a remote Qorus instance
+    |@ref OMQ::DbRemoteSend "DbRemoteSend"|provides an API for streaming data to a remote database through a remote Qorus instance
+    |@ref OMQ::FsRemote "FsRemote"|provides an API wrapper for all @ref system_fs "system.fs" service methods
+    |@ref OMQ::FsRemoteSend "FsRemoteSend"|provides an API for streaming data to a remote filesystem through a remote Qorus instance
+
+    @section systemsqlcacheapi Qorus SQL Object Cache API
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::clearSqlTableCache() "UserApi::clearSqlTableCache()"|clears a cached table from the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::getSqlTable() "UserApi::getSqlTable()"|retrieves an @ref SqlUtil::AbstractTable "AbstractTable" object from the @ref sql-cache "SQL cache" for DML operations
+    |@ref OMQ::UserApi::UserApi::getSqlCacheInfo() "UserApi::getSqlCacheInfo()"|returns information about the @ref sql-cache "SQL cache"
+
+    @section systemvmapapi Qorus Value Map API
+
+    The following functions provide APIs to work with @ref value-maps
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::getValueMap() "UserApi::getValueMap()"|retrieves a value mapping from a value map
+    |@ref OMQ::UserApi::UserApi::getValueMaps() "UserApi::getValueMaps()"|retrieves a list of all known value sets
+
+    @section systemalertapi Qorus System Alert APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::raiseTransientAlert() "UserApi::raiseTransientAlert()"|raises a transient alert
+
+    @section systemauditapi Qorus System Auditing APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::auditCheckEventString() "UserApi::auditCheckEventString()"|checks if the given audit event (given as a string) is enabled
+    |@ref OMQ::UserApi::UserApi::auditCheckEvent() "UserApi::auditCheckEvent()"|checks if the given audit event (given as an integer code) is enabled
+    |@ref OMQ::UserApi::UserApi::auditGetMask() "UserApi::auditGetMask()"|returns the audit event mask
+    |@ref OMQ::UserApi::UserApi::auditUserEvent() "UserApi::auditUserEvent()"|creates a user audit event (with audit event code @ref OMQ::AE_USER_EVENT) against the workflow, service, or job instance
+
+    @section systemoptionapi Qorus System Option APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::getOption() "UserApi::getOption()"\
+        |returns the value of one or more system or interface options
+    |@ref OMQ::UserApi::UserApi::getQorusOptions() "UserApi::getQorusOptions()"\
+        |returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionsArgs() "UserApi::getQorusOptionsArgs()"\
+        |returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfo() "UserApi::getQorusOptionInfo()"\
+        |returns information about system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfoArgs() "UserApi::getQorusOptionInfoArgs()"\
+        |returns information about system options
+    |@ref OMQ::UserApi::UserApi::setOption() "UserApi::setOption()"\
+        |sets option values on a workflow, service, or job
+
+    @section systempropapi Qorus System Property APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::propGet() "UserApi::propGet()"\
+        |returns the value of the given @ref sysprops "system property" key in the given domain or @ref nothing if the system property does not exist
+    |@ref OMQ::UserApi::UserApi::propUpdate() "UserApi::propUpdate()"\
+        |changes (inserts, updates, or deletes) the value of one or more @ref sysprops "system properties"
+
+    @section systemutilityapi Qorus System General Utility APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::callNetworkApi() "UserApi::callNetworkApi()"\
+        |calls a system @ref rpcapi "RPC API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgs() "UserApi::callNetworkApiArgs()"\
+        |calls a system @ref rpcapi "RPC API" with system permissions with an explicit argument list argument
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgsWithAuthentication() "UserApi::callNetworkApiArgsWithAuthentication()"\
+        |calls a system @ref rpcapi "RPC API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::callRestApi() "UserApi::callRestApi()"\
+        |calls a system @ref restapi "REST API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callRestApiWithAuthentication() "UserApi::callRestApiWithAuthentication()"\
+        |call a system @ref restapi "REST API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::createOrder() "UserApi::createOrder()"\
+        |creates a workflow order data instance in the database and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::createRemoteOrder() "UserApi::createRemoteOrder()"\
+        |creates a workflow order data instance in a @ref remoteconn "remote Qorus instance" and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::deserializeQorusData() "UserApi::deserializeQorusData()"\
+        |deserializes strings to %Qore data structures
+    |@ref OMQ::UserApi::UserApi::executeFsm() "UserApi::executeFsm()"\
+        |executes a @ref finite_state_machines "finite state machine" registered with the interface and returns the result
+    |@ref OMQ::UserApi::UserApi::execSynchronousWorkflow() "UserApi::execSynchronousWorkflow()"\
+        |executes a workflow order synchronously and returns the result of execution
+    |@ref OMQ::UserApi::UserApi::getNextSequenceValue() "UserApi::getNextSequenceValue()"\
+        |returns the next value from the given datasource and database sequence
+    |@ref OMQ::UserApi::UserApi::postSyncEvent() "UserApi::postSyncEvent()"\
+        |posts a workflow synchronization event given the event type name and the unique event key
+    |@ref OMQ::UserApi::UserApi::postUserEvent() "UserApi::postUserEvent()"\
+        |posts an application event of class @ref OMQ::QE_CLASS_USER
+    |@ref OMQ::UserApi::UserApi::registerFsmAsObserver() "UserApi::registerFsmAsObserver()"\
+        |registers a @ref finite_state_machines "finite state machine" as an event observer
+    |@ref OMQ::UserApi::UserApi::restartTransaction() "UserApi::restartTransaction()"\
+        |enables recovery from restartable DB communication errors
+    |@ref OMQ::UserApi::UserApi::serializeQorusData() "UserApi::serializeQorusData()"\
+        |serializes %Qore data structures to strings
+
+    @section sla_api Qorus System SLA APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::flushSlaEvents() "UserApi::flushSlaEvents()"\
+        |flushes all pending SLA events to the DB
+    |@ref OMQ::UserApi::UserApi::postSlaEventError() "UserApi::postSlaEventError()"\
+        |posts an unsuccessful SLA and performance tracking event
+    |@ref OMQ::UserApi::UserApi::postSlaEventSuccess() "UserApi::postSlaEventSuccess()"\
+        |posts a successful SLA and performance tracking event
+
+    @section buildingblocks_api Qorus System Building Block APIs
+
+    |!%Qore/%Python/Java Method|!Description
+    |@ref OMQ::UserApi::UserApi::expandOneVariable() "UserApi::expandOneVariable()"\
+        |expands one variable in a templated string
+    |@ref OMQ::UserApi::UserApi::expandTemplatedValue() "UserApi::expandTemplatedValue()"\
+        |expands all variables in a templated string
+    |@ref OMQ::UserApi::UserApi::bbParseExactlyOneVariable() "UserApi::bbParseExactlyOneVariable()"\
+        |parses one template variable and returns a hash with its parts
+    |@ref OMQ::UserApi::UserApi::getInputData() "UserApi::getInputData()"\
+        |returns input data
+    |@ref OMQ::UserApi::UserApi::updateOutputData() "UserApi::updateOutputData()"\
+        |updates output data
+
+    @note all functions in the @ref utilintro "Util module" are available in all user code objects in Qorus as well.
+
+    @section callingservices Calling Qorus Services
+    Qorus services can be called from anywhere in Qorus user code (from a workflow, from another service, or in a
+    job).  To call a service from %Qore, use the ::omqservice object imported into every workflow, service, and job
+    program object as follows:
+
+    @code
+omqservice.[system|user].<service_name>.<method_name>(<arguments>)
+    @endcode
+
+    For example, to get information about a workflow order from its order key:
+    @code{.py}
+hash<auto> props = omqservice.system.info.searchOrderKeys({"value": "keyvalue"});
+    @endcode
+
+    @section bb_template_strings Config Item / Building Block Template Substitution Strings
+
+    Template substitution strings in building block APIs have one of the following formats:
+    - <tt><b>$</b></tt><i>type</i><tt><b>:</b></tt><i>value</i>
+    - <tt><b>$</b></tt><i>type</i><tt><b>:{</b></tt><i>value</i><tt><b>}</b></tt>
+
+    In addition, each template substitution string can be followed by an expression giving an alternate value to use
+    in case the first expression returns no value in the following format:
+    - <tt><b>??{</b>...<b>}</b></tt> where <tt><b>...</b></tt> is a template substitution expression to use if the first
+      expression resolves to no value
+
+    Values may be enclosed in square brackets to separate value characters from other characters that might
+    otherwise be considered part of the value string.
+
+    Value characters for values are alphanumeric characters, plus underscore (\c "_"), and the dot (\c ".") character
+    to reference hash members.  Value strings enclosed in curly brackets (\c '{}') can be any character except a close
+    curly bracket (\c '}').
+
+    Examples:
+    - Use the \c Account.Name value from static data
+      @verbatim $static:{Account.Name} @endverbatim
+    - Take the \c Account.Address.Country value from static data, if not present, use the string \c "USA"
+      @verbatim $static:{Account.Address.Country}??{USA} @endverbatim
+    - Take the \c Account.ShippingAddress value from static data, if not present, use the \c Account.BillingAddress
+      value instead
+      @verbatim $static:{Account.ShippingAddress}??{$static:{Account.BillingAddress}} @endverbatim
+    - Use the first expression in the list that has a value
+      @verbatim $static:FullName??{$static:LegalName}??${static:Name} @endverbatim
+
+    @note
+    - Dot (\c ".") characters may be escaped with a backslash character (\c \\) before the dot to ensure that
+      the dot is used as a part of the string and not a field separator; ex: \c "field\.with\.dots"
+    - Template substitution is performed recursively and template strings are tokenized for processing; to prohibit
+      template substitution, escape the first \c "$" character of template strings with a backslash (\c \\);
+      ex \c "\$static:not_a_template_string"
+    - If intermediate elements when resolving a path are lists of data structures, and the path is resolved through
+      the list, the resulting value will be a list of all resolved elements in the path
+    - Hash keys with spaces are supported by enclosing the hash key in single or double quotes; ex:
+      <tt>$static:'key with spaces'</tt> or by escaping the spaces; ex: <tt>$static:key\\ with\\ spaces</tt>
+
+    Valid types and values are given in the following table.
+
+    @anchor template_substitution_table
+    <b>Template Substitution String Values</b>
+
+    |!Context|!Type|!Value|!Data Type|!Read/Write|!Example|!Description
+    |all|\c config|\a any|any|\c R|\c $config:item_name|the value of the given configuration item for the current \
+        context (see also \c $xconfig: below)
+    |all|\c config|<tt><b>*</b></tt>|*hash|\c R|\c $config:*|the value of all configuration items as a hash keyed by \
+        item name for the current context (see also \c $xconfig: below)
+    |all|\c local|<tt><b>type</b></tt>|string|\c R|\c $local:type|the interface type: \c "workflow", \c "service", \
+        or \c "job"
+    |all|\c local|<tt><b>name</b></tt>|string|\c R|\c $local:name|the interface name
+    |all|\c local|<tt><b>version</b></tt>|string|\c R|\c $local:version|the interface version
+    |all|\c local|<tt><b>id</b></tt>|int|\c R|\c $local:id|the interface ID
+    |all|\c local|<tt><b>*</b></tt>|*hash|\c R|\c $local:*|the entire local context hash
+    |all|\c parse-value|\a any|any|\c R|\c $parse-value:{id=$static:{account.id}}|parses the string argument with \
+        @ref Util::parse_to_qore_value() "parse_to_qore_value()" after recursive template substitution
+    |all|\c pstate|\a any|any|\c RW|\c $pstate:key|the value of the given key in the interface's persistent state \
+        hash; see @ref bb_persistent_storage
+    |all|\c pstate|<tt><b>*</b></tt>|*hash|\c R|\c $pstate:*|the entire interface persistent state hash; \
+        see @ref bb_persistent_storage
+    |all|@ref bb-tmpl-python-expr "python-expr"|\a any|any|\c R|<tt>$python-expr:{("$info:type" + "." + "$info:name" + " v" + \
+        "$info:version")}</tt>|Performs template substitution on the argument and then parses the argument as a \
+        Python expression; the evaluation of the expression is used as the resulting value
+    |all|@ref bb-tmpl-qore-expr "qore-expr"|\a any|any|\c R|<tt>$qore-expr:{("$info:type" + "." + "$info:name" + " v" + \
+        "$info:version")}</tt>|Performs template substitution on the argument and then parses the argument as a \
+        %Qore expression; the evaluation of the expression is used as the resulting value
+    |all|@ref bb-tmpl-qore-expr-value "qore-expr-value"|\a any|string|\c R|\
+        <tt>\$qore-expr-value:{$static:{order.json}}</tt>|Returns a string representation of the value that can be \
+        used with <tt>$qore-expr:{}</tt>; strings are quoted (and internal \
+        strings are escaped), other values are converted to valid %Qore expressions
+    |all|\c rest|<i>REST URI path</i>|any|\c R|\c $rest:{remote/user/my-connection/url_hash/path}|the result of a \
+        \c GET request to the given system API URI path in the @ref rest_api_latest "latest REST API"
+    |all|\c sysprop|<i>domain</i>[<tt><b>.</b></tt><i>key</i>]|any|\c RW|\c $sysprop:{domain-1.key-1}|the value from \
+        the given @ref sysprops "system property" domain and optional key; if only a domain is given then the value \
+        returned or set must be a hash or @ref NOTHING
+    |all|\c timestamp|<tt><b>timegm</b></tt>|int|\c R|\c $timestamp:timegm|returns the current number of seconds \
+        after the UNIX epoch (1970-01-01 UTC)
+    |all|\c timestamp|@ref date_formatting "date format"|string|\c R|\c $timestamp:{YYYY-MM-DD HH:mm:SS.xx Z}|a \
+        timestamp formatted according to the value as the format argument (see @ref date_formatting for more \
+        information on the timestamp format argument)
+    |all|@ref bb-tmpl-transient "transient"|\a any|any|\c RW|\c $transient:{account-info.id}|the value from the \
+        temporary thread-local transient data hash; see @ref bb_var_and_transient_difference
+    |all|@ref bb-tmpl-transient "transient"|<tt><b>*</b></tt>|*hash|\c R|\c $transient:*|the entire temporary transient \
+        data hash; see @ref bb_var_and_transient_difference
+    |all|\c value-map|<i>value-map-name</i><tt>.</tt><i>value-map-key</i>|<tt><b>*</b></tt>|\c R|\
+        \c $value-map:{my-map.key2}|the value from the given key of the given @ref valuemap-devel "value map"
+    |all|@ref bb-tmpl-var "var"|\a any|any|\c RW|\c $var:{account-info.id}|the value from the temporary \
+        thread-local/block-local data hash; see @ref bb_var_and_transient_difference
+    |all|@ref bb-tmpl-var "var"|<tt><b>*</b></tt>|*hash|\c R|\c $var:*|the entire temporary thread-local/block-local \
+        data hash; see @ref bb_var_and_transient_difference
+    |all|\c xconfig|\a any|any|\c R|\c $xconfig:item_name|the value of the given configuration item for the current \
+        interface context; in @ref data_pipelines "data pipelines" and \
+        @ref finite_state_machines "finite state machines", this will return configuration information for the \
+        interface and not for the @ref data_pipelines "data pipeline" or \
+        @ref finite_state_machines "finite state machine" (see also \c $config: above)
+    |all|\c xconfig|<tt><b>*</b></tt>|*hash|\c R|\c $xconfig:*|the value of all configuration items as a hash keyed \
+        by item name for the current interface context; in @ref data_pipelines "data pipelines" and \
+        @ref finite_state_machines "finite state machines", this will return configuration information for the \
+        interface and not for the @ref data_pipelines "data pipeline" or \
+        @ref finite_state_machines "finite state machine" (see also \c $config: above)
+    |job|\c info|\a any|any|\c R|\c $info:key|the value of the given key in the job info hash (return value of \
+        @ref OMQ::UserApi::Job::JobApi::getInfo() "JobApi::getInfo()")\n@note supported for backwards-compatibility \
+        for writing as an alias to \c $jinfo
+    |job|\c info|<tt><b>*</b></tt>|*hash|\c R|\c $info:*|the entire job info hash (return value of \
+        @ref OMQ::UserApi::Job::JobApi::getInfo() "JobApi::getInfo()")
+    |job|\c jinfo|\a any|any|\c RW|\c $jinfo:key|the value of the given key in the job result info hash (value set in \
+        @ref OMQ::UserApi::Job::JobApi::saveInfo() "JobApi::saveInfo()")
+    |job|\c jinfo|<tt><b>*</b></tt>|*hash|\c R|\c $jinfo:*|the entire job result info hash (value set in \
+        @ref OMQ::UserApi::Job::JobApi::saveInfo() "JobApi::saveInfo()")
+    |job|\c local|<tt><b>job_instanceid</b></tt>|int|\c R|\c $local:job_instanceid|the job instance ID
+    |job|\c state|\a any|any|\c RW|\c $state:key|the value of the given key in the job's state hash (used for \
+        recovery state; cleared when the job gets a @ref OMQ::StatComplete "COMPLETE" status)
+    |job|\c state|<tt><b>*</b></tt>|*hash|\c R|\c $state:*|the entire job state hash (used for recovery state; \
+        cleared when the job gets a @ref OMQ::StatComplete "COMPLETE" status)
+    |service|\c info|\a any|any|\c RW|\c $info:key|the value of the given key in the service info hash (return value \
+        of @ref OMQ::UserApi::Service::ServiceApi::getServiceInfo() "ServiceApi::getServiceInfo()")
+    |service|\c info|<tt><b>*</b></tt>|*hash|\c R|\c $info:*|the entire job info hash (return value of \
+        @ref OMQ::UserApi::Service::ServiceApi::getServiceInfo() "ServiceApi::getServiceInfo()")
+    |service|\c local|<tt><b>servicetype</b></tt>|string|\c R|\c $local:servicetype|the service type: \c "user" or \
+        \c "system"
+    |service|\c state|\a any|any|\c RW|\c $state:key|the value of the given key in the service's state hash
+    |service|\c state|<tt><b>*</b></tt>|*hash|\c R|\c $state:*|the entire service state hash
+    |workflow|\c dynamic|\a any|any|\c RW|\c $dynamic:order.ID|the given value from the workflow order's \
+        @ref dynamicdata "dynamic data" hash; dot notation accepted
+    |workflow|\c dynamic|<tt><b>*</b></tt>|*hash|\c R|\c $dynamic:*|the entire @ref dynamicdata "dynamic data" hash
+    |workflow|\c feedback|\a any|any|\c W|\c $feedback:key|provides the name of the key that the given output data \
+        value will be saved to in the parent order; only valid for child orders in a subworkflow hierarchy; each \
+        feedback key value is subject to recursive template substitution with \
+        @ref OMQ::UserApi::UserApi::expandTemplatedValue() "UserApi::expandTemplatedValue()"
+    |workflow|\c info|\a any|any|\c RW|\c $info:key|the value of the given key in the \
+        @ref workflowexecutioninstanceinfo "workflow info hash" with an additional \c step key containing the return \
+        value of @ref OMQ::UserApi::Workflow::WorkflowApi::getStepInfo() "WorkflowApi::getStepInfo()"
+    |workflow|\c info|<tt><b>*</b></tt>|*hash|\c R|\c $info:*|the entire hash consisting of the \
+        @ref workflowexecutioninstanceinfo "workflow info hash" with an additional \c step key containing the return \
+        value of @ref OMQ::UserApi::Workflow::WorkflowApi::getStepInfo() "WorkflowApi::getStepInfo()"
+    |workflow|\c keys|\a any|any|\c RW|\c $keys:order_id|the value of the given workflow @ref wf_keylist "order key"; \
+        each order key value is subject to recursive template substitution with \
+        @ref OMQ::UserApi::UserApi::expandTemplatedValue() "UserApi::expandTemplatedValue()"
+    |workflow|\c local|<tt><b>execid</b></tt>|int|\c R|\c $local:execid|the workflow execution instance ID
+    |workflow|\c local|<tt><b>stepname</b></tt>|string|\c R|\c $local:stepname|the step name
+    |workflow|\c local|<tt><b>stepversion</b></tt>|string|\c R|\c $local:stepversion|the step version
+    |workflow|\c local|<tt><b>stepid</b></tt>|int|\c R|\c $local:stepid|the step ID
+    |workflow|\c local|<tt><b>ind</b></tt>|int|\c R|\c $local:ind|the step index value
+    |workflow|\c local|<tt><b>workflow_instanceid</b></tt>|int|\c R|\c $local:workflow_instanceid|the workflow \
+        instance ID
+    |workflow|\c sensitive|<i>skey</i><tt>.</tt><i>svalue</i><tt>.</tt>...|any|\c RW|\
+        \c $sensitive:taxid.xxxx.address|the given value from the workflow order's \
+        @ref order_sensitive_data "sensitive data" hash; dot notation accepted; the first two components of the \
+        value are the sensitive data key and the sensitive data value
+    |workflow|\c sensitive-alias|<i>alias</i><tt>.</tt>...|any|\c RW|\c $sensitive-alias:{cust-1.address}|the given \
+        value from the workflow order's @ref order_sensitive_data "sensitive data" hash with the given alias; dot \
+        notation accepted; the first component of the value is the sensitive data alias value
+    |workflow|\c static|\a any|any|\c R|\c $static:order.ID|the given value from the workflow order's \
+        @ref staticdata "static data" hash; dot notation accepted
+    |workflow|\c static|<tt><b>*</b></tt>|*hash|\c R|\c $static:*|the entire @ref staticdata "static data" hash
+    |workflow|\c step|\a any|any|\c RW|\c $step:{order-data.address}|the given value from the current step's \
+        @ref stepdata "step data" hash; dot notation accepted
+    |workflow|\c step|<tt><b>*</b></tt>|*hash|\c R|\c $step:*|the entire @ref stepdata "step data" hash
+    |workflow|\c temp|\a any|any|\c RW|\c $temp:order.ID|the given value from the workflow order's \
+        @ref tempdata "temporary data" hash; dot notation accepted
+    |workflow|\c temp|<tt><b>*</b></tt>|*hash|\c R|\c $temp:*|the entire @ref tempdata "temporary data" hash
+
+    @note
+    - in each of the examples above the value could be encosed in curly brackets, ex:
+      \c "$static:{step.order.address}"; strings with characters outside the acceptable range (<tt>[a-zA-Z_0-9]</tt>)
+      must be enclosed with curly brackets; ex: \c "$static:{account-1.customer-name}"
+    - most template strings are readable meaning they can be used in any context where template variable substitution
+      is performed; writable template strings marked with <b><tt>W</tt></b> above can also be used with
+      @ref OMQ::UserApi::UserApi::updateOutputData() "UserApi::updateOutputData()"
+
+    @subsubsection bb-tmpl-python-expr $python-expr:{} Template
+
+    \c $python-expr:{...} first resolves the argument expression as a template string.  If the argument expression does
+    not resolve to a string value, then the argument is returned without further evaluation.
+
+    If the argument expression resolves to a string, then this string is evaluated as a %Python expression, and the
+    resulting value is returned as the result.
+
+    @subsubsection bb-tmpl-qore-expr $qore-expr:{} Template
+
+    \c $qore-expr:{...} first resolves the argument expression as a template string.  If the argument expression does
+    not resolve to a string value, then the argument is returned without further evaluation.
+
+    If the argument expression resolves to a string, then this string is evaluated as a %Qore expression, and the
+    resulting value is returned as the result.
+
+    In the following examples, templates are evaluated with a local context with the following keys:
+    @verbatim
+{
+    "intent_name": "i.400.userID-correct",
+    "project_id": "02724364-f352-46a2-9279-083989c53360",
+    "session_id": "769113b8-ee2a-4495-acf3-b12bf4709790",
+    "timestamp": 1635493630000,
+    "timestamp_str": "Fri Oct 29 09:47:10 CEST+0200",
+    "parameters": {
+        "p_inbound_user_id": "SJ3ZA",
+        "yes": "ja"
+    }
+}
+    @endverbatim
+
+    @par Example 1
+    The following template:
+    @verbatim $qore-expr:{$local:parameters.p_inbound_user_id.val()} @endverbatim
+    will be first subjected to template substitution, resulting in the following string:
+    @verbatim "SJ3ZA".val() @endverbatim
+    which will then be evaluated as a %Qore expression, resulting in the result \c True.
+
+    @par Example 2
+    If on the other hand, the following template would be evaluated in the same context as in the previous example:
+    @verbatim $qore-expr:{$local:parameters.p_outbound_user_id.val()} @endverbatim
+    This results in the following string after template substitution:
+    @verbatim "".val() @endverbatim
+    which will then be evaluated as a %Qore expression, resulting in the result \c False.
+
+    @see
+    - @ref Qore::zzz8stringzzz9::val()
+    - @ref bb-tmpl-qore-expr-value
+
+    @subsubsection bb-tmpl-qore-expr-value $qore-expr-value:{} Template
+
+    \c $qore-expr-value:{...} first resolves the argument expression as a template string and then converts the
+    resulting value to a string value that can be interpreted as the same value by %Qore for use in a
+    @ref bb-tmpl-qore-expr
+
+    <b>Conversion Table</b>
+
+    |!Type|!Example|!Description
+    |<tt><b>string</b></tt>|<tt>&quot;a \\&quot;string\\&quot;&quot;</tt>|Strings are double quoted; internal double \
+        quotes are escaped
+    |<tt><b>bool</b></tt>|\c True|Converted to \c True or \c False
+    |<tt><b>int</b></tt>|\c 100|Direct conversion
+    |<tt><b>float</b></tt>|\c 100.1|Direct conversion
+    |<tt><b>number</b></tt>|\c 100.1n|Direct conversion
+    |<tt><b>binary</b></tt>|<tt>&lt;a125f3&gt;</tt>|Conversion to a string of hex digits surrounded by angle brackets
+    |<tt><b>date</b></tt>|\c 2021-10-30T09:25:44.255073+02:00|Conversion to ISO-8601 format, preserves microseconds \
+        and time zone
+    |<tt><b>hash</b></tt>|<tt>{"key1": 1, "key2": "two", "key3": 3.0}</tt>|Conversion to a %Qore hash string
+    |<tt><b>list</b></tt>|<tt>(1, "two", 3.0)</tt>|Conversion to a %Qore list string
+    |<tt><b>NOTHING</b></tt>|\c NOTHING|Direct conversion
+    |<tt><b>NULL</b></tt>|\c NULL|Direct conversion
+
+    The output value of this template expression is a string value that can be parsed with the @ref bb-tmpl-qore-expr that
+    will result in the same value again; this allows complex values to be used with the @ref bb-tmpl-qore-expr
+
+    @par Example
+    In the following example, the template is evaluated with a local context with the following keys:
+    @verbatim
+{
+    "intent_name": "i.400.userID-correct",
+    "project_id": "02724364-f352-46a2-9279-083989c53360",
+    "session_id": "769113b8-ee2a-4495-acf3-b12bf4709790",
+    "timestamp": 1635493630000,
+    "timestamp_str": "Fri Oct 29 09:47:10 CEST+0200",
+    "parameters": {
+        "p_inbound_user_id": "SJ3ZA",
+        "yes": "ja"
+    }
+}
+    @endverbatim
+    The following template:
+    @verbatim $qore-expr-value:{$local:parameters} @endverbatim
+    will be first subjected to template substitution, resulting in the following string:
+    @verbatim {"p_inbound_user_ud": "SJ3ZA", "yes": "ja"} @endverbatim
+
+    @subsection bb_persistent_storage Universal Persistent Storage
+
+    <tt><b>$pstate:</b></tt> can be used for persistent storage in any interface:
+    - for workflows, <tt><b>\$pstate:</b></tt> is equal to <tt><b>\$dynamic:</b></tt>\n
+    - for services, <tt><b>\$pstate:</b></tt> is unique persistent storage for services\n
+    - for jobs, <tt><b>\$pstate:</b></tt> is unique and different to <tt><b>\$state:</b></tt> data, which is
+      purged when a job instance gets a @ref OMQ::StatComplete "COMPLETE" status
+
+    <tt><b>$pstate:</b></tt> is serialized and stored in the database when updated and therefore is persistent across
+    Qorus restarts.
+
+    @subsubsection bb-tmpl-transient $transient:{} Template
+
+    Transient data is like a global variable for a @ref finite_state_machines "finite state machine"; any value
+    assigned to a \c $transient:{} output location can be retrieved in any
+    @ref fsm_block_states "finite state machine block".
+
+    @note
+    - Transient data is not persistent outside of the interface execution context in which it's run
+    - \c $transient:{} data is thread local; @ref finite_state_machines "FSMs" are normally executed in a single
+      thread with the exception of @ref fsm_data_pipeline_states "data pipelines"; data pipelines have a dedicated I/O
+      thread assigned to each queue, including the main queue, therefore \c $transient:{} data is only readable for
+      \c $transient:{} data written in the same pipeline queue; \c $transient:{} data written in the FSM or in another
+      pipeline queue is only readable in the same thread where is was written.  In particular, \c $transient:{} data
+      written in the FSM cannot be read in a pipeline processor, and \c $transient:{} data written in a pipeline
+      processor cannot be read in the FSM itself.
+
+    @subsubsection bb-tmpl-var $var:{} Template
+
+    Var data is like a @ref fsm_block_states "finite-state-machine-block-local" variable; any value assigned to a
+    \c $var:{} output location is local to the @ref fsm_block_states "finite state machine block".
+
+    @note \c $var:{} data is thread local; @ref finite_state_machines "FSMs" are normally executed in a single thread
+    with the exception of @ref fsm_data_pipeline_states "data pipelines"; data pipelines have a dedicated I/O thread
+    assigned to each queue, including the main queue, therefore \c $var:{} data is only readable for \c $var:{} data
+    written in the same pipeline queue; \c $var:{} data written in the FSM or in another pipeline queue is only
+    readable in the same thread where is was written.  In particular, \c $var:{} data written in the FSM cannot be
+    read in a pipeline processor, and \c $var:{} data written in a pipeline processor cannot be read in the FSM
+    itself.
+
+    @subsection bb_var_and_transient_difference The Difference Between var and transient Data
+
+    <tt><b>$%transient:</b></tt> differs from <tt><b>$var:</b></tt> in that each block in a
+    @ref finite_state_machines "finite state machine" has its own copy of \c <tt><b>$var:</b></tt> data, while
+    <tt><b>$%transient:</b></tt> data is persistent in a single interface action across
+    @ref fsm_block_states "finite state machine blocks".
+
+    In other words, <tt><b>$%transient:</b></tt> data is similar to a global variable, while <tt><b>$var:</b></tt>
+    data is more like a local variable in the @ref fsm_block_states "finite state machine block" where it's used.
+
+    @section file_locations File Locations
+
+    The location types in the following table are supported.
+
+    <b>Location Types</b>
+    |!Scheme|!Example|!Description
+    |<tt><b>%file://</b><i>file_location</i></tt>|\
+        <tt>%file://$OMQ_DIR/user/file.txt</tt>|<tt><i>file_location</i></tt> provides a location on the local file \
+        system; environment variable substitution is performed
+    |<tt><b>ftp(s)://</b><i>host[:port]/path</i></tt>|<tt>%ftps://my.host:8888/path/file</tt>|specifies a remote \
+        file on an FTP server (\c ftp is unencrypted, \c ftps is FTP with encryption extensions; not to be confused \
+        with \c sftp)
+    |<tt><b>http(s)://</b><i>host[:port]/uri_path</i></tt>|<tt>%https://my.host:8888/path/file</tt>|specifies a file \
+        that can be retrieved as the response message body of an HTTP \c GET request
+    |<tt><b>resource://</b>[[<i>remote</i>:]<i>service</i>:]<i>resource_path</i></tt>|\
+        <tt>resource://my-service:resource-path/resource-name.html</tt>|specifies a \
+        @ref service_file_resources "service file resource" file\n\
+        - <tt>[<i>remote</i>:]</tt>: gives the name of an optional @ref remoteconn "remote Qorus connection"\n\
+        - <tt>[<i>service</i>:]</tt>: gives the name of the service that has the given \
+          @ref service_file_resources "service file resource"
+    |<tt><b>rest(s)://</b><i>host[:port]/uri_path</i></tt>|<tt>%rests://my.host:8888/path/file</tt>|specifies a file \
+        that can be retrieved as the string or binary response message body of a REST \c GET request
+    |<tt><b>%sftp://</b><i>host[:port]/path</i></tt>|<tt>%sftp://my.host:8888/path/file</tt>|specifies a remote file \
+        on an SFTP server
+
+    @note
+    - <b><tt>ftps</tt></b> (<a href="https://en.wikipedia.org/wiki/FTPS">FTP Secure</a>) is not the same as
+    <b><tt>sftp</tt></b> (<a href="https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol">SSH FTP</a>).
+    - <tt><i>service</i>:</tt> is not required in <tt><b>resource://</b></tt> locations when the resource is
+    retrieved from the same service; in this case the given resource will be retrieved from the current service,
+    however in all other cases, <tt><i>service</i>:</tt> is required or a \c LOCATION-ERROR exception will be thrown.
+
+    Locations are used in the following APIs:
+    - \b %Python: @ref OMQ::UserApi::UserApi::getBinaryFileFromLocation() "UserApi.getBinaryFileFromLocation()"
+    - \b %Python: @ref OMQ::UserApi::UserApi::getTextFileFromLocation() "UserApi.getTextFileFromLocation()"
+    - \b Java: @ref OMQ::UserApi::UserApi::getBinaryFileFromLocation() "qore.OMQ.UserApi.UserApi.getBinaryFileFromLocation()"
+    - \b Java: @ref OMQ::UserApi::UserApi::getTextFileFromLocation() "qore.OMQ.UserApi.UserApi.getTextFileFromLocation()"
+    - \b %Qore: @ref OMQ::UserApi::UserApi::getBinaryFileFromLocation() "UserApi::getBinaryFileFromLocation()"
+    - \b %Qore: @ref OMQ::UserApi::UserApi::getTextFileFromLocation() "UserApi::getTextFileFromLocation()"
+*/

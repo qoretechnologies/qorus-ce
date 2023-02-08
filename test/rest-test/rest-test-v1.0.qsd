@@ -1,0 +1,236 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: rest-test
+# serviceversion: 1.0
+# remote: true
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# servicedesc: REST test service
+# serviceauthor: Qore Technologies, s.r.o.
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# TAG: qorus-example: true
+# ENDSERVICE
+
+# name: init
+# desc: initializes the rest-test service
+%requires DataStreamRequestHandler
+
+hashdecl MyLocalHashdecl {
+    bool test;
+}
+
+const Defaults = {
+    "path": "rest-test",
+};
+
+hash<auto> sub get_options() {
+    # get options for service
+    *hash<auto> props = UserApi::propGet(ServiceApi::getServiceInfo().name);
+    return map {$1: props{$1} ?? Defaults{$1}}, keys Defaults;
+}
+
+class TestDataStream inherits AbstractDataStreamRequestHandler {
+    private {
+        const Reql = (
+            {"a": 1, "b": 2},
+            {"x": 3, "y": 4},
+        );
+
+        list<auto> reql = Reql;
+        list<auto> body;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractDataStreamRequestHandler(cx, ah) {
+    }
+
+    private nothing recvDataImpl(auto data) {
+        UserApi::logInfo("TEST DATA STREAM RECV: %y", data);
+        body += data;
+    }
+
+    private auto sendDataImpl() {
+        UserApi::logInfo("TEST DATA STREAM SEND: %y", reql[0]);
+        return shift reql;
+    }
+}
+
+class EchoDataStream inherits AbstractDataStreamRequestHandler {
+    private {
+        list<auto> data = ();
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractDataStreamRequestHandler(cx, ah) {
+    }
+
+    private nothing recvDataImpl(auto data) {
+        UserApi::logInfo("TEST DATA STREAM RECV: %y", data);
+        self.data += data;
+    }
+
+    private auto sendDataImpl() {
+        UserApi::logInfo("TEST DATA STREAM SEND: %y", data[0]);
+        return shift data;
+    }
+}
+
+class TestStream inherits AbstractRestStreamRequestHandler {
+    private {
+        const Reql = (
+            "\"test",
+            "-string\"",
+        );
+
+        list<auto> reql = Reql;
+        string body;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractRestStreamRequestHandler(cx, ah) {
+    }
+
+    hash<auto> getResponseHeaderMessageImpl() {
+        return {
+            "code": 200,
+            "hdr": {
+                "Content-Type": MimeTypeYaml,
+                "Transfer-Encoding": "chunked",
+            },
+        };
+    }
+
+    nothing recvImpl(hash v) {
+        UserApi::logInfo("TEST STREAM RECV: %y", v);
+        if (v.data)
+            body += v.data;
+        else
+            UserApi::logInfo("TEST STREAM RECV DATA: %y", body);
+    }
+
+    auto sendImpl() {
+        UserApi::logInfo("TEST STREAM SEND: %y", reql[0]);
+        return shift reql;
+    }
+}
+
+class WaitRestClass inherits AbstractRestClass {
+    string name() {
+        return "wait";
+    }
+
+    hash<auto> put(hash<auto> cx, *hash<auto> ah) {
+        int secs = ah.secs ?? 10;
+        UserApi::logInfo("wait PUT received with args: %y; waiting %d seconds", ah, secs);
+
+        if (kill_on_wait) {
+            hash<auto> h = ServiceApi::getServiceInfo();
+            system("qctl kill qsvc-user-" + h.name + "-v" + h.version + "-" + h.serviceid + "-stateful");
+        }
+
+        UserApi::sleep(secs);
+        return RestHandler::makeResponse(200, {
+            "method": cx.hdr.method,
+            "info": "OK",
+            "args": ah,
+            "secs": secs,
+        });
+    }
+}
+
+class TestRestClass inherits AbstractRestClass {
+    string name() {
+        return "test";
+    }
+
+    hash<auto> get(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("GET received with args: %y", ah);
+        return RestHandler::makeResponse(200, {"method": cx.hdr.method, "info": "OK", "args": ah});
+    }
+
+    hash<auto> put(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("PUT received with args: %y", ah);
+        return RestHandler::makeResponse(200, {"method": cx.hdr.method, "info": "OK", "args": ah});
+    }
+
+    hash<auto> post(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("POST received with args: %y", ah);
+        return RestHandler::makeResponse(200, {"method": cx.hdr.method, "info": "OK", "args": ah});
+    }
+
+    hash<auto> del(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("DELETE received with args: %y", ah);
+        return RestHandler::makeResponse(200, {"method": cx.hdr.method, "info": "OK", "args": ah});
+    }
+
+    hash<auto> getIssue3216(hash<auto> cx, *hash<auto> ah) {
+        auto rv = omqservice.user."http-test".get_hashdecl(<MyLocalHashdecl>{"test": True});
+        ServiceApi::logInfo("issue 3216: %y (%s)", rv, rv.fullType());
+        return RestHandler::makeResponse(200, rv);
+    }
+
+    AbstractRestStreamRequestHandler streamGetStream(hash<auto> cx, *hash<auto> ah) {
+        switch (ah.stream) {
+            case "data": return new TestDataStream(cx, ah);
+            case "echo": return new EchoDataStream(cx, ah);
+            default: return new TestStream(cx, ah);
+        }
+    }
+
+    AbstractRestStreamRequestHandler streamPutStream(hash<auto> cx, *hash<auto> ah) {
+        switch (ah.stream) {
+            case "data": return new TestDataStream(cx, ah);
+            case "echo": return new EchoDataStream(cx, ah);
+            default: return new TestStream(cx, ah);
+        }
+    }
+
+    AbstractRestStreamRequestHandler streamPostStream(hash<auto> cx, *hash<auto> ah) {
+        switch (ah.stream) {
+            case "data": return new TestDataStream(cx, ah);
+            case "echo": return new EchoDataStream(cx, ah);
+            default: return new TestStream(cx, ah);
+        }
+    }
+}
+
+class MyRestHandler inherits AbstractServiceRestHandler {
+    constructor(string path) : AbstractServiceRestHandler(path, False, new OMQ::PermissiveAuthenticator()) {
+        addClass(new TestRestClass());
+        addClass(new WaitRestClass());
+    }
+
+    hash<auto> put(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("root PUT received with args: %y", ah);
+        return RestHandler::makeResponse(200, {"root": True, "method": cx.method, "info": "OK", "args": ah});
+    }
+}
+
+sub init() {
+    our bool kill_on_wait = False;
+    our hash<auto> stats = ("log": ());
+    hash<auto> opt = get_options();
+    UserApi::logInfo("options: %N", opt);
+
+    # create and bind handler
+    MyRestHandler lh(opt.path);
+    ServiceApi::bindHttp(lh);
+}
+# END
+
+# desc: provides information about the service
+hash sub info() {
+    return stats;
+}
+# END
+
+# desc: returns service info
+hash sub svcInfo() {
+    return ServiceApi::getServiceInfo();
+}
+# END
+
+# desc: sets a flag to cause the service to kill itself on the next REST wait call
+string sub kill_on_wait() {
+    kill_on_wait = True;
+    return "OK";
+}
+# END

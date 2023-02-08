@@ -1,0 +1,23 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: invalid-test-mapper
+# version: 1.0
+# desc: invalid test mapper
+# type: Mapper
+# author: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: input: (
+    "field-i1": {},
+)
+
+OPTION: output: (
+    "FIELD-I1": {},
+    "FIELD-I2": {},
+)
+
+FIELD:FIELD-1: ("name": "")
+FIELD:FIELD-2: "x"
+# END

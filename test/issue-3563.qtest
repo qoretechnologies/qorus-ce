@@ -1,0 +1,57 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3563Test
+
+class Issue3563Test inherits QorusJobTest {
+    public {}
+
+    constructor() : QorusJobTest("issue-3563-pipeline", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # clear data before test
+        qrest.put("jobs/issue-3563-pipeline/setPersistentStateData", {"data": NOTHING});
+        RunJobResult job(OMQ::StatComplete);
+        exec(job);
+        hash<auto> pstate = qrest.get("jobs/issue-3563-pipeline/persistent-state");
+        assertEq({
+            "data": {
+                "staticdata": {
+                    "orders": {
+                        "1": {
+                            "id": 10,
+                            "currency_to_buy": "USD",
+                            "currency_to_sell": "EUR",
+                            "amount": 100,
+                        },
+                        "2": {
+                            "id": 11,
+                            "currency_to_buy": "CZK",
+                            "currency_to_sell": "EUR",
+                            "amount": 600,
+                        },
+                    },
+                    "exchange_rates": {
+                        "EUR": 1.0,
+                        "CZK": 25.0,
+                        "USD": 22.0,
+                    },
+                },
+            },
+        }, pstate);
+    }
+}

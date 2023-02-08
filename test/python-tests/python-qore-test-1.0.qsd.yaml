@@ -1,0 +1,25 @@
+# This is a generated file, don't edit!
+type: service
+name: python-qore-test
+desc: Test using Qore connectors in Python
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: PythonQoreTest
+classes:
+  - QoreConnectorTest
+groups:
+  - regression
+  - test
+lang: python
+version: "1.0"
+servicetype: USER
+code: python-qore-test-1.0.qsd.py
+class-connections:
+    Connection_1:
+      - class: QoreConnectorTest
+        connector: test
+        trigger: test
+methods:
+  - name: test
+    desc: test method

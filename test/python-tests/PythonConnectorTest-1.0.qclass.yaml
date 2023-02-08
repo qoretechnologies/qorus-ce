@@ -1,0 +1,13 @@
+# This is a generated file, don't edit!
+type: class
+name: PythonConnectorTest
+desc: Python connector test
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: test
+    method: test
+    type: input-output
+lang: python
+version: "1.0"
+code: PythonConnectorTest-1.0.qclass.py

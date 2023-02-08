@@ -1,0 +1,277 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#
+# This test does not check data correctness. Its purpose is to
+# test concurrent DB access and trigger/table locking
+#
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires QUnit
+%requires SqlUtil
+%requires QorusClientCore
+
+
+%include ../Classes/SchemaSnapshots.qc
+
+%exec-class Main
+
+our SQLInterface sqlif;
+
+class MockEvents {
+    hash getEventsOr(int event_id, list event_filter, timeout event_timeout_ms) {
+        return {
+            "events": (1,2,), # just to provide events.size() as true
+            "lastid": event_id++, # always return a value which will continue the loop
+        };
+    }
+}
+
+our hash Qorus;
+
+SqlUtil::AbstractTable sub get_sql_table_system_trans(auto _, string tname) {
+    return new SqlUtil::Table(sqlif.omqp, tname).getTable();
+}
+
+sub qlog(auto level, string msg) {
+    printf("%n: %d: %s\n", now_ms(), level, vsprintf(msg, argv));
+}
+
+
+
+class Main inherits QUnit::Test {
+    private {
+        const STATUSES = ( "I", "C", "E", "A", "W", "V", "N", "X", "R", "B", "S", );
+        const RUN_MINUTES = 5;
+        const OBJECT_ID = -20;
+
+        const GETOPT_OPTS = Opts + (
+            "conn_count": "conncount=i",
+            );
+
+
+        AbstractDatasource m_ds;
+
+        bool m_run = True;
+        bool m_consumer_run = True;
+        Counter m_counter();
+        Counter m_consumer_counter();
+        int m_dml_count = 0;
+        int m_target_count = 0;
+    }
+
+    constructor() : QUnit::Test("SchemaSnapshotsStress test", "1.0", \ARGV, GETOPT_OPTS)
+    {
+        QorusClient::init2();
+
+        Qorus = {
+            "events" : new MockEvents(),
+        };
+
+        sqlif = omqclient.getSQLIF();
+
+        # re-create datasource pool from options systemdb, but enforce our
+        # requested connection count (--conncount=XX)
+        hash dsconfig = sqlif.omqp.getConfigHash();
+        dsconfig.options.min = m_options.conn_count ?? 20;
+        dsconfig.options.max = dsconfig.options.min;
+
+        m_ds = new DatasourcePool(dsconfig);
+        sqlif.omqp = m_ds; # inject our massive DSP into sqlif
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # Workflows
+        addTestCase("performance test", \testPerformance());
+
+        set_return_value(main());
+    }
+
+    private usageIntern() {
+        QUnit::TestReporter::usageIntern(20);
+        printOption("--conncount=ARG", "set count of DB connections to be created. Defaults to 20", 20);
+    }
+
+    globalSetUp() {
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        # just to clear ot in advance just to be sure...
+        globalTearDown();
+
+        # fake the metadata
+        m_ds.exec("insert /* SchemaSnapshotsStress.qtest */ into workflows
+                    (workflowid, name, version, description, author,
+                     remote, open, autostart, manual_autostart,
+                     enabled, sla_threshold, manual_sla_threshold, deprecated
+                    )
+                    values
+                    (%v, %v, %v, %v, %v,
+                     1, 1, 1, 1,
+                     1, 1, 1, 0
+                    )
+                  ", OBJECT_ID, "SNAPSHOT-PERFORMANCE-TEST-FAKE-WF", "1.0", "an empty fake wf", "qtest");
+    }
+
+    globalTearDown() {
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        m_ds.exec("delete /* SchemaSnapshotsStress.qtest */ from workflow_instance_stats
+                    where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete /* SchemaSnapshotsStress.qtest */ from workflow_instance
+                    where workflowid = %v", OBJECT_ID);
+        m_ds.exec("delete /* SchemaSnapshotsStress.qtest */ from workflow_instance_stats_stage
+                    where objectid = %v", OBJECT_ID);
+        m_ds.exec("delete /* SchemaSnapshotsStress.qtest */ from workflows
+                    where workflowid = %v", OBJECT_ID);
+    }
+
+    private logger(string msg) {
+        printf("%s: TID: %02d: %s\n", format_date("YYYYMMDD HH:mm:DD:SS", now()), gettid(), vsprintf(msg, argv));
+    }
+
+    # this one runs in a background thread
+    private sourceWorker(int id_min, int id_max) {
+        hash id_map = hash();
+
+        logger("thread started for %d:%d", id_min, id_max);
+        m_counter.inc();
+        on_exit {
+            logger("thread stopped for %d:%d", id_min, id_max);
+            #logger("statuses: %n", id_map);
+            m_counter.dec();
+        }
+
+        int diff = id_max - id_min;
+
+        while (m_run) {
+            on_success m_ds.commit();
+            on_error m_ds.rollback();
+
+            string status_rand = STATUSES[rand() % STATUSES.size()];
+            int id_rand = rand() % diff + id_min;
+
+            m_dml_count++;
+
+            if (id_map.hasKey(id_rand)) {
+                sourceUpdate(id_rand, status_rand);
+                id_map{id_rand}++;
+            }
+            else {
+                sourceInsert(id_rand);
+                id_map{id_rand} = 1;
+            }
+        }
+    }
+
+    private sourceInsert(int id) {
+        m_ds.exec("insert /* SchemaSnapshotsStress.qtest */ into workflow_instance
+                   (workflow_instanceid, workflowid, workflowstatus, status_sessionid,
+                    priority, started, synchronous, modified
+                   )
+                   values
+                   (%v, %v, 'Y', 0,
+                    1, %v, 0, %v
+                   )
+                ", id, OBJECT_ID, now(), now());
+    }
+
+    private sourceUpdate(int id, string status) {
+        m_ds.exec("update /* SchemaSnapshotsStress.qtest */ workflow_instance
+                    set workflowstatus = %v where workflow_instanceid = %v",
+                status, id);
+    }
+
+    private consumerWorker() {
+        logger("thread started for consumerWorker");
+        m_consumer_counter.inc();
+        on_exit {
+            logger("thread stopped for consumerWorker");
+            m_consumer_counter.dec();
+        }
+
+        WfSchemaSnapshotManager manager();
+        int count = 0;
+
+        while (m_consumer_run) {
+            on_success m_ds.commit();
+            logger("consumer run started");
+            int ret = manager.runImplementationInDb();
+            m_target_count += ret;
+            logger("consumer lines processed: %d", ret);
+            logger("consumer lines total: %d", m_target_count);
+            logger("Source DML count: %d", m_dml_count);
+        }
+
+        printf("consumerWorker total count: %d\n", count);
+    }
+
+    private testPerformance() {
+        qorusMustBeDown();
+
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        int thread_count = m_ds.getConfigHash().options.max - 1;
+
+        # generate concurrent source table changes
+        for (int i = -1; i > -thread_count; i--) {
+            int id_min = 1000 * i;
+            int id_max = id_min + 10;
+            background sourceWorker(id_min, id_max);
+        }
+
+        sleep(2s);
+        # run one thread for consumer as in Qorus
+        background consumerWorker();
+
+        for (int i = 1; i <= RUN_MINUTES; i++) {
+            logger("running minutes: %d of %d", i, RUN_MINUTES);
+            sleep(1m);
+        }
+
+        m_run = False;
+        m_counter.waitForZero();
+
+        m_consumer_run = False;
+        m_consumer_counter.waitForZero();
+
+        # to process pending data before tearDown()
+        WfSchemaSnapshotManager manager();
+        int ret = manager.runImplementationInDb();
+        logger("pending lines processed: %d", ret);
+        m_target_count += ret;
+        logger("Target DML count: %d", m_target_count);
+        logger("Source DML count: %d", m_dml_count);
+
+        int snap_count = m_ds.selectRow("select sum(total_count) as cnt from workflow_instance_stats where objectid = %v",
+                                        OBJECT_ID).cnt;
+        logger("Target real count: %d", snap_count);
+        int src_count = m_ds.selectRow("select count(1) as cnt from workflow_instance where workflowid = %v", OBJECT_ID).cnt;
+
+        assertEq(src_count, snap_count, "source and target count must fit");
+    }
+
+    private qorusMustBeDown() {
+        try {
+            qrest.get("remote");
+        }
+        catch (hash ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR") {
+                return;
+            }
+            rethrow;
+        }
+        throw "QORUS-IS-RUNNING", "This test can run only with Qorus off";
+    }
+
+} # class Main

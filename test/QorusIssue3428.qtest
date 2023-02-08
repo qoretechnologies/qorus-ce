@@ -1,0 +1,35 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3428
+
+class Issue3428 inherits Test {
+    private {
+    }
+
+    constructor(): Test("Issue3428", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        data d = UserApi::getTextFileFromLocation("https://qoretechnologies.com/manual/qorus/current/qorus/index.html");
+        assertEq(Type::String, d.type());
+        d = UserApi::getBinaryFileFromLocation("https://qoretechnologies.com/manual/qorus/current/qorus/index.html");
+        assertEq(Type::Binary, d.type());
+
+        d = UserApi::getTextFileFromLocation("resource://multi-soap:multi-soap.wsdl");
+        assertEq(Type::String, d.type());
+        d = UserApi::getBinaryFileFromLocation("resource://multi-soap:multi-soap.wsdl");
+        assertEq(Type::Binary, d.type());
+    }
+}

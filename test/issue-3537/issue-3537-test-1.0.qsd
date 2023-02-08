@@ -1,0 +1,12 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3537Test inherits QorusService {
+    hash<Issue3537> get(int num) {
+        return <Issue3537>{
+            "code": num,
+        };
+    }
+}

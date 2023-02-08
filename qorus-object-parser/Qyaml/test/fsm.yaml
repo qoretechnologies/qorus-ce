@@ -1,0 +1,54 @@
+type: fsm
+name: fsm
+desc: fsm
+states:
+  initState:
+    id: a1
+    name: initState
+    initial: true
+    action:
+      type: pipeline
+      value: pipeline1
+    transitions:
+      - state: state2
+        condition: 84/2 != 43
+      - state: state3
+        condition:
+          class: Issue3485Conditional
+          connector: condition2
+  state2:
+    id: a2
+    name: state2
+    action:
+      type: pipeline
+      value: pipeline1
+    transitions:
+      - state: state4
+        condition:
+          class: Issue3485Conditional
+          connector: condition
+  state3:
+    id: a3
+    name: state3
+    transitions:
+      - state: state6
+        condition: round(nlog(1000) + 500) == 507
+      - state: state5
+  state4:
+    id: a4
+    name: state4
+    action:
+      type: connector
+      value:
+        class: Issue3485Action
+        connector: action1
+  state5:
+    id: a5
+    name: state5
+    action:
+      type: mapper
+      value: asdsad:1.0
+  state6:
+    id: a6
+    type: fsm
+    name: fsm2

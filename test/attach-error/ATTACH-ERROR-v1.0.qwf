@@ -1,0 +1,21 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = (
+    "attach_error_1:1.0",
+);
+
+$workflows."ATTACH-ERROR"."1.0" = (
+    "desc"          : "attach error test workflow",
+    "author"        : "Qore Technologies, sro",
+    "steps"	    : $steps,
+    "attach"        : "attach_error:1.0",
+    "groups"        : "test",
+    );
+

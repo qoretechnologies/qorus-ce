@@ -1,0 +1,31 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: regression-out-sql-statement
+# version: 1.0
+# desc: Regression test for QorusSqlStatementOutboundMapper
+# type: QorusSqlStatementOutboundMapper
+# author: Petr Vanek (Qore Technologies, sro)
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: datasource: "omquser"
+OPTION: table:      "regression_example"
+OPTION: sh : ( "columns" : ( "uuid" ),
+               "where" : ( "in_transit" : M_BIND,
+                           "qorus_wfiid" : ( "^bind^" : "qorus_wfiid"),
+                         ),
+             )
+OPTION: input: (
+    "uuid": ("desc": "test"),
+)
+OPTION: output: (
+    "uuid_mapped": {},
+    "some_const": {},
+    "rtt": {},
+)
+OPTION: runtime: ("runtime-test": "file")
+
+FIELD: "uuid_mapped"        : "uuid"
+FIELD: "some_const"         : ("constant" : "foobar")
+FIELD: "rtt"                : ("runtime": "runtime-test")
+# END

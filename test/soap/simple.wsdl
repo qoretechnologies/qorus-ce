@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<wsdl:definitions xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:soapenc="http://schemas.xmlsoap.org/soap/encoding/" xmlns:mime="http://schemas.xmlsoap.org/wsdl/mime/" xmlns:tns="http://qoretechnologies.com/simpletest" xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:soap12="http://schemas.xmlsoap.org/wsdl/soap12/" xmlns:http="http://schemas.xmlsoap.org/wsdl/http/" targetNamespace="http://qoretechnologies.com/simpletest" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/">
+  <wsdl:types>
+    <s:schema elementFormDefault="qualified" targetNamespace="http://qoretechnologies.com/simpletest">
+      <s:element name="SetCompanyLogo">
+	<s:complexType>
+	  <s:all>
+	    <s:element name="name" type="s:string"/>
+	    <s:element name="id" type="s:int"/>
+	  </s:all>
+	</s:complexType>
+      </s:element>
+      <s:element name="SetCompanyLogoResult" type="s:string"/>
+      <s:element name="GetCompanyInfo">
+	<s:complexType>
+	  <s:all>
+	    <s:element name="tickerSymbol" type="s:string"/>
+	  </s:all>
+	</s:complexType>
+      </s:element>
+      <s:element name="GetCompanyInfoResult">
+	<s:complexType>
+	  <s:all>
+	    <s:element name="result" type="s:decimal"/>
+	  </s:all>
+	</s:complexType>
+      </s:element>
+    </s:schema>
+  </wsdl:types>
+
+  <wsdl:message name="m1">
+    <wsdl:part name="body" element="tns:GetCompanyInfo"/>
+  </wsdl:message>
+  
+  <wsdl:message name="m2">
+    <wsdl:part name="body" element="tns:GetCompanyInfoResult"/>
+    <wsdl:part name="docs" type="s:string"/>
+    <wsdl:part name="logo" type="s:base64Binary"/>
+  </wsdl:message>
+
+  <wsdl:message name="m3">
+    <wsdl:part name="body" element="tns:SetCompanyLogo"/>
+    <wsdl:part name="logo" type="s:base64Binary"/>
+  </wsdl:message>
+
+  <wsdl:message name="m4">
+    <wsdl:part name="body" element="tns:SetCompanyLogoResult"/>
+  </wsdl:message>
+
+  <wsdl:portType name="pt1">
+    <wsdl:operation name="getCompanyInfo">
+      <wsdl:input message="tns:m1"/>
+      <wsdl:output message="tns:m2"/>
+    </wsdl:operation>
+    <wsdl:operation name="setCompanyLogo">
+      <wsdl:input message="tns:m3"/>
+      <wsdl:output message="tns:m4"/>
+    </wsdl:operation>
+  </wsdl:portType>
+
+  <wsdl:binding name="b1" type="tns:pt1">
+    <soap12:binding transport="http://schemas.xmlsoap.org/soap/http" style="rpc"/>         
+    <wsdl:operation name="getCompanyInfo">
+      <soap12:operation soapAction="http://example.com/getCompanyInfo"/>
+      <wsdl:input>
+	<soap12:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+	<soap12:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+    <wsdl:operation name="setCompanyLogo">
+      <soap12:operation soapAction="http://example.com/setCompanyLogo"/>
+      <wsdl:input>
+	<soap12:body use="literal"/>
+      </wsdl:input>
+      <wsdl:output>
+	<soap12:body use="literal"/>
+      </wsdl:output>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <wsdl:service name="CompanyInfoService">
+    <wsdl:port name="CompanyInfoPort" binding="tns:b1">
+      <soap12:address location="http://localhost:8001/SOAP/simple"/>
+    </wsdl:port>
+  </wsdl:service>
+
+</wsdl:definitions>

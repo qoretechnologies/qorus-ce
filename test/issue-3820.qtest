@@ -1,0 +1,96 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3390Test
+
+class Issue3390Test inherits QorusPassiveWorkflowTest {
+    public {
+        const Timeout = 10s;
+        const PollInterval = 250ms;
+
+        const WorkflowName = "ISSUE-3820-TEST";
+
+        const InstanceCount = 5;
+    }
+
+    constructor() : QorusPassiveWorkflowTest(WorkflowName, "1.0", \ARGV) {
+        addTestCase("testWorkflow", \testWorkflow());
+        set_return_value(main());
+    }
+
+    testWorkflow() {
+        {
+            if (!qrest.get("workflows/" + WorkflowName + "/remote")) {
+                qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": False});
+
+            doWorkflowTest();
+        }
+
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        # start instances
+        qrest.put("workflows/ISSUE-3820-TEST/setAutostart", {"autostart": 1});
+        on_exit qrest.put("workflows/ISSUE-3820-TEST/setAutostart", {"autostart": 0});
+        # wait for instances to be started
+        waitForCount(1);
+
+        # create orders
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+
+        list<softint> wfiids = map qrest.post("workflows/ISSUE-3820-TEST/createOrder", oh).workflow_instanceid,
+            xrange(InstanceCount);
+
+        map waitForStatus($1), wfiids;
+    }
+
+    private waitForCount(int count) {
+        date timeout = now_us() + Timeout;
+        while (True) {
+            int ec = qrest.get("workflows/ISSUE-3820-TEST/exec_count");
+            if (ec == count) {
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "WORKFLOW-TIMEOUT-ERROR", sprintf("workflow %y did not start",
+                    WorkflowName);
+            }
+            usleep(PollInterval);
+        }
+    }
+
+    private waitForStatus(softstring wfiid, string status = OMQ::StatComplete) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status || h.workflowstatus == OMQ::StatError) {
+                break;
+            }
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        assertEq(h.workflowstatus, status, "wfiid " + wfiid);
+    }
+}

@@ -1,0 +1,20 @@
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class issue3326step inherits QorusAsyncArrayStep {
+    string test() {
+        return "test";
+    }
+
+    softlist<auto> array() {
+        return ("test1", "test2");
+    }
+
+    primary(auto array_arg) {
+        logInfo("array_arg: %s", array_arg);
+        logInfo("getConfigItemValue(issue-3326-test-config-item-1): %y",
+                getConfigItemValue("issue-3326-test-config-item-1"));
+    }
+}

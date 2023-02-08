@@ -1,0 +1,36 @@
+error:
+  required:
+    name:
+      type: string
+    desc:
+      type: string
+  optional:
+    severity:
+      type: string
+      allowed-values:
+        - FATAL
+        - MAJOR
+        - MINOR
+        - WARNING
+        - INFO
+        - NONE
+      default: MAJOR
+    status:
+      type: string
+      allowed-values:
+        - ERROR
+        - RETRY
+      default: ERROR
+    business:
+      type: bool
+      default: false
+    retry-delay:
+      type: integer
+      # optional-only-if: status == RETRY
+    level:
+      type: string
+      allowed-values:
+        - AUTO
+        - GLOBAL
+        - WORKFLOW
+      default: AUTO

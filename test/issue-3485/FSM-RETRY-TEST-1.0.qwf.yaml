@@ -1,0 +1,12 @@
+# This is a generated file, don't edit!
+type: workflow
+name: FSM-RETRY-TEST
+desc: FSM retry test
+author:
+  - Qore Technologies, s.r.o.
+steps:
+    [
+        "FsmRetryTestStep:1.0"
+    ]
+version: "1.0"
+autostart: 0

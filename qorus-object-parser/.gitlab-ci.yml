@@ -1,0 +1,8 @@
+stages:
+  - test
+
+test:
+  stage: test
+  image: $CI_REGISTRY/infrastructure/qore-test-base/qore-test-base:develop
+  script:
+    - test/run_tests.sh

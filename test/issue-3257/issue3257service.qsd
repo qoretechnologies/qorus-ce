@@ -1,0 +1,24 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue3257service
+# serviceversion: 1.0
+# servicedesc: issue 3257 service
+# serviceauthor: Qore Technologies, s.r.o.
+# define-auth-label: auth=permissive
+# classes: issue3257class1
+# class-name: issue3257service
+# autostart: false
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3257service inherits issue3257class1 {
+    # desc: test method
+    # name: test
+    string test() {
+        string test_val = issue3257class1::test();
+        return test_val + "issue3257service";
+    }
+}

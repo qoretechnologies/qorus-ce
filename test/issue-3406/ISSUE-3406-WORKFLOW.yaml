@@ -1,0 +1,8 @@
+type: workflow
+name: ISSUE-3406-WORKFLOW
+version: "1.0"
+desc: ISSUE-3406-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+steps: ["issue3406step:1.0"]

@@ -1,0 +1,32 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3816
+desc: 'test for issue #3816: apicall FSM states'
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3816
+fsm:
+    [
+        {
+            "name": "issue-3816-apicall-1",
+            "triggers": []
+        }
+    ]
+remote: false
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "*"
+    months: "*"
+    dow: "*"
+version: '1.0'
+code: issue-3816-1.0.qjob
+config-items:
+  - name: wfiid
+    description: wfiid
+    config_group: Job Config
+    type: int
+    strictly_local: true

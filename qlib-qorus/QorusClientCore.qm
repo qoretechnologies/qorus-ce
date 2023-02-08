@@ -1,0 +1,109 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusClientCore.qm Qorus Integration System core client module
+
+/*
+  Qorus Integration Engine
+
+  Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+  **** NOTICE ****
+    All information contained herein is, and remains the property of Qore
+    Technologies, s.r.o. and its suppliers, if any.  The intellectual and
+    technical concepts contained herein are proprietary to Qore Technologies,
+    s.r.o. and its suppliers and may be covered by Czech, European, U.S. and
+    Foreign Patents, patents in process, and are protected by trade secret or
+    copyright law.  Dissemination of this information or reproduction of this
+    material is strictly forbidden unless prior written permission is obtained
+    from Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 1.0
+
+/** @anchor QorusClientCore QorusClientCore module
+
+    Provides Qorus client functionality for %Qore and Python
+*/
+
+module QorusClientCore {
+    version = "5.1";
+    desc = "Qorus client core module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+%allow-injection
+
+%requires WSDL
+%requires WebSocketClient
+%requires FsUtil
+%requires WebUtil
+%requires RestHandler
+%requires WebSocketHandler
+%requires DataStreamRequestHandler
+
+%requires(reexport) ConnectionProvider
+%requires(reexport) QorusClientBase
+%requires(reexport) QorusVersion
+
+# client define
+%define QorusClient
+
+%include Classes/QorusRemoteServiceHelper.qc
+%include Classes/Map.qc
+%include Classes/ErrorManager.qc
+%include Classes/AbstractFtpHandler.qc
+%include Classes/AbstractServiceHttpHandler.qc
+%include Classes/QorusPluginService.qc
+%include Classes/QorusSystemService.qc
+%include Classes/QorusService.qc
+%include Classes/ServiceApi.qc
+%include Classes/QorusConfigurationItemProvider.qc
+%include Classes/WorkflowApi.qc
+%include Classes/QorusWorkflow.qc
+%include Classes/QorusStepBase.qc
+%include Classes/QorusAsyncStepBase.qc
+%include Classes/QorusEventStepBase.qc
+%include Classes/QorusSubworkflowStepBase.qc
+%include Classes/QorusAsyncArrayStep.qc
+%include Classes/QorusAsyncStep.qc
+%include Classes/QorusEventArrayStep.qc
+%include Classes/QorusEventStep.qc
+%include Classes/QorusNormalArrayStep.qc
+%include Classes/QorusNormalStep.qc
+%include Classes/QorusSubworkflowArrayStep.qc
+%include Classes/QorusSubworkflowStep.qc
+%include Classes/JobApi.qc
+%include Classes/QorusJob.qc
+%include Classes/RemoteDevelopment/RemoteDevelopment.qc
+
+# do not use "$" signs for vars & methods, etc, assume local var scope
+%new-style
+
+%ifndef QorusSimulatedServer
+thread_local OMQ::ThreadLocalData tld;
+bool sub ensure_create_tld() {
+    if (!tld) {
+        tld = new ThreadLocalData();
+        return False;
+    }
+    return True;
+}
+%endif
+
+#! main Qorus namespace
+public namespace OMQ {
+    #! objects that are also present in the server with the same names are created under the OMQ::Client namespace
+    public namespace Client {
+    }
+
+    # fake classes for the service API; not documented here as they are non-functional in the Qorus client
+    public class QorusHttpRequestHandler {
+        static *string getLogMessage(hash cx, hash api, reference params) {
+            return AbstractHttpRequestHandler::getLogMessage(cx, api, \params);
+        }
+    }
+
+    public class DefaultQorusRBACAuthenticator inherits public HttpServer::AbstractAuthenticator;
+    public class DefaultQorusRBACBasicAuthenticator inherits DefaultQorusRBACAuthenticator;
+    public class QorusParametrizedAuthenticator inherits public HttpServer::AbstractAuthenticator;
+}

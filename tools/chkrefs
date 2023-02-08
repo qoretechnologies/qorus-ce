@@ -1,0 +1,38 @@
+#!/usr/bin/env qore
+
+%new-style
+%enable-all-warnings
+
+main();
+
+sub main() {
+    *string fn = shift ARGV;
+    if (!fn) {
+	printf("syntax: %s <filename>\n", get_script_name());
+	exit(1);
+    }
+
+    hash h;
+
+    FileLineIterator i(fn);
+    while (i.next()) {
+	string ln = i.getValue();
+	printf("checking: %s\n", ln);
+	if (ln =~ /qore_object_private::qore_object_private/) {
+	    (string obj, string cls) = (ln =~ x/obj=(0x[0-9a-f]+).*class=(\w+)/i);
+	    if (h{obj})
+		throw "DUP-ERROR", sprintf("h{obj}: %y, obj: %y, cls: %y", h{obj}, obj, cls);
+	    printf("set: %y = %y\n", obj, cls);
+
+	    h{obj} = cls;
+	    continue;
+	}
+	if (ln =~ /QoreObject::customDeref.*1->0/) {
+	    string obj = (ln =~ x/this.*(0x[0-9a-f]+)/)[0];
+	    delete h{obj};
+	    continue;
+	}
+	#break;
+    }
+    printf("H: %N\n", h);
+}

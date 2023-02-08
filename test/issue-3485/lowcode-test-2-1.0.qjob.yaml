@@ -1,0 +1,30 @@
+# This is a generated file, don't edit!
+type: job
+name: lowcode-test-2
+desc: low code test 2
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: LowcodeTest2
+fsm:
+    [
+        {
+            "name": "lowcode-test-2",
+            "triggers": []
+        }
+    ]
+groups:
+  - regression
+  - test
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+classes:
+  - QoreTest
+code: lowcode-test-2-1.0.qjob

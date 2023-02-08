@@ -1,0 +1,38 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3485-pipeline-test-2
+desc: 'issue #3485 pipeline test 2'
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3485PipelineTest2
+fsm:
+    [
+        {
+            "name": "fsm-factory-test",
+            "triggers": [
+                {
+                    "method": "run"
+                }
+            ]
+        }
+    ]
+groups:
+  - regression
+  - test
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+remote: false
+code: issue-3485-pipeline-test-2-1.0.qjob
+config-items:
+  - name: csv-input-path
+    description: CSV input path
+    config_group: Test Config
+    strictly_local: true

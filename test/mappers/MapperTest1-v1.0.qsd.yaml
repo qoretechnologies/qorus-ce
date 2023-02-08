@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: service
+name: MapperTest1
+desc: Test service
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: MapperTest1
+lang: qore
+mappers:
+  - mapper-test-3:1.0
+  - mapper-test-4:1.0
+  - mapper-test-parent:1.0
+  - mapper-test-child:1.0
+version: "1.0"
+servicetype: USER
+code: MapperTest1-v1.0.qsd
+methods:
+  - name: doNestedTest
+    desc: issue
+  - name: exprTest
+    desc: test mapper expressions
+  - name: get
+    desc: runs the mapper and returns the result
+  - name: init
+    desc: init method

@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Conditional {
+    bool condition(auto _data) {
+        UserApi::logInfo("Issue3485Conditional::condition was called: %y", _data);
+        return True;
+    }
+
+    bool condition2(auto _data) {
+        UserApi::logInfo("Issue3485Conditional::condition2 was called: %y", _data);
+        return !_data;
+    }
+}

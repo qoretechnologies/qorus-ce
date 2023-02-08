@@ -1,0 +1,19 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: Issue3294
+# version: 1.0
+# desc: test class for Qore <-> Java dependencies
+# requires: Issue3294Java
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3294 inherits QorusService {
+    # name: get
+    # desc: returns 1
+    int get() {
+        return Issue3294Java::get();
+    }
+}
+# END

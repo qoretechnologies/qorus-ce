@@ -1,0 +1,75 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+%requires FsUtil
+
+%exec-class Issue3881Test
+
+class Issue3881Test inherits QorusServiceTest {
+    public {}
+
+    private {
+        # must create the temporary directory in a shared dir under k8s
+        TmpDir dir(NOTHING, NOTHING, ENV.OMQ_DIR + "/user");
+        TmpFile file("issue-3881-test-", ".txt", dir.path);
+    }
+
+    constructor() : QorusServiceTest("issue-3881", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # configure service
+        qrest.put("services/issue-3881/config/path", {"value": dir.path});
+
+        hash<auto> info = qrest.get("services/issue-3881");
+        if (!info.remote) {
+            qrest.put("services/issue-3881/setRemote", {"remote": True});
+        }
+        testService();
+
+        qrest.put("services/issue-3881/setRemote", {"remote": False});
+        testService();
+    }
+
+    private testService() {
+        # load service and unload on exit
+        qrest.put("services/issue-3881/load");
+        on_exit qrest.put("services/issue-3881/unload");
+
+        on_error printf("dir: %y file: %y\n", dir.path, file.path);
+
+        # wait for event to appear
+        hash<auto> event = waitForEvent();
+        on_error printf("event: %y\n", event);
+        assertEq(dir.path, dirname(event.filepath));
+        assertEq(0, event.size);
+        assertEq("REGULAR", event.type);
+    }
+
+    hash<auto> waitForEvent() {
+        date start = now_us();
+        while (True) {
+            *hash<auto> event = qrest.put("services/issue-3881/getEvent/call");
+            if (event) {
+                return event;
+            }
+            date delta = now_us() - start;
+            if (delta > 15s) {
+                throw "TIMEOUT", "no file event returned in timeout period";
+            }
+            usleep(250ms);
+        }
+    }
+}

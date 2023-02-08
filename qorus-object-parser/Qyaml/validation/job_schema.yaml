@@ -1,0 +1,91 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - job
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  desc:
+    type: string
+    max-length: 4000
+  code:
+    type: string
+  schedule:
+    type: cron
+
+optional:
+  author:
+    type: list
+    element-type: string
+  modules:
+    type: list
+    element-type: string
+  remote:
+    type: bool
+    default: true
+  active:
+    type: bool
+    default: true
+  run-skipped:
+    type: bool
+    default: false
+  single-instance:
+    type: bool
+    default: false
+  expiry-date:
+    type: date
+  class-name:
+    type: string
+    max-length: 160
+  base-class-name: # used only in the IDE
+    type: string
+    max-length: 160
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  classes:
+    type: list
+    element-type: string
+  class-prefixes: # used only in the IDE
+    type: list
+  class-connections: # used only in the IDE
+    type: hash
+  constants:
+    type: list
+    element-type: string
+  functions:
+    type: list
+    element-type: string
+  mappers:
+    type: list
+    element-type: string
+  vmaps:
+    type: list
+    element-type: string
+  groups:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+  config-items:
+    type: list
+    element-type: config-item
+  fsm:
+    type: list
+    element-type: fsm
+  system-options:
+    type: hash
+
+include-definitions:
+  - config-item_definition.yaml
+  - cron_definition.yaml
+  - fsm_definition.yaml

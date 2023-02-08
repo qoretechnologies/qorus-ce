@@ -1,0 +1,18 @@
+# type: STEP
+# version: 1.0
+# desc: a simple step
+# author: Qore Technologies, s.r.o.
+%new-style
+sub skip_step() {
+    throw "A";
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: a subwf step
+# author: Qore Technologies, s.r.o.
+sub skip_step_subwf() {
+    WorkflowApi::bindSubworkflow(("name": "SKIP-TEST"), ("staticdata": ("created": "by wf")));
+}
+# END

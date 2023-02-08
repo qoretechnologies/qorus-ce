@@ -1,0 +1,97 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue2725Test
+
+class Issue2725Test inherits QorusJobTest {
+    public {
+        const Timeout = 10s;
+        const PollInterval = 250ms;
+    }
+
+    constructor() : QorusJobTest("test", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # make sure SIMPLETEST is started
+        UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setAutostart", {"autostart": 1});
+        on_error {
+            UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setAutostart", {"autostart": 0});
+        }
+        # make sure http-test is started
+        UserApi::callRestApi("PUT", "services/http-test/setAutostart", {"autostart": True});
+        on_error {
+            UserApi::callRestApi("PUT", "services/http-test/setAutostart", {"autostart": False});
+        }
+        # make sure test is stopped
+        UserApi::callRestApi("PUT", "jobs/test/setActive", {"active": False});
+
+        list<auto> cond = (
+            {"event": QEC_WORKFLOW_UPDATED},
+            {"event": QEC_SERVICE_UPDATED},
+            {"event": QEC_JOB_UPDATED},
+        );
+        # start listening to updated events
+        UserApi::callRestApi("PUT", "services/event-test/startListening/call", {"args": (cond,)});
+        # update SIMPLETEST
+        UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setAutostart", {"autostart": 0});
+        # update http-test
+        UserApi::callRestApi("PUT", "services/http-test/setAutostart", {"autostart": False});
+        # update test job
+        UserApi::callRestApi("PUT", "jobs/test/setActive", {"active": True});
+        on_exit {
+            UserApi::callRestApi("PUT", "jobs/test/setActive", {"active": True});
+        }
+
+        *list<hash> events;
+        hash<auto> event_hash;
+        date start = now_us();
+        int cycles = 1;
+        while (True) {
+            events = UserApi::callRestApi("PUT", "services/event-test/peekEvents/call");
+
+            foreach hash<auto> eh in (events) {
+                if ((eh.event == QEC_WORKFLOW_UPDATED && eh.info.name == "SIMPLETEST")
+                    || (eh.event == QEC_SERVICE_UPDATED && eh.info.name == "http-test")
+                    || (eh.event == QEC_JOB_UPDATED && eh.info.name == "test")) {
+                    event_hash{eh.event} = eh;
+                    if (event_hash.size() == 3) {
+                        break;
+                    }
+                }
+            }
+            date delta = now_us() - start;
+            if (event_hash.size() == 3) {
+                if (m_options.verbose > 2) {
+                    printf("elapsed time to get events: %y (%d cycle%s)\n", delta, cycles, cycles == 1 ? "" : "s");
+                }
+                break;
+            }
+            ++cycles;
+            remove event_hash;
+            if (delta > Timeout) {
+                throw "TIMEOUT-ERROR", sprintf("took more than %y to get events", delta);
+            }
+            usleep(PollInterval);
+        }
+
+        #printf("event_hash: %N\n", event_hash);
+        assertEq(3, event_hash.size());
+        assertEq({"autostart": 0}, event_hash{QEC_WORKFLOW_UPDATED}.info.info);
+        assertEq({"autostart": False}, event_hash{QEC_SERVICE_UPDATED}.info.info);
+        assertEq({"active": True}, event_hash{QEC_JOB_UPDATED}.info.info);
+    }
+}

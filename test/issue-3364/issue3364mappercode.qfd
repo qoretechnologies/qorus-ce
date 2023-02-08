@@ -1,0 +1,26 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3364mappercode {
+    static string getMapperField(auto ignored, hash<auto> record) {
+        string result;
+        foreach auto key in (keys record) {
+            result += "_" + key;
+        }
+        return result;
+    }
+
+    static auto getOutput4(auto ignored, hash<auto> record) {
+        return "test4";
+    }
+
+    static string get_value(string value) {
+        return "test" + value;
+    }
+
+    static string getValue(auto ignored, hash record) {
+        return issue3364mappercode::get_value("testdata");
+    }
+}

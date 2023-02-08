@@ -1,0 +1,1529 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+
+# require all variables to be declared (at least with scope)
+%require-our
+
+# execute the "oview" class as the application class
+%exec-class oview
+
+# this cryptic directive actually enables all warnings, despite its confusing name :-)
+%enable-all-warnings
+
+# do not allow argument matching to NOOP function/method variants, also warn or throw exceptions
+# if excess args are passed to code that ignores them
+%strict-args
+
+# qorus core client module
+%requires QorusClientBase
+# contains the YamlRpcHandler user module
+%requires YamlRpcHandler
+# for value-map exports
+%requires CsvUtil
+
+class oview {
+    # maximum length of event strings without requiring an additional line
+    const MAX_EVENT_LEN = 37;
+
+    const ANSI_RESET     = 0;
+    const ANSI_BG_RED    = 41;
+    const ANSI_BG_GREEN  = 42;
+    const ANSI_BG_YELLOW = 43;
+    const ANSI_BG_BLUE   = 44;
+    const ANSI_BG_PURPLE = 45;
+    const ANSI_BG_CYAN   = 46;
+    const ANSI_BG_WHITE  = 47;
+
+    const ANSI_FG_BLACK  = 30;
+    const ANSI_FG_RED    = 31;
+    const ANSI_FG_GREEN  = 32;
+    const ANSI_FG_YELLOW = 33;
+    const ANSI_FG_BLUE   = 34;
+    const ANSI_FG_PURPLE = 35;
+    const ANSI_FG_CYAN   = 36;
+    const ANSI_FG_GREY   = 37;
+
+    const ANSI_ATTR_BOLD      = 1;
+    const ANSI_ATTR_UNDERLINE = 4;
+    const ANSI_ATTR_BLINK     = 5;
+    const ANSI_ATTR_REVERSE   = 7;
+    const ANSI_ATTR_HIDDEN    = 8;
+
+    const BFSComplete     = (1 <<  0);
+    const BFSError        = (1 <<  1);
+    const BFSReady        = (1 <<  2);
+    const BFSScheduled    = (1 <<  3);
+    const BFSInProgress   = (1 <<  4);
+    const BFSAsyncWaiting = (1 <<  5);
+    const BFSWaiting      = (1 <<  6);
+    const BFSIncomplete   = (1 <<  7);
+    const BFSRetry        = (1 <<  8);
+    const BFSCanceled     = (1 <<  9);
+    const BFSBlocked      = (1 << 10);
+    const BFSEventWaiting = (1 << 11);
+
+    const MaxRows = 500;
+
+    #! minimum width for workflow name
+    const MIN_WMAX = 25;
+
+    const DateFormat = "YYYY-MM-DD HH:mm:SS";
+    const DateFormatUs = "YYYY-MM-DD HH:mm:SS.xx";
+
+    const BFSMap = (
+        "COMPLETE"      : BFSComplete,
+        "ERROR"         : BFSError,
+        "RETRY"         : BFSRetry,
+        "IN-PROGRESS"   : BFSInProgress,
+        "ASYNC-WAITING" : BFSAsyncWaiting,
+        "WAITING"       : BFSWaiting,
+        "INCOMPLETE"    : BFSIncomplete,
+        "CANCELED"      : BFSCanceled,
+        "READY"         : BFSReady,
+        "SCHEDULED"     : BFSScheduled,
+        "BLOCKED"       : BFSBlocked,
+        "EVENT-WAITING" : BFSEventWaiting,
+        );
+
+    # options for the getopt class
+    const oview_opts = (
+        "url"        : "u,url=s",
+        "proxy"      : "p,proxy-url=s",
+        "show"       : "W,show-url",
+        "all"        : "a,all",
+        "hour"       : "H,hour",
+        "day"        : "d,day",
+        "week"       : "w,week",
+        "month"      : "m,month",
+        "year"       : "y,year",
+        "date"       : "D,date=s",
+        "full"       : "f,full",
+
+        "comp"       : "c,complete",
+        "limit"      : "L,limit=i",
+
+        "no_sqlcache": "F,nosqlcache",
+
+        "stat"       : "S,status=s@",
+        "showsteps"  : "s,steps:i+",
+        "showerrs"   : "e,errors",
+        "showorder"  : "o,order",
+        "showseg"    : "g,segment",
+        "showapi"    : "show-api",
+        "mono"       : "M,mono",
+
+        "error"      : "E,search-errors",
+        "allerrs"    : "A,show-all-errors",
+        "business"   : "b,business",
+        "technical"  : "t,technical",
+        "stepid"     : "stepid=i@",
+        "stepname"   : "stepname=s@",
+        "retry"      : "R,retry",
+
+        "msg"        : "r,message",
+        "lit"        : "l,literal:i+",
+        "verbose"    : "v,verbose:i+",
+        "remote"     : "Q,remote=s",
+        "token"      : "k,token=s",
+        "help"       : "h,help"
+        );
+
+    private {
+        hash o;
+        hash srmap;
+        bool shown = False;
+        hash header;
+        hash options;
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        options = QorusClient::parseOptions("qorus-client");
+        processCommandLine();
+
+        if (o.remote) {
+            omqapi = omqclient.getRemote(o.remote);
+            qrest = omqclient.getRemoteRest(o.remote);
+        }
+
+        if (o.url) {
+            omqapi.setURL(o.url);
+            qrest.setURL(o.url);
+        }
+
+        if (o.proxy) {
+            omqapi.setProxyURL(o.proxy);
+            qrest.setProxyURL(o.proxy);
+        }
+
+        if (o.to) {
+            int to = o.to * 1000;
+            omqapi.setConnectTimeout(to);
+            omqapi.setTimeout(to);
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        try {
+            # we need to use YAML-RPC if possible to preserve date/time values
+            if (!omqapi.isYamlRpc())
+                omqapi.forceYamlRpc();
+
+            if (o.error || o.retry)
+                showErrors(ARGV);
+            else {
+                #printf("ARGV=%N\n", ARGV);
+                if (!ARGV[0]) {
+                    showWorkflowOverviewName(NOTHING, NOTHING, o.verbose);
+                    return;
+                }
+
+                foreach string arg in (ARGV) {
+                    # if it's a workflowid, then show only that workflow
+                    if (int(arg) == arg)
+                        showWorkflowOverviewID(arg);
+                    else if (arg =~ /^k:/)
+                        showOrderInstanceKey(arg.substr(2));
+                    else if (arg =~ /^k/) {
+                        doDeprecatedShortWarning(arg);
+                        showOrderInstanceKey(arg.substr(1));
+                    }
+                    else if (arg =~ /^vmap:.+/) # this must go before rest of ^v regexpsw
+                        showVMap(arg.substr(5));
+                    else if (arg =~ /^v:/)
+                        showOrderInstanceValue(arg.substr(2));
+                    else if (arg =~ /^v/) {
+                        doDeprecatedShortWarning(arg);
+                        showOrderInstanceValue(arg.substr(1));
+                    }
+                    else if (arg =~ /^W:[0-9]+/)
+                        showWorkflowOverviewID(arg.substr(2));
+                    else if (arg =~ /^W[0-9]+/) {
+                        doDeprecatedShortWarning(arg);
+                        showWorkflowOverviewID(arg.substr(1));
+                    }
+                    else if (arg =~ /w:[0-9]+/)
+                        showWorkflowInstanceInfo(arg.substr(2));
+                    else if (arg =~ /w[0-9]+/) {
+                        doDeprecatedShortWarning(arg);
+                        showWorkflowInstanceInfo(arg.substr(1));
+                    }
+                    else if (arg =~ /^e:/)
+                        showOrderExternalID(arg.substr(2));
+                    else if (arg =~ /^e/) {
+                        doDeprecatedShortWarning(arg);
+                        showOrderExternalID(arg.substr(1));
+                    }
+                    else if (arg =~ /^E:/)
+                        showErrors(arg.substr(2));
+                    else if (arg =~ /^o:/)
+                        showOrderInstanceID(arg.substr(2));
+                    else if (arg =~ /^o/) {
+                        doDeprecatedShortWarning(arg);
+                        showOrderInstanceID(arg.substr(1));
+                    }
+                    else if (arg =~ /^func(tion)?:.+/ || arg =~ /^step:.+/)
+                        showFunction(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^class:.+/)
+                        showClass(arg.substr(6));
+                    else if (arg =~ /^const(ant)?:.+/)
+                        showConstant(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^meth(od)?:.+/)
+                        showMethod(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^serv(ice)?:.+/)
+                        showService(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^svc:.+/)
+                        showService(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^rel(ease)?:.+/)
+                        showRelease(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^map(per)?:.+/)
+                        showMapper(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^job:.+/)
+                        showJob(arg.substr(arg.find(":") + 1));
+                    else if (arg =~ /^conn(ection)?:.+/)
+                        showConnection(arg.substr(arg.find(":") + 1));
+                    else {
+                        *string version;
+                        int i;
+                        if ((i = index(arg, ":")) != -1) {
+                            version = substr(arg, i + 1);
+                            arg = substr(arg, 0, i);
+                        }
+
+                        showWorkflowOverviewName(arg, version, o.verbose);
+                    }
+                }
+            }
+        }
+        catch (hash ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR")
+                printf("ERROR: Qorus server at %n is down\n", omqapi.getURL());
+            else
+                printf("%s: %s\n", ex.err, ex.desc);
+            exit(2);
+        }
+    }
+
+    private doDeprecatedShortWarning(string arg) {
+        stderr.printf("WARNING: argument %y uses a deprecated format that will not be supported in future releases; this form is ambiguous with legal workflow names;\n", arg);
+        stderr.printf("WARNING: use \"%s:%s\" instead for future compatibility.\n", arg[0], arg.substr(1));
+    }
+
+    private processCommandLine() {
+        GetOpt g(oview_opts);
+        o = g.parse(\ARGV);
+        if (exists o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (o.show) {
+            if (exists options."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+            else
+                printf("%s\n", options."client-url");
+            exit(0);
+        }
+        if (o.help)
+            oview::usage();
+
+        # set o.status
+        foreach string stat in (o.stat) {
+            for (int i = 0; i < strlen(stat); ++i) {
+                string c = toupper(stat[i]);
+                switch (c) {
+                    case "E":
+                        o.status |= BFSError;
+                        break;
+
+                    case "C":
+                        o.status |= BFSComplete;
+                        break;
+
+                    case "I":
+                        o.status |= BFSInProgress;
+                        break;
+
+                    case "W":
+                        o.status |= BFSWaiting;
+                        break;
+
+                    case "A":
+                        o.status |= BFSAsyncWaiting;
+                        break;
+
+                    case "N":
+                        o.status |= BFSIncomplete;
+                        break;
+
+                    case "R":
+                        o.status |= BFSRetry;
+                        break;
+
+                    case "X":
+                        o.status |= BFSCanceled;
+                        break;
+
+                    case "Y":
+                        o.status |= BFSReady;
+                        break;
+
+                    case "S":
+                        o.status |= BFSScheduled;
+                        break;
+
+                    case "B":
+                        o.status |= BFSBlocked;
+                        break;
+
+                    case "V":
+                        o.status |= BFSEventWaiting;
+                        break;
+
+                    default:
+                        printf("unknown status argument \"%s\", valid arguments: C,I,R,E,W,A,X,Y,B, --help for more info\n", c);
+                        exit(1);
+                }
+            }
+        }
+
+        string sqltime  = o.all ? "all" : o.year ? "year" : o.month ? "month" : o.week ? "week" : o.hour ? "hour" : o.date ? "date" : "day";
+        # set starting time
+        switch (sqltime) {
+            case "day":
+                o.stime = now() - 1D;
+                break;
+
+            case "hour":
+                o.stime = now() - 60m;
+                break;
+
+            case "week":
+                o.stime = now() - 7D;
+                break;
+
+            case "month":
+                o.stime = now() - 1M;
+                break;
+
+            case "year":
+                o.stime = now() - 1Y;
+                break;
+
+            case "all":
+                o.stime = 1970-01-01;
+                break;
+
+            case "date": {
+                # parse o.date and set o.stime
+                int date_length = length(o.date);
+                if (date_length == 4)
+                    o.stime = date(o.date + "0101");
+                else if (date_length == 6)
+                    o.stime = date(o.date + "01");
+                else
+                    o.stime = date(o.date);
+                break;
+            }
+        }
+        # make srmap if necessary
+        if (o.status)
+            foreach string stat in (BFSMap.keyIterator())
+                 srmap.(BFSMap{stat}) = stat;
+
+        #printf("showorder=%d\n", o.showorder);
+        #printf("verbose=%d\n", o.verbose);
+    }
+
+    showRelease(string rel) {
+        *hash h = qrest.get(o, "releases?name="+rel+";with_components=true")[0];
+        if (!h) {
+            printf("release %y: no results\n", rel);
+            return;
+        }
+        int ccnt = foldl $1 + $2, (map $1.components.size(), h.files.iterator());
+        printf("%y C: %s files: %d components: %d\n", h.name, h.created.format("YYYY-MM-DD HH:mm:SS"), h.files.size(), ccnt);
+    }
+
+    showErrors(*list l) {
+        hash params = (
+            "orderby": ("workflowid", "workflow_instanceid"),
+            "mindate": o.stime,
+            );
+
+        params.workflowid = ();
+        params.workflow_instanceid = ();
+        params.error = ();
+
+        foreach string arg in (l) {
+            if (arg =~ /^W(:)?[0-9]+/) {
+                int offset = (arg[1] == ':' ? 2 : 1);
+                params.workflowid += arg.substr(offset);
+                continue;
+            }
+
+            if (arg =~ /w(:)?[0-9]+/ || arg =~ /^o/) {
+                int offset = (arg[1] == ':' ? 2 : 1);
+                params.workflow_instanceid += arg.substr(offset);
+                continue;
+            }
+
+            if (arg =~ /^E/) {
+                int offset = (arg[1] == ':' ? 2 : 1);
+                params.error += arg.substr(offset);
+                continue;
+            }
+
+            params.workflowid += arg;
+        }
+
+        getAndShowErrorsIntern(params);
+    }
+
+    private processErrorParams(reference params) {
+        if (!o.allerrs)
+            params.severity = (ES_Fatal, ES_Major, ES_Minor);
+
+        if (o.business)
+            params.business_error = True;
+
+        if (o.technical)
+            params.business_error = False;
+
+        if (o.stepid)
+            params.stepid = o.stepid;
+
+        if (o.stepname)
+            params.stepname = o.stepname;
+
+        if (o.status)
+            params.workflowstatus = getStatuses();
+
+        if (o.limit)
+            params.limit = o.limit;
+    }
+
+    showErrors(string err) {
+        hash params = (
+            "orderby": ("workflowid", "workflow_instanceid"),
+            "mindate": o.stime,
+            );
+        if (err)
+            params.error = err;
+
+        getAndShowErrorsIntern(params);
+    }
+
+    getAndShowErrorsIntern(hash params) {
+        processErrorParams(\params);
+
+        string msg = o.all ? "showing error data with no time limits: " : sprintf("errors since %s: ", format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+        printf("%s", msg);
+        flush();
+
+        *list l = qrest.get(o, "orders?action=listErrors", params);
+
+        if (!l) {
+            print("no results\n");
+            return;
+        }
+        print("\n");
+
+        hash wh;
+
+        foreach hash h in (l) {
+            printf("%s w:%d (%s) %s (%s) %s [%y v%s (%d)]%s\n", h.created.format("YYYY-MM-DD HH:mm:SS"), h.workflow_instanceid, OMQ::StatMap{h.workflowstatus}, h.error, h.business_error ? "B" : "T", h.severity, h.name, h.version, h.workflowid, h.stepid ? sprintf(" {%y v%s (%d)}", h.stepname, h.stepversion, h.stepid) : "");
+            if (o.verbose) {
+                if (o.verbose > 1)
+                    printf(" + error_instanceid: %d\n", h.error_instanceid);
+                if (h.description)
+                    printf(" + desc: %s\n", h.description);
+                if (h.info) {
+                    trim h.info;
+                    printf(" + info: %s\n", h.info);
+                }
+            }
+            if (o.retry && (h.workflowstatus == OMQ::StatError
+                            || h.workflowstatus == OMQ::StatRetry
+                            || h.workflowstatus == OMQ::StatAsyncWaiting
+                            || h.workflowstatus == OMQ::StatWaiting))
+                wh{h.workflow_instanceid} = True;
+        }
+
+        if (o.retry) {
+            if (wh) {
+                list rl = map $1.toInt(), wh.keys();
+                printf("retrying %d workflow order instance%s", wh.size(), wh.size() == 1 ? "" : "s");
+                if (o.verbose)
+                    printf(" %y", rl);
+                printf(": ");
+                flush();
+                any ans = qrest.put(o, "orders?action=retry", ("workflow_instanceid": rl));
+                printf("done\n");
+                map printf("%s: %s\n", $1.key, $1.value.typeCode == NT_STRING ? $1.value : sprintf("%y", $1.value)), ans.pairIterator();
+            }
+            else
+                print("+ retry: no eligible workflow orders\n");
+        }
+    }
+
+    *string getVersion(reference name) {
+        # try to get a possible version
+        int i = name.find(":");
+        if (i == -1)
+            return;
+        string ver = extract name, i + 1;
+        splice name, -1;
+        return ver;
+    }
+
+    string getNameVer(string name, *string ver) {
+        if (!ver)
+            return name;
+
+        return sprintf("%s:%s", name, ver);
+    }
+
+    showFunction(string name) {
+        *string ver = getVersion(\name);
+        if (!ver) {
+            ver = qrest.get("system/metadata/rlookupfunc/" + name).lastversion;
+            if (!ver) {
+                printf("function %y: no results\n", getNameVer(name, ver));
+                return;
+            }
+        }
+        *hash h = omqservice.system.info.getFunctionInstanceFromName(name, ver);
+        if (!h) {
+            printf("function %y: no results\n", getNameVer(name, ver));
+            return;
+        }
+        HashIterator hi(h.firstValue());
+        while (hi.next()) {
+            hash fh = hi.getValue();
+            printf("## created: %s modified: %s function_instanceid: %d\n", format_date(DateFormatUs, fh.created), format_date(DateFormatUs, fh.modified), fh.function_instanceid);
+            if (fh.tags.sys)
+                printf("## source: %y:%d host: %y user: %y\n", fh.tags.sys.source, fh.tags.sys.offset, fh.tags.sys.host, fh.tags.sys.user);
+
+            printf("# type: %s\n", fh.function_type);
+            printf("# name: %s\n", name);
+            printf("# version: %s\n", hi.getKey());
+            if (fh.patch)
+                printf("# patch: %s\n", fh.patch);
+            if (fh.description)
+                printf("# desc: %s\n", fh.description);
+            if (fh.author)
+                printf("# author: %s\n", fh.author);
+            showTags(fh.tags);
+
+            printf("%s", fh.body);
+            if (fh.body.substr(-1) != "\n")
+                print("\n");
+            print("# END\n\n");
+        }
+    }
+
+    showClass(string name) {
+        *string ver = getVersion(\name);
+        if (!ver) {
+            ver = qrest.get("system/metadata/rlookupclass/" + name).lastversion;
+            if (!ver) {
+                printf("class %y: no results\n", getNameVer(name, ver));
+                return;
+            }
+        }
+        *hash h = omqservice.system.info.getClassFromName(name, ver);
+        if (!h) {
+            printf("class %y: no results\n", getNameVer(name, ver));
+            return;
+        }
+        HashIterator hi(h.firstValue());
+        while (hi.next()) {
+            hash fh = hi.getValue();
+            printf("## created: %s modified: %s classid: %d\n", format_date(DateFormatUs, fh.created), format_date(DateFormatUs, fh.modified), fh.classid);
+            if (fh.tags.sys)
+                printf("## source: %y:%d host: %y user: %y\n", fh.tags.sys.source, fh.tags.sys.offset, fh.tags.sys.host, fh.tags.sys.user);
+
+            printf("# name: %s\n", name);
+            printf("# version: %s\n", hi.getKey());
+            if (fh.patch)
+                printf("# patch: %s\n", fh.patch);
+            if (fh.description)
+                printf("# desc: %s\n", fh.description);
+            if (fh.author)
+                printf("# author: %s\n", fh.author);
+            showTags(fh.tags);
+
+            printf("%s", fh.body);
+            if (fh.body.substr(-1) != "\n")
+                print("\n");
+            print("# END\n\n");
+        }
+    }
+
+    showConstant(string name) {
+        *string ver = getVersion(\name);
+        if (!ver) {
+            ver = qrest.get("system/metadata/rlookupconstant/" + name).lastversion;
+            if (!ver) {
+                printf("constant %y: no results\n", getNameVer(name, ver));
+                return;
+            }
+        }
+        *hash h = omqservice.system.info.getConstantFromName(name, ver);
+        if (!h) {
+            printf("constant %y: no results\n", getNameVer(name, ver));
+            return;
+        }
+        HashIterator hi(h.firstValue());
+        while (hi.next()) {
+            hash fh = hi.getValue();
+            printf("## created: %s modified: %s constantid: %d\n", format_date(DateFormatUs, fh.created), format_date(DateFormatUs, fh.modified), fh.constantid);
+            if (fh.tags.sys)
+                printf("## source: %y:%d host: %y user: %y\n", fh.tags.sys.source, fh.tags.sys.offset, fh.tags.sys.host, fh.tags.sys.user);
+
+            printf("# name: %s\n", name);
+            printf("# version: %s\n", hi.getKey());
+            if (fh.patch)
+                printf("# patch: %s\n", fh.patch);
+            if (fh.description)
+                printf("# desc: %s\n", fh.description);
+            if (fh.author)
+                printf("# author: %s\n", fh.author);
+            showTags(fh.tags);
+
+            printf("%s", fh.body);
+            if (fh.body.substr(-1) != "\n")
+                print("\n");
+            print("# END\n\n");
+        }
+    }
+
+    showVMap(string name) {
+        *hash meta = qrest.get(o, sprintf("valuemaps/%s?action=dump", name));
+        printf("%s\n", meta{name});
+    }
+
+    showMapper(string name) {
+        hash mh = qrest.get(o, "mappers/" + name);
+
+        printf("## created: %s modified: %s mapperid: %d\n", format_date(DateFormatUs, mh.created), format_date(DateFormatUs, mh.modified), mh.mapperid);
+        if (mh.tags.sys)
+            printf("## source: %y:%d host: %y user: %y\n", mh.tags.sys.source, mh.tags.sys.offset, mh.tags.sys.host, mh.tags.sys.user);
+
+        printf("# name: %s\n", mh.name);
+        printf("# version: %s\n", mh.version);
+        if (mh.desc)
+            printf("# desc: %s\n", mh.desc);
+        printf("# type: %s\n", mh.type);
+        if (mh.parse_options)
+            printf("# parse-options: %s\n", (foldl $1 + ", " + $2, mh.parse_options));
+        showLibraryAndGroupsIntern(mh);
+        showTags(mh.tags);
+
+        print("\n");
+
+        if (mh.option_source) {
+            map printf("OPTION: %s: %s\n", $1.key, $1.value), mh.option_source.pairIterator();
+            print("\n");
+        }
+
+        map printf("FIELD: %s: %s\n", $1.key, $1.value), mh.field_source.pairIterator();
+        printf("# END\n");
+    }
+
+    showJob(string name) {
+        hash job = qrest.get(o, "jobs/" + name);
+        printf("## created: %s modified: %s jobid: %d last executed: %s\n", fd(job.created), fd(job.modified), job.jobid, fd(job.last_executed));
+        if (job.tags.sys)
+            printf("## source: %y:%d host: %y user: %y\n", job.tags.sys.source, job.tags.sys.offset, job.tags.sys.host, job.tags.sys.user);
+
+        printf("# name: %s\n", job.name);
+        printf("# version: %s\n", job.version);
+        if (job.description)
+            printf("# desc: %s\n", job.description);
+        if (job.author)
+            printf("# author: %s\n", job.author);
+        printf("# active: %s\n", job.active ? "true" : "false");
+        printf("# run-skipped: %s\n", job.run_skipped ? "true" : "false");
+        if (job.recurring)
+            printf("# duration: %d\n", job.recurring);
+        else
+            printf("# schedule: %s %s %s %s %s\n", job.minute, job.hour, job.day, job.month, job.wday);
+
+        if (job.expiry_date)
+            printf("# expiry-date: %s\n", fd(job.expiry_date));
+
+        foreach string type in (job.lib.keyIterator()) {
+            # skip empty library type lists
+            if (!job.lib{type})
+                continue;
+            printf("# %s: %s\n", type, (foldl $1.name + ", " + $2.name, job.lib{type}));
+        }
+
+        if (job.groups)
+            printf("# groups: %s\n", (foldl $1 + ", " + $2, (map $1.name, job.groups)));
+
+        printf("%s", job.code);
+        if (job.code.substr(-1) != "\n")
+            print("\n");
+        printf("# END\n");
+    }
+
+    showConnection(string name) {
+        hash conn = qrest.get(o, "remote/user/" + name);
+        printf("# dumped by %s on %s by %s@%s\n", get_script_name(), now().format("YYYY-MM-DD HH:mm:SS"), getusername(), gethostname());
+        printf("%s = (\n", conn.name);
+        map printf("    %s = %s,\n", $1.key, sprintf("%y", $1.value)), conn{"desc", "url"}.pairIterator();
+        map printf("    %s = %s,\n", $1.key, $1.key =~ /timeout$/ ? $1.value : sprintf("%y", $1.value)), conn.opts.pairIterator();
+        printf(")\n");
+    }
+
+    showService(string svc) {
+        # see if there is a version number in the name
+        *string ver = getVersion(\svc);
+
+        hash sh = getServiceIntern(svc, ver);
+
+        printf("## created: %s modified: %s %s serviceid: %d\n", format_date(DateFormatUs, sh.created), format_date(DateFormatUs, sh.modified), sh.service_type, sh.serviceid);
+        if (sh.tags.sys)
+            printf("## source: %y:%d host: %y user: %y\n", sh.tags.sys.source, sh.tags.sys.offset, sh.tags.sys.host, sh.tags.sys.user);
+
+        printf("# service: %s\n", sh.name);
+        printf("# servicetype: %s\n", sh.service_type);
+        printf("# serviceversion: %s\n", sh.version);
+        if (sh.patch)
+            printf("# servicepatch: %s\n", sh.patch);
+        if (sh.description)
+            printf("# servicedesc: %s\n", sh.description);
+        if (sh.author)
+            printf("# serviceauthor: %s\n", sh.author);
+        if (sh.autostart)
+            print("# autostart: true\n");
+        showLibraryAndGroupsIntern(sh);
+        showTags(sh.tags);
+        print("# ENDSERVICE\n\n");
+
+        # show methods
+        map showMethodIntern($1.service_methodid, sh), sh.methods;
+    }
+
+    private showLibraryAndGroupsIntern(hash h) {
+        if (h.lib.functions)
+            printf("# functions: %s\n", foldl $1 + ", " + $2, (map $1.name, h.lib.functions));
+        if (h.lib.classes)
+            printf("# classes: %s\n", foldl $1 + ", " + $2, (map $1.name, h.lib.classes));
+        if (h.lib.constants)
+            printf("# constants: %s\n", foldl $1 + ", " + $2, (map $1.name, h.lib.constants));
+        if (h.groups)
+            printf("# groups: %s\n", foldl $1 + ", " + $2, (map $1.name, h.groups));
+    }
+
+    showMethod(string meth) {
+        # get service name
+        (*string svc, *string name) = (meth =~ x/^([^:]+):(.*)$/);
+        if (!svc || !name) {
+            printf("missing service name to display method; expecting \"service:method\"; got: %y\n", meth);
+            exit(1);
+        }
+        # see if there is a version number in the name
+        *string ver = (name =~ x/^([^:]+):.*$/)[0];
+        if (ver)
+            splice name, 0, ver.size() + 1;
+
+        hash sh = getServiceIntern(svc, ver);
+
+        hash smh;
+        # try to find the given method
+        foreach hash h in (sh.methods) {
+            if (h.name == name) {
+                smh = h;
+                break;
+            }
+        }
+        if (!smh) {
+            printf("no method %y in %s service %y (valid methods: %y)\n", name, sh.service_type, svc, (map $1.name, sh.methods));
+            exit(1);
+        }
+
+        showMethodIntern(smh.service_methodid, sh);
+    }
+
+    private hash getServiceIntern(string svc, *string ver) {
+        # try to find service
+        string type = "user";
+        *hash sh = omqservice.system.info.getServiceMetadataFromName(type, svc, ver);
+        if (!sh) {
+            type = "system";
+            sh = omqservice.system.info.getServiceMetadataFromName(type, svc, ver);
+            if (!sh) {
+                printf("cannot find any service %s%s\n", svc, ver ? sprintf(" v%s", ver) : "");
+                exit(1);
+            }
+        }
+        softstring sid = sh.firstValue().firstValue().serviceid;
+        return qrest.get("services/" + sid);
+    }
+
+    private showMethodIntern(softint mid, hash sh) {
+        hash smh = omqservice.system.info.getServiceMethod2(mid);
+
+        printf("## created: %s modified: %s %s service: %s v%s (%d) service_methodid: %d\n", format_date(DateFormatUs, smh.created), format_date(DateFormatUs, smh.modified), sh.service_type, sh.name, sh.version, smh.serviceid, smh.service_methodid);
+        if (smh.tags.sys)
+            printf("## source: %y:%d host: %y user: %y\n", smh.tags.sys.source, smh.tags.sys.offset, smh.tags.sys.host, smh.tags.sys.user);
+
+        printf("# name: %s\n", smh.name);
+        if (smh.description)
+            printf("# desc: %s\n", smh.description);
+        if (smh.write)
+            print("# write: true\n");
+        if (smh.internal)
+            print("# internal: true\n");
+        if (smh.locktype != "none")
+            printf("# lock: %s\n", smh.locktype);
+        if (smh.author)
+            printf("# author: %s\n", smh.author);
+        showTags(smh.tags);
+
+        printf("%s", smh.body);
+        if (smh.body.substr(-1) != "\n")
+            print("\n");
+        print("# END\n\n");
+    }
+
+    showTags(*hash tags) {
+        foreach string t in ((tags - "sys").keyIterator())
+            printf("# TAG: %s: %s\n", t, tags{t});
+    }
+
+    private static string getArgs(softlist l) {
+        string str = "";
+        foreach any arg in (l)
+            str += sprintf("%y, ", arg);
+        splice str, -2;
+        return str;
+    }
+
+    private showRequestAndResponse(string method, softlist args, hash info) {
+        if (!exists info.request)
+            return;
+        printf("call to %s: %s(%s):\n", omqapi.getURL(), method, oview::getArgs(args));
+        if (o.lit) {
+            if (o.lit > 1 || o.verbose) {
+                printf("request-uri: %s\n", info."request-uri");
+                printf("request headers: %N\n", info.headers);
+            }
+            printf("literal request:\n%s\n", info.request);
+        }
+        else if (o.msg) {
+            printf("reformatted request:\n");
+            string str;
+            if (omqapi.isYamlRpc()) {
+                hash h = parse_yaml(info.request);
+                str = YamlRpcClient::makeRequest(h.method, h.params, YAML::BlockStyle);
+            }
+            else if (omqapi.isXmlRpc()) {
+                hash h = parse_xmlrpc_call(info.request);
+                str = make_xmlrpc_call(h.methodName, h.params, XGF_ADD_FORMATTING);
+            }
+            else {
+                hash h = parse_json(info.request);
+                str = make_jsonrpc_request(h.method, h.version, h.id, h.params, JGF_ADD_FORMATTING);
+            }
+            printf("%s\n", str);
+        }
+        if (!exists info.response)
+            return;
+        if (o.lit) {
+            if (o.lit > 1 || o.verbose) {
+                printf("response-uri: %s\n", info."response-uri");
+                printf("response headers: %N\n", info.response_headers);
+            }
+            printf("literal response:\n%s\n", info.response);
+        }
+        else if (o.msg) {
+            printf("reformatted response:\n");
+            string str;
+            if (omqapi.isYamlRpc()) {
+                hash h = parse_yaml(info.response);
+                str = YamlRpcHandler::makeResponse(h.result, YAML::BlockStyle);
+            }
+            else if (omqapi.isXmlRpc()) {
+                hash h = parse_xmlrpc_response(info.response);
+                str = make_xmlrpc_response(h, XGF_ADD_FORMATTING);
+            }
+            else {
+                hash h = parse_json(info.response);
+                str = make_jsonrpc_response(h.version, h.id, h.result);
+            }
+            printf("%s\n", str);
+        }
+    }
+
+    private any makeCall(string method, *softlist args) {
+        if (o.showapi)
+            printf("calling %s(%y)\n", method, args);
+
+        if (!o.lit && !o.msg)
+            return omqapi.callAPIArgs(method, args);
+
+        hash info;
+        any ans;
+
+        try {
+            ans = omqapi.callAPIArgsWithInfo(\info, method, args);
+        }
+        catch (hash ex) {
+            showRequestAndResponse(method, args, info);
+            rethrow;
+        }
+        showRequestAndResponse(method, args, info);
+        return ans;
+    }
+
+    static private any fd(any d, bool us = False) {
+        if (!exists d || d === NULL)
+            return "NULL               ";
+
+        return d.typeCode() == NT_DATE ? format_date(us ? DateFormatUs : DateFormat, d) : d;
+    }
+
+    static private string doWorkflowID(softint id) {
+        return sprintf("%-9s", "w:" + id);
+    }
+
+    static private string doExternalOrderID(*softstring id) {
+        if (exists id)
+            return sprintf("%-25s", "e:" + id);
+        return sprintf("%-25s", "");
+    }
+
+    private string getSubWorkflowOrEvent(hash swf, any wfiid) {
+        if (swf.subworkflow_instanceid) {
+            if (swf.subworkflow_instanceid == wfiid)
+                return "subwf: SKIPPED";
+
+            return sprintf("subwf: w:%d %s", swf.subworkflow_instanceid, swf.subworkflowstatus);
+        }
+        else if (!swf.eventkey || swf.eventkey.size() > MAX_EVENT_LEN)
+            return "";
+
+        return sprintf("event: %s", swf.eventkey);
+    }
+
+    static private *string getStepType(string t) {
+        if (t == "NORMAL")
+            return;
+        return substr(t, 0, 1);
+    }
+
+    private showStep(softint stepid, hash step, softint wfiid, *softlist substeps) {
+        string stat = step.business_error && step.stepstatus == OMQ::StatError ? "ERROR (B)" : step.stepstatus;
+
+        f_printf("     + STEP: %-8d %1s%1s%1s%-37s %-11s %s %s",
+                 stepid,
+                 oview::getStepType(step.steptype),
+                 step.arraytype != "NONE" ? "x" : "",
+                 step.aggregatestatus ? "*" : "",
+                 sprintf("%s %s", step.name, step.version),
+                 stat,
+                 oview::fd(step.started), oview::fd(step.completed));
+
+        if (exists step.custom_status)
+            printf("               [Cust.Stat.]  %s: \"%s\"", step.custom_status, step.custom_status_desc);
+
+        if (exists step.subworkflow_instanceid)
+            printf(" (w:%d %s)", step.subworkflow_instanceid, step.subworkflowstatus);
+
+        if (exists step.event)
+            printf(" (event %y:%y)", step.event.name, step.event.key);
+
+        if (exists step.substeps && !inlist(stepid, substeps)) {
+            int n = elements step.substeps;
+            f_printf(" (%d substep%s)\n", n, n == 1 ? "" : "s");
+            # step.steptype, step.arraytype,
+            if (o.verbose || o.showsteps > 1) {
+                foreach hash sh in (step.substeps) {
+                    f_printf("%6s + ind %4d %-44s %-11s %s %s", " ",
+                             sh.ind, getSubWorkflowOrEvent(sh, wfiid), sh.stepstatus, oview::fd(sh.started), oview::fd(sh.completed));
+                    if (strlen(sh.eventkey) > MAX_EVENT_LEN)
+                        f_printf("\n%18s event %s", " ", sh.eventkey);
+
+                    printf("\n");
+                }
+            }
+            if (!o.verbose && o.showsteps <= 1 && exists step.substeps[0].eventkey) {}
+
+            substeps += stepid;
+            #printf("substeps=%y\n", substeps);
+        }
+        else
+            print("\n");
+    }
+
+    private list getSegmentSteps(*hash si, *softlist steps) {
+        hash h.info = ();
+        h.date = ();
+        # make a hash of arrays for context statement
+        foreach string id in (keys si) {
+            if (!inlist(id, steps))
+                continue;
+            h.info += si{id};
+            h.date += si{id}.started;
+        }
+
+        list l = ();
+        context (h) sortBy (%date)
+            l += %info;
+
+        #printf("l=%N\n", l);
+        return l;
+    }
+
+    private showWorkflowInstance(hash wf, bool showord = False, bool showdyn = False, bool showstat = False) {
+        string stat = wf.business_error && wf.workflowstatus == OMQ::StatError ? "ERROR (B)" : wf.workflowstatus;
+        f_printf(" %s: %-40s (err: %2d) %-11s %-19s %-19s %-19s%s%s\n",
+                 oview::doWorkflowID(wf.workflow_instanceid),
+                 sprintf("%s %s(%d)", wf.name, wf.version, wf.workflowid),
+                 wf.error_count,
+                 stat,
+                 oview::fd(wf.started), oview::fd(wf.completed), oview::fd(wf.modified),
+                 exists wf.parent_workflow_instanceid ? sprintf(" (parent w:%d)", wf.parent_workflow_instanceid) : "",
+                 oview::doLock(wf.operator_lock));
+
+        # operations info - comments etc.
+        if (exists wf.op_username || exists wf.op_comment)
+            f_printf("   [Operations]  %s: %y\n", wf.op_username, wf.op_comment);
+        if (exists wf.custom_status)
+            f_printf("   [Cust.Stat.]  %s: %y\n", wf.custom_status, wf.custom_status_desc);
+
+        if (o.verbose > 1)
+            printf("   + session ID %d\n", wf.status_sessionid);
+
+        if (o.verbose > 0 || o.showsteps || o.showseg) {
+            list substeps = ();
+
+            if (o.showseg) {
+                foreach hash seg in (wf.segment_instance) {
+                    list seglist = getSegmentSteps(wf.step_instance, seg.steps);
+                    #printf("%N\n", seglist);
+
+                    f_printf("   + SEGMENT %3d: %03d/%03d steps executed %21s %-11s %s %s\n",
+                             seg.segmentid, elements seglist, elements seg.steps, "",
+                             seg.segmentstatus,
+                             oview::fd(seg.created), oview::fd(seg.modified));
+
+                    if (!seglist) {
+                        printf("     + no steps executed\n");
+                        continue;
+                    }
+
+                    foreach hash step in (seglist)
+                        showStep(step.stepid, step, wf.workflow_instanceid, \substeps);
+
+                }
+                if (!wf.segment_instance)
+                    printf("   + no segments executed\n");
+            }
+            else
+                foreach string stepid in (wf.step_instance.keyIterator())
+                    showStep(stepid, wf.step_instance{stepid}, wf.workflow_instanceid);
+        }
+
+        if (o.verbose > 0 || o.showerrs) {
+            foreach hash err in (wf.errors) {
+                *hash step = wf.step_instance{err.stepid};
+                printf("   + ERROR: %s (%s) %-20s %-35s %s:%s %s\n", oview::fd(err.created),
+                       err.business_error ? "B" : "T", err.severity, err.error,
+                       step.name, step.version, err.stepid ? "(" + err.stepid + ")" : "");
+                if ((o.verbose + o.showerrs) > 1) {
+                    printf("      + desc: %y\n", err.description);
+                    trim err.info;
+                    printf("      + info: %s\n", err.info);
+                }
+            }
+        }
+        if (showord) {
+            hash ans = makeCall("omq.system.service.info.getOrderInfo", wf.workflow_instanceid);
+            showOrderInfo("  ", ans, True);
+        }
+
+        # show auditing events
+        if (o.verbose) {
+            map printf("   + NOTE: %s by %y: %s\n", oview::fd($1.created), $1.username, $1.note), wf.notes;
+
+            foreach hash ae in (wf.audit) {
+                string str;
+                if (exists ae.audit_user_event) str += sprintf(" user: %s", ae.audit_user_event);
+                if (exists ae.stepid) str += sprintf(" stepid: %d[%d]", ae.stepid, ae.ind);
+                if (exists ae.who) str += sprintf(" who: %y", ae.who);
+                if (exists ae.source) str += sprintf(" source: %y", ae.source);
+                if (exists ae.reason) str += sprintf(" reason: %y", ae.reason);
+                if (exists ae.info1) str += sprintf(" info1: %y", ae.info1);
+                if (exists ae.info2) str += sprintf(" info2: %y", ae.info2);
+                printf("   + AUDIT: %s %d %s:%s\n", oview::fd(ae.created, True), ae.audit_eventid, ae.event, str);
+            }
+        }
+    }
+
+    private *list getStatuses() {
+        list l = ();
+        foreach string code in (srmap.keyIterator())
+            if (o.status & code)
+               l += srmap{code};
+        if (l)
+            return l;
+    }
+
+    private string getCount(*softint n) {
+        if (!n || o.mono)
+            return sprintf("%10d", n);
+        string str = "\033[";
+        foreach *softint a in (argv)
+            str += sprintf("%d;", a);
+        return substr(str, 0, -1) + sprintf("m%10d\033[00m", n);
+    }
+
+    private startHeader(string h) {
+        any save = header{h};
+        delete header;
+        header{h} = save;
+    }
+
+    private showHeaders() {
+        if (o.full)
+            f_printf("%10s %10s %10s %10s %10s %10s %10s %10s %10s %10s %10s\n",
+                     OMQ::StatReady, OMQ::StatScheduled, OMQ::StatIncomplete, OMQ::StatEventWaiting,
+                     OMQ::StatAsyncWaiting, OMQ::StatWaiting, OMQ::StatRetry, OMQ::StatError,
+                     OMQ::StatInProgress, OMQ::StatCanceled, OMQ::StatBlocked);
+        else
+            f_printf("%10s %10s %10s %10s\n", "READY/SCHD", "RUN/WAIT", "ERR/BLOCK", OMQ::StatCanceled);
+    }
+
+    private showSummaryInfo(hash inf) {
+        if (o.full)
+            printf("%s %s %s %s %s %s %s %s %s %s %s\n",
+                   getCount(inf.READY, ANSI_BG_GREEN, ANSI_FG_BLACK),
+                   getCount(inf.SCHEDULED, ANSI_BG_GREEN, ANSI_FG_BLACK),
+                   getCount(inf.INCOMPLETE, ANSI_BG_BLUE),
+                   getCount(inf."EVENT-WAITING", ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf."ASYNC-WAITING", ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf.WAITING, ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf.RETRY, ANSI_BG_YELLOW, ANSI_FG_BLACK),
+                   getCount(inf.ERROR, ANSI_BG_RED),
+                   getCount(inf."IN-PROGRESS", ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf.CANCELED, ANSI_BG_PURPLE),
+                   getCount(inf.BLOCKED, ANSI_BG_PURPLE));
+        else
+            printf("%s %s %s %s\n",
+                   getCount(inf.READY + inf.SCHEDULED, ANSI_BG_GREEN, ANSI_FG_BLACK),
+                   getCount(inf."IN-PROGRESS" + inf.INCOMPLETE + inf."EVENT-WAITING" + inf."ASYNC-WAITING" + inf.WAITING + inf.RETRY, ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf.ERROR + inf.BLOCKED, ANSI_BG_RED),
+                   getCount(inf.CANCELED, ANSI_BG_PURPLE));
+    }
+
+    private showWorkflowOverviewInfo(hash wfinfo) {
+        if (!shown) {
+            string msg = o.all ? "showing data with no time limits" : sprintf("status since %s", format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+            if (!o.comp && !(o.status & BFSComplete))
+                msg += (", filtering results with COMPLETE status");
+            if (!o.full)
+                msg += (", showing summary; use -f for full info");
+            if (o.no_sqlcache)
+                msg += ", sql cache disabled by -F";
+            printf("%s\n", msg);
+            shown = True;
+        }
+
+        # get longest wf name and create format string based on the longest wf name
+        list wfl = sort(keys wfinfo);
+        int wmax = strlen(max(wfl, int sub (string l, string r) { return strlen(l) <=> strlen(r);}));
+        if (wmax < MIN_WMAX)
+            wmax = MIN_WMAX;
+        string wffmt = sprintf("%%4d %%-%ds %%-10s", wmax);
+
+        # add field width to header name to repeat when it changes
+        string hdr = sprintf("wf-overview-%d", wmax);
+
+        startHeader(hdr);
+
+        # print headers
+        if (!header{hdr}) {
+            string hdrfmt = sprintf("%%%ds", wmax + 16);
+            printf(hdrfmt, "");
+            if (o.comp)
+                f_printf("%10s ", OMQ::StatComplete);
+            showHeaders();
+            header{hdr} = True;
+        }
+
+        hash sumCounts;
+
+        foreach string wf in (wfl) {
+            foreach string ver in (sort(keys wfinfo{wf})) {
+                hash inf = wfinfo{wf}{ver};
+                f_printf(wffmt, inf.workflowid, wf, ver);
+                #f_printf("%4d %-45s %-10s", inf.workflowid, wf, ver);
+                if (o.comp) {
+                    printf("%10d ", inf.COMPLETE);
+                }
+                showSummaryInfo(inf);
+
+                # calculate summaries
+                HashIterator it(inf);
+                while (it.next())
+                    sumCounts{it.getKey()} += it.getValue();
+
+                if (o.verbose || o.status) {
+                    *list statuses = getStatuses();
+                    *softlist ans;
+                    # just get simple list if not showing details (much faster)
+                    if (!o.verbose && !o.showseg) {
+                        #string cond = sprintf("${MODIFIED}>=${DATE}(%s) and ${WORKFLOW_STATUS} in (%s)", format_date("YYYY-MM-DD HH:mm:SS", o.stime), make_select_list(statuses));
+                        #ans = makeCall("omq.system.service.info.getWorkflowInstances", (inf.workflowid, cond));
+                        ans = makeCall("omq.system.service.info.getWorkflowInstances", (inf.workflowid, statuses, o.stime, o.limit));
+                        # add name and version to hash
+                        ans = map $1 + ("name" : wf, "version" : ver), ans;
+                    }
+                    else {
+                        ans = makeCall("omq.system.service.info.getWorkflowInstanceList", (inf.workflowid, o.stime, statuses, o.limit));
+                    }
+                    if (elements ans) {
+                        printf("(displaying %d result%s)\n", elements ans, elements ans == 1 ? "" : "s");
+                        # Info cannot be hash here - info.getWorkflowInstanceList returns
+                        # list of strings (wfiids). The showWorkflowInstanceInfo(int) is used then.
+                        # Info is hash for info.getWorkflowInstances. showWorkflowInstanceInfo(hash).
+                        foreach any info in (ans) {
+                            showWorkflowInstanceInfo(info);
+                        }
+                    }
+                    else
+                        printf("(no results for workflowid %d, modified > %y%s)\n", inf.workflowid, o.stime,
+                               elements statuses ? sprintf(", status %y", statuses) : "");
+                }
+            }
+        }
+
+        # display SUM line only when there are more than 1 line
+        if (wfinfo.size() > 1) {
+            string sumFormat = sprintf("\n%%%ds", wmax+16);
+            f_printf(sumFormat, "sum: ");
+            if (o.comp) printf("%10d ", sumCounts.COMPLETE);
+            showSummaryInfo(sumCounts);
+        }
+    }
+
+    private showWorkflowOverviewName(*string name, *string version, *softbool showinstance) {
+        *hash ans = makeCall("omq.system.service.info.getWorkflowOverviewFromName", (o.stime, name, version, !o.no_sqlcache));
+
+        if (!exists ans) {
+            if (exists version)
+                printf("workflow %s:%s: ", name, version);
+            else if (exists name)
+                printf("workflow %s: ", name);
+            printf("no results since %s\n", format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+            return;
+        }
+        showWorkflowOverviewInfo(ans);
+    }
+
+    private showWorkflowOverviewID(softint id) {
+        *hash ans = makeCall("omq.system.service.info.getWorkflowOverview", (o.stime, id, !o.no_sqlcache));
+
+        #printf("id=%d, ans=%N\n", id, ans);
+        if (!exists ans) {
+            printf("workflowid %d: no results since %y\n", id, format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+            return;
+        }
+        showWorkflowOverviewInfo(ans);
+    }
+
+    private showWorkflowInstanceInfo(hash ans) {
+        showWorkflowInstance(ans, o.showorder, True, True);
+    }
+
+    private showWorkflowInstanceInfo(softint id) {
+        startHeader("wf-instance");
+        *hash ans = makeCall("omq.system.service.info.getWorkflowStatus2", id);
+
+        #printf("%N\n", ans);
+        if (!exists ans) {
+            printf("workflow_instanceid %d: no results\n", id);
+            return;
+        }
+        showWorkflowInstance(ans, o.showorder, True, True);
+    }
+
+    private showOrderInfo(*string off, hash ord, *softbool showall) {
+        startHeader("order-instance");
+        printf("%s%s: %-11s stat=%s dyn=%s %s\n",
+               off, oview::doWorkflowID(ord.workflow_instanceid),
+               oview::fd(ord.created),
+               exists ord.staticdata ? "Y" : "N",
+               exists ord.dynamicdata ? "Y" : "N",
+               oview::doExternalOrderID(ord.external_order_instanceid));
+        foreach string key in (keys ord."keys")
+           printf("%s + (key) %s=%y\n", off, key, ord."keys"{key});
+        #printf("%s\n", row.dynamicdata);
+        if (showall && exists ord.dynamicdata)
+            printf("%s + DYNAMIC DATA : %7N\n", off, ord.dynamicdata);
+        if (showall && exists ord.staticdata)
+            printf("%s + STATIC DATA  : %7N\n", off, ord.staticdata);
+    }
+
+    private static *string doLock(*string op) {
+        if (!op)
+            return;
+        return sprintf(" LOCK: %y", op);
+    }
+
+    private showOrderWorkflowOverview(*string off, hash ord) {
+        startHeader("order-wf-overview");
+        foreach hash wf in (ord.workflows)
+            if (o.verbose || o.showsteps || o.showseg) {
+                *hash ans = makeCall("omq.system.service.info.getWorkflowStatus2", wf.workflow_instanceid);
+
+                #printf("%N\n", ans);
+                if (!exists ans) {
+                    printf("workflow_instanceid %d: no results\n", wf.workflow_instanceid);
+                    return;
+                }
+                showWorkflowInstance(ans);
+            }
+            else
+                printf("%s+ (workflow) %s:%s %s %-11s%s\n", off, wf.name, wf.version, oview::doWorkflowID(wf.workflow_instanceid),
+                       wf.workflowstatus, oview::doLock(wf.operator_lock));
+    }
+
+    private showOrderExternalID(softstring id) {
+        startHeader("order-wf-overview");
+        *softlist ans = makeCall("omq.system.service.info.getOrderInfoFromExternalID", id);
+
+        #printf("%N\n", ans);
+        if (!ans) {
+            printf("external_order_instanceid %y: no results\n", id);
+            return;
+        }
+        foreach hash h in (ans) {
+            showOrderInfo("  ", h, True);
+            showOrderWorkflowOverview("  ", h);
+            printf("\n");
+        }
+    }
+
+    private showOrderInstanceID(softint id) {
+        startHeader("order-instance");
+        *hash ans = makeCall("omq.system.service.info.getOrderInfo", id);
+
+        #printf("id=%N, ans=%N\n", id, ans);
+        if (!exists ans) {
+            printf("workflow_instanceid %d: no results\n", id);
+            return;
+        }
+        showOrderInfo("  ", ans, True);
+        showOrderWorkflowOverview("  ", ans);
+    }
+
+    # k<arg> workflow instance by key, arg=name[:version]:key:value
+    private showOrderInstanceKey(string str) {
+        startHeader("order-instance");
+        *list l = split(":", str);
+        *softlist ans;
+        if (elements l == 3)
+            ans = makeCall("omq.system.service.info.getOrderInfoList", l);
+        else if (elements l != 4) {
+            print("ERROR: order key argument must have the following format: name:version:key:value\n");
+            exit(1);
+        }
+        else
+            ans = makeCall("omq.system.service.info.getOrderInfoFromKey", l);
+
+        #printf("%N\n", ans);
+        if (!exists ans) {
+            printf("%s:%s %s=%s: no results\n", l[0], l[1], l[2], l[3]);
+            return;
+        }
+        foreach hash a in (ans) {
+            showOrderInfo("  ", a, True);
+            showOrderWorkflowOverview("  ", a);
+        }
+    }
+
+    #    v<arg> workflow instance by value arg=[name:[version:]]value
+    private showOrderInstanceValue(string str) {
+        startHeader("order-instance");
+        *softlist wfl;
+        list l = split(":", str);
+        if (elements l == 1)
+            wfl = makeCall("omq.system.service.info.getWorkflowInstanceListFromKeyValue", str);
+        else if (elements l == 2)
+            wfl = makeCall("omq.system.service.info.getWorkflowInstanceListFromWorkflowNameAndKeyValue", l);
+        else
+            wfl = makeCall("omq.system.service.info.getWorkflowInstanceListFromWorkflowNameVersionAndKeyValue", l);
+        if (!elements wfl) {
+            printf("no results\n");
+            return;
+        }
+
+        if (!o.verbose)
+            printf("%d workflow instance%s found (-v for more information)\n", elements wfl, elements wfl == 1 ? "" : "s");
+        foreach softint id in (wfl)
+            if (o.verbose)
+                showOrderInstanceID(id);
+            else
+                printf("+ w:%d\n", id);
+    }
+
+    static private usage() {
+        printf(
+"usage: %s [options] [DATA OPTIONS]
+ WORKFLOW DATA OPTIONS:
+   name      workflow name
+   number    workflow id
+   w:<id>    workflow instance id
+   e:<id>    external order id
+   E:<code>  error code for error searches
+   k:<arg>   workflow instance by key, arg=name[:version]:key:value
+   v:<arg>   workflow instance by value arg=[name:[version:]]value
+
+ CODE OPTIONS:
+   class:<name>[:ver]         dump class source
+   const:<name>[:ver]         dump constant source
+   func:<name>[:ver]          dump function source (also \"function:\")
+   map:<name>                 dump mapper source (also \"mapper:\")
+   meth:<svc>[:ver]:<name>    dump method source (also \"method:\")
+   svc:<name>[:ver]           dump service source (also \"service:\")
+   vmap:<name>                dump value map source
+   job:<name>                 dump job source
+   conn:<name>                dump user connection
+
+ TIME OPTIONS:
+  -H,--hour             show all in the last 60m
+  -d,--day              show all in the last 24h (default if no option given)
+  -w,--week             show all in the last 7 days
+  -m,--month            show all in the last month
+  -y,--year             show all from the last year
+  -a,--all              show all
+  -D,--date             show all since date, format: YYYY[MM[DD[hhmmss]]]
+
+ ERROR SEARCH / RETRY
+  -E,--search-errors    apply arguments to error searching
+  -A,--show-all-errors  show all errors including warning and info records
+  -b,--business         show only business errors
+  -t,--technical        show only technical errors
+     --stepid=arg       show only errors from the given stepid
+     --stepname=arg     show only errors from the given step name
+  -R,--retry            retry all workflow orders found in error search
+                        (implies -E)
+
+ SQL OPTIONS:
+  -c,--complete         show workflow instances with COMPLETE status as well
+  -F,--nosqlcache       do not use SQL cache (exact values, slow on big systems)
+
+ OUTPUT OPTIONS:
+  -S,--status=arg       show only workflows with status=arg
+                        (c=complete, e=error, i=in-progress, v=event-waiting,
+                         a=async-waiting, w=waiting, n=incomplete, r=retry,
+                         x=canceled, y=ready, s=scheduled)
+  -e,--errors           show detailed error information for workflows
+  -f,--full             show full info in summary, not aggregated (default)
+  -L,--limit=arg        limit number of workflows retrieved and displayed
+  -s,--steps            show detailed step status for workflows
+  -o,--order            show detailed order info
+  -g,--segment          show segment info for workflows
+  -M,--mono             do not use ANSI colors in output
+
+ MISC OPTIONS:
+  -l,--literal          shows literal requests and responses (2x for headers)
+  -p,--proxy-url=arg    set the proxy URL (ex: http://proxy:port)
+  -Q,--remote=ARG       use the given remote Qorus connection
+  -r,--message          shows reformatted requests and responses
+  -u,--url=arg          sets Qorus URL (ex: http://host:port)
+  -v,--verbose          set verbosity level (more v's = more info)
+  -W,--show-url         show default Qorus system URL
+  -k,--token=ARG        use the given token with HTTP requests to the Qorus server
+  -h,--help             this help text
+", get_script_name());
+        exit(1);
+    }
+}

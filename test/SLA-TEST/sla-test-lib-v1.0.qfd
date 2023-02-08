@@ -1,0 +1,17 @@
+# type: STEP
+# version: 1.0
+# desc: SLA test step
+# author: Qore Technologies, s.r.o.
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub sla1() {
+    int delay = WorkflowApi::getStaticData().delay ?? 0;
+    UserApi::logInfo("delay: %d", delay);
+    if (delay) {
+        UserApi::sleep(delay);
+    }
+}
+# END

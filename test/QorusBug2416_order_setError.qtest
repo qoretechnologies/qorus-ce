@@ -1,0 +1,63 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+
+class Main inherits QUnit::Test {
+
+    private {
+        int m_wfiid;
+    }
+
+    constructor() : Test("QorusBug2416_order_setError", OMQ::version) {
+        QorusClient::init2();
+
+        hash order = {
+            "name": "DUMMY-TEST",
+            "version": "1.0",
+            "staticdata": {
+                "info": m_name,
+            },
+            "priority": 500,
+            "status": OMQ::StatBlocked,
+        };
+        m_wfiid = omqapi.callAPI("omq.system.create-order", order).workflow_instanceid.toInt();
+
+        addTestCase("setError test", \setErrorTest());
+
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+    }
+
+    private setErrorTest() {
+        auto ret = qrest.put("orders/" + m_wfiid +"/setError");
+
+        if (m_options.verbose) {
+            printf("%N\n", ret);
+        }
+        assertEq(NT_HASH, ret.typeCode());
+        assertEq(0, ret.steps_updated);
+        assertEq(0, ret.segments_updated);
+        assertEq("ERROR", ret.workflow_status);
+        assertEq("BLOCKED", ret.old_status);
+        assertEq(500, ret.priority);
+
+        AbstractDatasource ds = omqclient.getSQLIF().omqp;
+        on_exit ds.rollback();
+        hash row = ds.selectRow("select * from workflow_instance where workflow_instanceid = %v", m_wfiid);
+        assertEq("E", row.workflowstatus);
+    }
+
+} # class Main
+

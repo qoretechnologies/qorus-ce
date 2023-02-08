@@ -1,0 +1,49 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-3166-job
+# class-name: Issue3166Job
+# version: 1.0
+# desc: example job with configuration items
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# active: false
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3166Job inherits QorusJob {
+    run() {
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3166-job-config-1": <ConfigItemInfo>{
+                "type": "float",
+                "default_value": 123.5,
+                "description": "This is an example configuration item of type float",
+                "strictly_local": True,
+                "allowed_values": (123.5, 123.0, 5434.0, 1.0)
+            },
+            "issue-3166-config-1": <ConfigItemInfo>{
+                "type": "*string",
+                "default_value": NOTHING,
+                "description": "This is an example configuration item of type *string",
+                "strictly_local": False,
+                "allowed_values": ("st", "test", "ASD", NOTHING,)
+            },
+            "issue-3166-job-config-2": <ConfigItemInfo>{
+                "type": "int",
+                "default_value": 213,
+                "description": "This is an example configuration item of type int",
+                "strictly_local": True,
+                "allowed_values": (123, 65, 213)
+            },
+        };
+    }
+}
+# END

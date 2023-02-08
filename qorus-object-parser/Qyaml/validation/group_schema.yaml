@@ -1,0 +1,13 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - group
+  name:
+    type: string
+    max-length: 160
+
+optional:
+  desc:
+    type: string
+    max-length: 4000

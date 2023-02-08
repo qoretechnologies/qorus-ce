@@ -1,0 +1,70 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# requires at least this qore version to run
+%requires qore >= 0.8.12
+
+%new-style
+
+%strict-args
+%require-types
+%enable-all-warnings
+
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusClientCore
+
+main();
+
+sub main() {
+    QorusClient::init();
+
+    if (!ARGV)
+        throw "ARGUMENT-ERROR", "missing URI path for REST request";
+    string req = shift ARGV;
+
+    any body;
+    {
+        *string bodystr = shift ARGV;
+        if (exists bodystr)
+            body = QorusClientAPI::parseToQoreValue(bodystr);
+    }
+
+    any ans = qrest.restDo("GET", req, body);
+
+    hash h;
+
+    switch (ans.typeCode()) {
+        case NT_HASH: h = ans; break;
+        case NT_LIST: {
+            if (ans[0].typeCode() == NT_HASH) {
+                h = ans[0];
+                break;
+            }
+        }
+        default: {
+            printf("literal: %y\n", ans);
+            thread_exit;
+        }
+    }
+
+    # try to get name of object
+    req =~ s/^\///;
+    string name = (req =~ x/^([^\/]*)/)[0] ?? "X";
+    name = name[0].upr() + name.substr(1);
+    name =~ s/s$//;
+
+    printf("        const %sDesc = (\n", name);
+    map printf("            %y: Type::%s,\n", $1.key, get_type($1.value.type())), h.pairIterator();
+    printf("        );\n");
+}
+
+string sub get_type(string t) {
+    switch (t) {
+        case "integer": return "Int";
+        case "bool": return "Boolean";
+        case "nothing": return "NothingType";
+        case "null": return "NullType";
+    }
+    return t[0].upr() + t.substr(1);
+}

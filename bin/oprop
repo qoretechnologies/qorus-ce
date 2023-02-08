@@ -1,0 +1,315 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+%strict-args
+%require-our
+%require-types
+%enable-all-warnings
+%exec-class OProp
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# Qorus client module
+%requires QorusClientBase
+
+const Opts = {
+    "fullex"  : "e,full-exception",
+    "token"   : "k,token=s",
+    "lit"     : "l,literal:i+",
+    "proxy"   : "P,proxy-url=s",
+    "push"    : "p,push=s",
+    "remote"  : "Q,remote=s",
+    "reformat": "R,reformat",
+    "retrieve": "r,retrieve=s",
+    "to"      : "t,timeout=i",
+    "url"     : "u,url=s",
+    "show"    : "W,show-url",
+    "verbose" : "v,verbose",
+    "xml"     : "x,xml",
+    "help"    : "h,help"
+};
+
+class OProp {
+    private {
+        hash o;
+        hash options;
+        # to capture HTTP call info
+        hash info;
+    }
+
+    public {
+        const CmdList = ("get", "update", "set");
+    }
+
+    static private usage() {
+        string sn = get_script_name();
+        printf("usage: %s [options] [commands]
+Commands
+  %s get [<domain> [<key>]]
+  %s set|update <domain> <key> [<value>]
+     <value> will be interpreted, or can be prefixed as follows:
+       %%STR=   <- means take the string literally with no parsing
+       %%EVAL=  <- means evaluate the string as a Qore expression
+
+Example
+  %s -p=prop.xml [domain to publish]
+
+Options
+ -e,--full-exception show full exception info
+ -k,--token=ARG      use the given token with HTTP requests to the Qorus server
+ -l,--literal        show literal API calls (more l's, more info)
+ -P,--proxy-url=ARG  set the proxy URL (ex: http://user:pass@host:port)
+ -p,--push=ARG       read previously retrieved properties from file and
+                     publish them to the server
+ -Q,--remote=ARG     use the given remote Qorus connection
+ -R,--reformat       reformat data with -l for better readability
+ -r,--retrieve=ARG   retrieve and save current properties to the given file
+ -t,--timeout=ARG    set HTTP timeout in seconds
+ -u,--url=ARG        sets Qorus URL (ex: http://user:pass@host:port)
+ -v,--verbose        be more verbose
+ -W,--show-url       show default Qorus system URL
+ -x,--xml            use XML instead of YAML (YAML is the default)
+ -h,--help           this help text
+", sn, sn, sn, sn, sn);
+        exit(1);
+    }
+
+    private processCommandLine() {
+        GetOpt g(Opts);
+        o = g.parse(\ARGV);
+        if (exists o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (o.show) {
+            if (exists options."proxy-url") {
+                printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+            } else {
+                printf("%s\n", options."client-url");
+            }
+            exit(0);
+        }
+        if (o.help) {
+            OProp::usage();
+        }
+    }
+
+    ##
+    # retrieve the properties (user properties) from qorus
+    # and save them to an xml-file
+    private doGetProperties(string instKey, any outfile) {
+        if (o.verbose) {
+            printf("retrieving properties from %n\n", instKey);
+        }
+
+        string rs = qrest.get(o, "system/props/export", NOTHING, NOTHING, \info);
+        trim rs;
+
+        # now try if we can open the file for writing:
+        if (exists outfile) {
+            File propfile();
+            if (propfile.open(outfile, O_CREAT | O_WRONLY | O_TRUNC)) {
+                printf("ERROR: unable to open file %n for writing: %n\n", outfile, strerror(errno()));
+                exit(1);
+            }
+            propfile.printf("%s\n", rs);
+        } else {
+            printf("%s\n", rs);
+        }
+    }
+
+    ##
+    # push the properties from infile.
+    # if domains are set only push them.
+    private doSetProperties(string instKey, string infile, list domain) {
+        if (o.verbose) {
+            printf("trying to read %s\n", infile);
+        }
+
+        File propfile();
+        if (propfile.open(infile)) {
+            printf("ERROR: %s: %s\n", infile, strerror());
+            exit(1);
+        }
+        if (o.verbose) {
+            printf("file sucessfully read\n");
+        }
+
+        string propstr = propfile.read(-1);
+
+        hash props;
+        try {
+            props = propstr =~ /^</ ? parse_xml(propstr) : parse_yaml(propstr);
+        } catch (hash<ExceptionInfo> ex) {
+            printf("ERROR: could not parse data in property file %n: %s: %s\n", infile, ex.err, ex.desc);
+            exit(1);
+        }
+
+        # get out the root node (source system)
+        string src = props.firstKey();
+        # let's handle standard Qorus prop.import.
+        # oprop legacy comes in the else block
+        if (src == "qorus_properties") {
+            qrest.put(o, "system/props/import", {"arg": propstr, "domains": domain ? domain : NOTHING}, NOTHING,
+                \info);
+        } else {
+            # is now a list of domains
+            props = props{src}.params;
+
+            # delete the omq domain, because this cannot be overwritten
+            delete props.omq;
+
+            # if there are domains given to be published we process this here
+            if (elements(domain)) {
+                hash oldxml = props;
+                props = {};
+                foreach string d in ( domain ) {
+                    if (o.verbose)
+                        printf("checking for domain '%s' ... ", d);
+                    if (exists oldxml{d}) {
+                        if (o.verbose)
+                            printf("ok\n");
+                        props{d} = oldxml{d};
+                    } else {
+                        if (o.verbose)
+                            printf("not found\n");
+                    }
+                }
+            }
+
+            if (!elements(props)) {
+                printf("ERROR: no domain to publish found\n");
+                exit(1);
+            }
+
+            if (o.verbose) {
+                printf("trying to set properties for domains %s on %n\n", join(",", keys props), instKey);
+            }
+
+            qrest.put(o, "system/props/updateMany", props, NOTHING, \info);
+        } # end of legacy import
+
+        if (o.verbose)
+            printf("done.\n");
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+        options = QorusClient::parseOptions("qorus-client");
+        processCommandLine();
+
+        if (o.remote) {
+            qrest = omqclient.getRemoteRest(o.remote);
+        }
+
+        if (o.url) {
+            qrest.setURL(o.url);
+        }
+        if (o.proxy) {
+            qrest.setProxyURL(o.proxy);
+        }
+
+        if (o.to) {
+            int to = o.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        try {
+            hash i;
+
+            if (o.verbose) {
+                i = qrest.get(o, "system", NOTHING, NOTHING, \info);
+                printf("Qorus %s %s sessionid %d\n", i."omq-version", i."instance-key", i."session-id");
+            }
+
+            if (o.retrieve) {
+                if (!i) {
+                    i = qrest.get(o, "system", NOTHING, NOTHING, \info);
+                }
+                # this is the get properties part
+                doGetProperties(i.'instance-key', o.retrieve);
+            } else if (o.push) {
+                if (!i) {
+                    i = qrest.get(o, "system", NOTHING, NOTHING, \info);
+                }
+                # this is the push properties part
+                doSetProperties(i.'instance-key', o.push, ARGV);
+            } else if (ARGV) {
+                *string cmd = tolower(shift ARGV);
+
+                switch (cmd) {
+                    case "get": {
+                        get(ARGV[0], ARGV[1]);
+                        break;
+                    }
+                    case "set":
+                    case "update": {
+                        update(ARGV[0], ARGV[1], ARGV[2]);
+                        break;
+                    }
+
+                    default: {
+                        throw "UNKNOWN-COMMAND", sprintf("%y is unknown (known commands: %y)", cmd, CmdList);
+                    }
+                }
+            } else {
+                if (!i) {
+                    i = qrest.get(o, "system", NOTHING, NOTHING, \info);
+                }
+
+                # no argument so we just retrieve it
+                doGetProperties(i.'instance-key');
+            }
+        } catch (hash<ExceptionInfo> ex) {
+            if (o.fullex) {
+                stderr.printf("%s\n", get_exception_string(ex));
+            } else {
+                if (info) {
+                    qrest.outputRestErrorMessage(ex, info);
+                } else {
+                    stderr.printf("%s: %s\n", ex.err, ex.desc);
+                }
+            }
+            exit(1);
+        }
+    }
+
+    get(*string domain, *string key) {
+        auto v = qrest.get(o, "system/props", NOTHING, NOTHING, \info);
+        if (exists domain) {
+            v = v{domain};
+            if (exists key && exists v) {
+                v = v{key};
+            }
+        }
+        printf("%N\n", v);
+    }
+
+    update(string domain, string key, *string val) {
+        auto qval;
+        try {
+            qval = exists val ? QorusClientAPI::parseToQoreValue(val) : NOTHING;
+        } catch (hash<ExceptionInfo> ex) {
+            printf("%s: %s\n", ex.err, ex.desc);
+            exit(1);
+        }
+        string v = qrest.put(o, "system/props/" + domain + "?action=set", {"key": key, "args": qval}, NOTHING, \info);
+        printf("%N\n", v);
+    }
+}

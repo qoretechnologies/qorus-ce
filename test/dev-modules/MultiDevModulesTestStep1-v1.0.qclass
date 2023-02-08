@@ -1,0 +1,15 @@
+# name: MultiDevModulesTestStep1
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class MultiDevModulesTestStep1 inherits MultiInterfaceStep {
+    primaryImpl() {
+    }
+}
+# END

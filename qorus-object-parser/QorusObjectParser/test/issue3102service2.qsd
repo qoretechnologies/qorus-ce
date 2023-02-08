@@ -1,0 +1,48 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue3102service2
+# serviceversion: 1.0
+# servicedesc: start service test service
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: issue3102test_function2
+# resource:  resources/resource.xml
+# text-resource: resources/resource.txt
+# bin-resource: resources/resource.bin
+# template: resources/resource.html
+# ENDSERVICE
+
+# name: init
+# desc: initializes the svc-test service
+sub init() {
+    our hash $stats = hash();
+    our bool $run = True;
+}
+# END
+
+# name: start
+# desc: background service thread
+sub start() {
+    my Counter $c(1);
+    while ($run) {
+        $c.waitForZero(1s);
+    }
+}
+# END
+
+# desc: stops the service
+sub stop() {
+    my Counter $c(1);
+    $c.waitForZero(1s);
+    $run = False;
+}
+# END
+
+# desc: provides information about the service
+hash sub info() {
+    return $stats + (
+        "tid": gettid(),
+        );
+}
+# END

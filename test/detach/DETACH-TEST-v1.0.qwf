@@ -1,0 +1,28 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$options = (
+    "no-errors"    : "disable error generation",
+    "fast-exec"    : "skip all event bind operations",
+    "no-init-error": "has no effect on this workflow because onetimeinit errors are not generated; included for option compatibility with other workflows",
+    );
+
+$detach = ( "detach_test_1:1.0" );
+
+$workflows."DETACH-TEST"."1.0" = (
+    "desc"          : "detach test workflow",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : $detach,
+    "options"       : $options,
+    "onetimeinit"   : "detach_onetimeinit:1.0",
+    "detach"        : "detach_test_detach:1.0",
+    "groups"        : "test",
+    "keylist"       : ("key1", "key2", "key3"),
+    );
+

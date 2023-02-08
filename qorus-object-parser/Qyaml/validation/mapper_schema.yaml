@@ -1,0 +1,40 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - mapper
+  mappertype:
+    type: string
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  desc:
+    type: string
+    max-length: 4000
+
+  fields:
+    type: hash
+
+optional:
+  author:
+    type: list
+    element-type: string
+  parse-options:
+    type: list
+    element-type: string
+  mapper-code:
+    type: list
+    element-type: string
+  classes:
+    type: list
+    element-type: string
+  groups:
+    type: list
+    element-type: string
+  options:
+    type: hash
+  context:
+    type: hash

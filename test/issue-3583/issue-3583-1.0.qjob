@@ -1,0 +1,17 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3583 inherits QorusJob {
+    run() {
+        string opt = getConfigItemValue("option");
+        hash<auto> h = {
+            "JobApi::getOption": JobApi::getOption(opt),
+            "JobApi::getOptionArgs": JobApi::getOptionArgs(opt),
+            "UserApi::getOption": UserApi::getOption(opt),
+        };
+        logInfo("%y: got options: %N", opt, h);
+        saveInfo(h);
+    }
+}

@@ -1,0 +1,73 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%requires FsUtil
+
+%exec-class QorusIssue_3252_3253
+
+class QorusIssue_3252_3253 inherits Test {
+    constructor() : Test("Issue_3252_3253Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        bool remote = qrest.get("services/issue-3252/remote");
+        qrest.put("services/issue-3252/load");
+        on_exit qrest.put("services/issue-3252/unload");
+
+        string url = UserApi::qorusGetLocalUrl();
+        hash<auto> url_info = parse_url(url);
+
+        int port = omqservice.user."issue-3252".getPort();
+        url = sprintf("https://%s:%d/issue-3252", url_info.host, port);
+
+        TmpFile cert("cert", "pem");
+        File f();
+        f.open2(cert.path, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write(omqservice.user."issue-3252".getPem());
+
+        RestClient rc({
+            "url": url,
+            "ssl_cert_path": cert.path,
+            "ssl_key_path": cert.path,
+        });
+        hash<auto> resp = rc.get("");
+        #UserApi::logDebug("resp: %N", resp);
+        assertEq(Type::Binary, resp.body.cert.type());
+        resp = rc.get("id");
+        #UserApi::logDebug("resp: %N", resp);
+        assertEq(Type::Int, resp.body.id.type());
+
+        remote = !remote;
+        qrest.put("services/issue-3252/setRemote", {"remote": remote});
+
+        port = omqservice.user."issue-3252".getPort();
+        url = sprintf("https://%s:%d/issue-3252", url_info.host, port);
+
+        rc = new RestClient({
+            "url": url,
+            "ssl_cert_path": cert.path,
+            "ssl_key_path": cert.path,
+        });
+        resp = rc.get("");
+        #UserApi::logDebug("resp: %N", resp);
+        assertEq(Type::Binary, resp.body.cert.type());
+        resp = rc.get("id");
+        #UserApi::logDebug("resp: %N", resp);
+        assertEq(Type::Int, resp.body.id.type());
+    }
+}

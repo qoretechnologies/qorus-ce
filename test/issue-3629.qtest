@@ -1,0 +1,94 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3629Test
+
+class Issue3629Test inherits QUnit::Test {
+    public {
+        RestClient rest;
+
+        const TestString = "test from java";
+    }
+
+    constructor() : Test("issue 3629", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+        addTestCase("main test", \mainTest());
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        string url = UserApi::qorusGetLocalUrl();
+        rest = new RestClient({
+            "url": url,
+        }, True);
+    }
+
+    mainTest() {
+        hash<auto> info = qrest.get("services/JavaRestApiTest");
+        if (!info.remote) {
+            qrest.put("services/JavaRestApiTest/setRemote", {"remote": True});
+        }
+        if (!info.enabled) {
+            qrest.put("services/JavaRestApiTest/enable");
+        }
+        on_exit {
+            qrest.put("services/JavaRestApiTest/unload");
+        }
+        doServiceTest();
+        qrest.put("services/JavaRestApiTest/setRemote", {"remote": False});
+        doServiceTest();
+
+        info = qrest.get("jobs/JavaDynamicJobTest");
+        if (!info.remote) {
+            qrest.put("jobs/JavaDynamicJobTest/setRemote", {"remote": True});
+        }
+        if (!info.enabled) {
+            qrest.put("jobs/JavaDynamicJobTest/enable");
+        }
+        doJobTest();
+        qrest.put("jobs/JavaDynamicJobTest/setRemote", {"remote": False});
+        doJobTest();
+
+        info = qrest.get("workflows/JAVA-DYNAMIC-TEST-1");
+        if (!info.remote) {
+            qrest.put("workflows/JAVA-DYNAMIC-TEST-1/setRemote", {"remote": True});
+        }
+        if (!info.enabled) {
+            qrest.put("workflows/JAVA-DYNAMIC-TEST-1/enable");
+        }
+        doWorkflowTest();
+        qrest.put("workflows/JAVA-DYNAMIC-TEST-1/setRemote", {"remote": False});
+        doWorkflowTest();
+    }
+
+    doServiceTest() {
+        qrest.put("services/JavaRestApiTest/load");
+
+        hash<auto> info;
+        on_error printf("INFO: %N\n", info);
+        string str = rest.get("/java-rest", NOTHING, \info).body;
+        assertEq(TestString, str);
+    }
+
+    doJobTest() {
+        hash<auto> info = qrest.put("jobs/JavaDynamicJobTest/run");
+        assertEq(OMQ::StatComplete, info.status);
+
+        info = qrest.get("jobresults/" + info.job_instanceid);
+        on_error printf("info: %N\n", info);
+        assertEq(TestString, info.info.test);
+    }
+
+    doWorkflowTest() {
+        hash<auto> info = qrest.post("workflows/JAVA-DYNAMIC-TEST-1/execSynchronous", {"staticdata": {}});
+        assertEq(OMQ::StatComplete, info.status);
+        assertEq(TestString, info.dynamicdata.test);
+    }
+}

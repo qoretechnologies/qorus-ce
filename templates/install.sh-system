@@ -1,0 +1,915 @@
+#!/bin/sh
+#
+# Qorus installer script
+# Copyright (C) 2003 - 2020 Qore Technologies s.r.o.
+
+# **** NOTE ****
+# SHUTDOWN_BEFORE should only be set to "Y" if the patch requires a system
+# restart **BEFORE** installing the patch (for example, for schema upgrades)
+SHUTDOWN_BEFORE=N
+
+# RESTART_AFTER should only be set to "Y" if the patch requires a system
+# restart **AFTER** the patch is installed.
+RESTART_AFTER=N
+
+# put any script actions here that should be executed **BEFORE** the install
+pre_install() {
+    # do not remove the following line if this function is otherwise empty or this script will fail on some shells
+    test
+}
+
+# put any script actions here that should be executed **AFTER** the install
+# (for example, delete services, reset workflows, etc)
+post_install() {
+    # do not remove the following line if this function is otherwise empty or this script will fail on some shells
+    test
+}
+
+###########################################
+### do not change anything below this line!
+###########################################
+
+# set this program name
+pn=`basename $0`
+
+usage() {
+    echo usage: $pn [options]
+    printf " -h,--help            this help text\n"
+    printf " -D,--datasource=ARG  set system datasource parameters for initial install\n"
+    printf "                      ARG: driver:user/pass@db[(db-encoding)][%%host][:port]\n"
+    printf "    --data-ts=ARG     sets system data tablespace name (default omq_data)\n"
+    printf "    --index-ts=ARG    sets system index tablespace name (default omq_index)\n"
+    printf " -f,--force           force schema alignment; also allows schema downgrades\n"
+    printf " -v,--verbose         show commands executed\n"
+    exit
+}
+
+db_format_help() {
+    printf "datasource arg format: driver:user/pass@db[(db-encoding)][%%host][:port]\n"
+    exit
+}
+
+command_line() {
+    # process command-line arguments
+    while [ -n "$1" ]; do
+        case "$1" in
+            -D=*|--datasource=*) USER_OMQ=`echo $1|cut -f2- -d=` ;;
+            -D*) USER_OMQ=`echo $1|cut -c3-` ;;
+            --data-ts=*) DATA_TS=`echo $1|cut -f2- -d=` ;;
+            --data-ts*) DATA_TS=`echo $1|cut -c10-` ;;
+            --index-ts=*) INDEX_TS=`echo $1|cut -f2- -d=` ;;
+            --index-ts*) INDEX_TS=`echo $1|cut -c11-` ;;
+            -v|--verbose) verbose=1
+                cmd_add=-v
+                ;;
+            -vv) verbose=1
+                cmd_add=-vv
+                ;;
+            -vvv) verbose=1
+                cmd_add=-vvv
+                ;;
+            -f|--force) force=1
+                st_cmd_add=-f
+                ;;
+            -h|--help) usage ;;
+            *) echo unknown command line option: $1; usage ;;
+        esac
+        shift
+    done
+
+    # if USER_OMQ is set, check format
+    if [ -n "$USER_OMQ" ]; then
+        driver=`echo $USER_OMQ|grep '^[A-Za-z_]*:'|cut -f1 -d:`
+        if [ -z "$driver" ]; then
+            printf "ERROR: system datasource $USER_OMQ is missing the driver argument\n"
+            db_format_help
+        fi
+
+        user='echo $USER_OMQ|grep ^[A-Za-z_]*:.*/|cut -f2 -d:|cut -f1 -d/'
+        if [ -z "$user" ]; then
+            printf "ERROR: system datasource $USER_OMQ is missing the user argument\n"
+            db_format_help
+        fi
+
+        db='echo $USER_OMQ|cut -f2 -d@|sed "s/[\(%:].*//"'
+        if [ -z "$db" ]; then
+            printf "ERROR: system datasource $USER_OMQ is missing the db argument\n"
+            db_format_help
+        fi
+    fi
+}
+
+checkStopped() {
+    # we cannot rely on the return status of ocmd because it was broken in the 1.8.0 releases up to 1.8.0.p2
+    # so we just check for an OK response
+    output=`ocmd ping 2>/dev/null`
+    if [ "$output" = "OK" ]; then
+        printf "*** Qorus is currently running - please shut down the system\n"
+        if [ $1 = "BEFORE" ]; then
+            printf "*** before installing this patch\n"
+        else
+            printf "*** and restart to complete the patch installation\n"
+        fi
+        printf "\n"
+        exit;
+    fi
+}
+
+error() {
+    echo ERROR: $*
+    echo correct the errors listed above and try again
+    exit 1
+}
+
+warning() {
+    printf "*** WARNING: $*\n"
+}
+
+do_db_error() {
+    printf "you cannot complete the installation until the file:\n"
+    printf "    $OPT_FILE\n"
+    printf "exists and is configured with the omq datasource.\n"
+    if [ -f "$OPT_FILE.example" ]; then
+        printf "Please see the file:\n"
+        printf "    $OPT_FILE.example\n"
+        printf "or the Qorus documentation for more information.\n"
+    else
+        printf "Please see the Qorus documentation for more information.\n"
+    fi
+    printf "\n"
+    printf "*** When the file is properly configured, run this install.sh\n"
+    printf "***     script again to complete the installation\n"
+    exit;
+}
+
+check_pkg_os_version() {
+    # fix for package names with dashes in the version
+    dashes=`echo -n qorus-*-$SYSTEM*-$ARCH-binary.tar.gz|sed 's/[^-]//g'|wc -c`
+    offset=`expr 3 + $dashes - 4`
+    PKG_OSVER_MAJOR=`echo $1|cut -f$offset- -d-|sed s/-$ARCH.*//|sed s/$SYSTEM//|cut -f1 -d.`
+    if [ -z "$PKG_OSVER_MAJOR" ]; then
+        return
+    fi
+
+    if [ "$PKG_OSVER_MAJOR" -gt "$OSVER_MAJOR" ]; then
+        return
+    fi
+
+    if [ $PKG_OSVER_MAJOR = $OSVER_MAJOR -a -n "$OSVER_MINOR" ]; then
+        PKG_OSVER_MINOR=`echo $1|cut -f$offset- -d-|sed s/-$ARCH.*//|sed s/$SYSTEM//|cut -f2 -d.`
+        if [ -z "$PKG_OSVER_MINOR" ]; then
+            return
+        fi
+
+        if [ "$PKG_OSVER_MINOR" -gt "$OSVER_MINOR" ]; then
+            return
+        fi
+    fi
+    APP="$1"
+}
+
+upgrade_remove_out_of_date() {
+    if [ -f "$1" ]; then
+        rm "$1"
+        printf "*** upgrade: removed out of date file '%s'\n" "$1"
+    fi
+}
+
+do_upgrade() {
+    # check for upgrade from 1.5.7 or earlier, if so, install backwards-compatibility links
+    if [ -f "$OMQ_DIR"/qlib/omq-client.lib ]; then
+        cd "$OMQ_DIR"/qlib
+        # delete old client library files
+        rm omq-*
+        ln -s qorus-client.ql omq-client.lib
+        printf "*** upgrade: removed old client library and created symbolic link from qorus-client.ql to omq-client.lib\n"
+    fi
+    # check need for binary link
+    if [ -f "$QORUS_BIN/omq" ]; then
+        cd "$QORUS_BIN"
+        rm omq
+        ln -s qorus omq
+        printf "*** upgrade: removed old omq binary and created symbolic link from qorus to omq\n"
+    fi
+
+    remove_out_of_date
+}
+
+# checks for Oracle client files
+check_oracle() {
+    # check for $ORACLE_HOME
+    if [ -n "$ORACLE_HOME" ]; then
+        # check if $ORACLE_HOME exists
+        if [ ! -d "$ORACLE_HOME" ]; then
+            error oracle home \"$ORACLE_HOME\" does not exist, cannot proceed without Oracle support
+        fi
+    elif [ -z "$TNS_ADMIN" ]; then
+        error neither ORACLE_HOME \(for full oracle installations\) nor TNS_ADMIN \(for Oracle client installations\) is set, cannot proceed without Oracle support
+    else
+        # check if $TNS_ADMIN exists
+        if [ ! -d "$TNS_ADMIN" ]; then
+            error value of TNS_ADMIN=\"$TNS_ADMIN\" does not exist, cannot proceed without Oracle support
+        fi
+    fi
+
+    # do not perform library checks on Windows
+    if [ "$SYSTEM" != "Windows" ]; then
+        # loop through each member of the dynamic library path
+        # FIXME: does not work if the path where the library is has any spaces in it
+        for a in `echo $dlp|sed 's/:/ /g'`; do
+            if [ -f "`/bin/ls $a/libclntsh.$soname.* 2>/dev/null|tail -1`" ]; then
+                ora_found=1
+                break;
+            fi
+        done
+
+        # Linux: Try to find it in ld.conf if there is no oracle lib in ENV
+        ldsoconf=/etc/ld.so.conf.d/
+        if [ -z "$ora_found" -a -d $ldsoconf ]; then
+            for a in `cat $ldsoconf/*conf`
+            do
+                if [ -f "`/bin/ls $a/libclntsh.$soname.* 2>/dev/null|tail -1`" ]; then
+                    ora_found=1
+                    break;
+                fi
+            done
+        fi
+
+        if [ -z "$ora_found" ]; then
+            error no Oracle client library found in $dname or in $ldsoconf
+        fi
+    fi
+}
+
+# checks for PostgreSQL client files/psql
+check_pgsql() {
+    # empty for now
+    test
+}
+
+# checks for MySQL client files/mysql
+check_mysql() {
+    # empty for now
+    test
+}
+
+# sets os and cpu-specific variables
+set_system_vars() {
+    # set install variables
+    CP=cp
+    SYSTEM=`uname -s`
+
+    if [ $SYSTEM = "HP-UX" ]; then
+        if [ -n "`uname -m| grep 9000`" ]; then
+            ARCH="parisc"
+        else
+            ARCH="itanium"
+        fi
+        OSVER_MAJOR=`uname -r|cut -f2 -d.`
+
+        dlp="$SHLIB_PATH"
+        dname=SHLIB_PATH
+        soname=sl
+    elif [ -n "`echo $SYSTEM|grep ^MINGW[36][24]`" ] || [ -n "`echo $SYSTEM|grep ^MSYS`" ]; then
+        SYSTEM=Windows
+        # assume forward and backwards compatibility with Windows for now
+        OSVER_MAJOR=1
+        OSVER_MINOR=0
+        cpu=`wmic cpu get caption|tail -2|head -1|cut -f1 -d\ `
+        if [ "$cpu" = "Intel64" ]; then
+            ARCH=x86_64
+        elif [ "$cpu" = "x86" ]; then
+            ARCH=i386
+        else
+            ARCH=$cpu
+        fi
+    else
+        if [ $SYSTEM = "OSX" -o $SYSTEM = "Darwin" ]; then
+            dlp="$DYLD_LIBRARY_PATH"
+            soname=dylib
+            dname=DYLD_LIBRARY_PATH
+        else
+            dlp="$LD_LIBRARY_PATH"
+            dname=LD_LIBRARY_PATH
+            soname=so
+        fi
+
+        if [ $SYSTEM = "SunOS" ]; then
+            SYSTEM=Solaris
+            OSVER_MAJOR=`uname -r|cut -f2 -d.`
+        elif [ $SYSTEM = "Linux" ]; then
+            # get kernel version info
+            OSVER_MAJOR=`uname -r|cut -f1 -d.`
+            OSVER_MINOR=`uname -r|cut -f2 -d.`
+        elif [ $SYSTEM = "Darwin" ]; then
+            SYSTEM=OSX
+            # get kernel version info
+            OSVER_MAJOR=`sw_vers -productVersion|cut -f1 -d.`
+            OSVER_MINOR=`sw_vers -productVersion|cut -f2 -d.`
+        fi
+        ARCH=`uname -p`
+        if [ "$ARCH" = "unknown" ]; then
+            ARCH=`uname -m`
+        fi
+        if [ $ARCH = "i586" -o $ARCH = "i686" -o $ARCH = "athlon" ]; then
+            ARCH=i386
+        elif [ $ARCH = "i386" -a $SYSTEM = "Solaris" ]; then
+            if [ "`isainfo|grep 64`" ]; then
+                ARCH=x86_64
+            fi
+        fi
+        # make sure it's not really an x86_64 box by checking uname -m
+        if [ $ARCH = "i386" ]; then
+            ta=`uname -m`
+            if [ $ta = "x86_64" ]; then
+                ARCH=x86_64
+            fi
+        fi
+    fi
+    if [ -z "$ARCH" ]; then
+        ARCH="unknown"
+    fi
+}
+
+# checks for installation packages, verifies binary compatibility if binary packages are present
+check_release_contents() {
+    # change directory to release directory
+    cd `dirname $0`
+    # set install location
+    dir=`pwd`
+
+    if [ -n "$OSVER_MAJOR" ]; then
+        if [ -n "$OSVER_MINOR" -a -f qorus-*-$SYSTEM$OSVER_MAJOR.$OSVER_MINOR-$ARCH-binary.tar.gz ]; then
+            APP=`ls qorus-*-$SYSTEM$OSVER_MAJOR.$OSVER_MINOR-$ARCH-binary.tar.gz 2>/dev/null`
+        elif [ -f qorus-*-$SYSTEM$OSVER_MAJOR-$ARCH-binary.tar.gz ]; then
+            APP=`ls qorus-*-$SYSTEM$OSVER_MAJOR-$ARCH-binary.tar.gz 2>/dev/null`
+        else
+            list=`ls qorus-*-$SYSTEM*-$ARCH-binary.tar.gz 2>/dev/null`
+            # try them all to get latest supported version if possible
+            for app in $list; do
+                check_pkg_os_version $app
+            done
+	    # take the binary package without a version in case of no match
+	    if [ -z "$APP" ]; then
+		APP=`ls qorus-*-$SYSTEM-$ARCH-binary.tar.gz 2>/dev/null`
+	    fi
+        fi
+    else
+        APP=`ls qorus-*-$SYSTEM*-$ARCH-binary.tar.gz 2>/dev/null|head -1`
+    fi
+
+    # check for compatible architecture
+    if [ -z "$APP" ]; then
+        if [ $SYSTEM = "OSX" ]; then
+            APP=`ls qorus-*-$SYSTEM*-universal-binary.tar.gz 2>/dev/null|head -1`
+        elif [ $ARCH = "x86_64" ]; then
+            APP=`ls qorus-*-$SYSTEM*-i386-binary.tar.gz 2>/dev/null|head -1`
+            if [ -n "$APP" ]; then
+                ARCH=i386
+            fi
+        fi
+    fi
+
+    # make sure this architecture/OS is supported in this package
+    if [ -z "$APP" -a -n "`ls qorus-*-binary.tar.gz 2>/dev/null`" ]; then
+        if [ -n "$OSVER_MAJOR" ]; then
+            if [ -n "$OSVER_MAJOR_ALT" ]; then
+                OSVER_MAJOR="$OSVER_MAJOR_ALT"
+            fi
+            if [ -n "$OSVER_MINOR" ]; then
+                printf "Binaries for %s %s.%s %s are not included in this package\n" "$SYSTEM" "$OSVER_MAJOR" "$OSVER_MINOR" "$ARCH"
+            else
+                printf "Binaries for %s %s %s are not included in this package\n" "$SYSTEM" "$OSVER_MAJOR" "$ARCH"
+            fi
+        else
+            printf "Binaries for %s %s are not included in this package\n" "$SYSTEM" "$ARCH"
+        fi
+        printf "This package cannot be installed without the appropriate binary support\n"
+        exit 1
+    fi
+
+    APPAI=`ls qorus-*-noarch.tar.gz 2>/dev/null`
+    USERCODE=`ls qorus-user-*.tar.gz 2>/dev/null`
+    LOAD_SCRIPTS=`ls releases/*.qrf 2>/dev/null`
+    REPOSITORY=`ls *.dat 2>/dev/null`
+
+    # if release is empty then exit
+    if [ -z "$APP" -a -z "$APPAI" -a -z "$USERCODE" -a -z "$LOAD_SCRIPTS" -a -z "$REPOSITORY" ]; then
+        error no release contents
+    fi
+
+    if [ -n "$APP" -a "$OMQ_DIR" = "LSB" ]; then
+        error cannot install or upgrade LSB system from a tar package: get RPMs instead
+    fi
+}
+
+check_environment() {
+    if [ "$SHUTDOWN_BEFORE" = "Y" ]; then
+        checkStopped BEFORE
+    fi
+
+    TODAY=`date +%Y-%m-%d`
+
+    # check environment
+    if [ -z "$OMQ_DIR" ]; then
+        if [ -x /usr/bin/qorus ]; then
+            OMQ_DIR=LSB
+        elif [ -x /opt/qorus/bin/qorus ]; then
+            OMQ_DIR=/opt/qorus
+        else
+            error \$OMQ_DIR has not been set in the environment
+        fi
+    fi
+
+    # check for target directory
+    if [ ! -d "$OMQ_DIR" ]; then
+        error target directory \"$OMQ_DIR\" does not exist
+    fi
+
+    if [ "$OMQ_DIR" = "LSB" ]; then
+        OMQ_DIR=/var/opt/qorus
+        OPT_FILE=/etc/qorus/options
+        DB_FILE=/etc/qorus/dbparams
+        QORUS_BIN=/usr/bin
+        REPO_DIR=$OMQ_DIR/user/repos
+        LSB=1
+    else
+        OPT_FILE="$OMQ_DIR"/etc/options
+        DB_FILE="$OMQ_DIR"/etc/dbparams
+        QORUS_BIN="$OMQ_DIR"/bin
+        REPO_DIR="$OMQ_DIR"/etc
+        LSB=0
+    fi
+
+    # check if $QORUS_BIN is in the path if not on Windows
+    if [ "$SYSTEM" != "Windows" ]; then
+        if [ -z "`echo $PATH|grep \"$QORUS_BIN\"`" ]; then
+            warning adding $QORUS_BIN to the PATH
+            PATH="$QORUS_BIN:$PATH"
+            export PATH
+            fixed_path=yes
+            env_changed=yes
+        elif [ "`which qore`" != "$OMQ_DIR/bin/qore" ]; then
+            PATH="$QORUS_BIN:$PATH"
+            export PATH
+            # only warn if there is a qore binary already there
+            if [ -f "$OMQ_DIR/bin/qore" ]; then
+                warning adding $QORUS_BIN to the beginning of the PATH
+                fixed_path=yes
+                env_changed=yes
+            fi
+        fi
+    fi
+
+    # check if $OMQ_DIR is writable by install.sh
+    if [ ! -w "$OMQ_DIR" ]; then
+        error target directory $OMQ_DIR is not writable
+    fi
+
+    # check if $OMQ_DIR/lib is in the library path (only if there are libraries in $OMQ_DIR/lib)
+    if [ "$SYSTEM" = "Solaris" ]; then
+        fargs_pre="-name"
+        fargs_post="-print"
+    else
+        fargs_pre="-maxdepth 1 -name"
+        fargs_post="-print -quit"
+    fi
+    if [ $LSB -eq 0 -a "$SYSTEM" != "Windows" ] && [ -n "`find $OMQ_DIR/lib $fargs_pre '*'.$soname $fargs_post`" ]; then
+        if [ $SYSTEM = "OSX" ]; then
+            if [ -z "`echo $DYLD_LIBRARY_PATH | grep \"$OMQ_DIR/lib\"`" ]; then
+                warning adding $OMQ_DIR/lib to DYLD_LIBRARY_PATH
+                DYLD_LIBRARY_PATH="$OMQ_DIR/lib:$DYLD_LIBRARY_PATH"
+                export DYLD_LIBRARY_PATH
+                fixed_dyld_path=yes
+                env_changed=yes
+            fi
+        elif [ $SYSTEM = "HP-UX" ]; then
+            if [ -z "`echo $SHLIB_PATH | grep \"$ORACLE_HOME/lib\"`" ]; then
+                warning adding $OMQ_DIR/lib to SHLIB_PATH
+                SHLIB_PATH="$OMQ_DIR/lib:$SHLIB_PATH"
+                export SHLIB_PATH
+                fixed_shlib_path=yes
+                env_changed=yes
+            fi
+        else  # check if $OMQ_DIR/lib is in the LD_LIBRARY_PATH
+            if [ -z "`echo $LD_LIBRARY_PATH | grep \"$OMQ_DIR/lib\"`" ]; then
+                warning adding $OMQ_DIR/lib to LD_LIBRARY_PATH
+                LD_LIBRARY_PATH="$OMQ_DIR/lib:$LD_LIBRARY_PATH"
+                export LD_LIBRARY_PATH
+                fixed_ld_path=yes
+                env_changed=yes
+            fi
+        fi
+    fi
+
+    # check for valid QORE_INCLUDE_DIR if not on Windows
+    if [ "$SYSTEM" != "Windows" ]; then
+        if [ -z "$QORE_INCLUDE_DIR" ]; then
+            warning adding $OMQ_DIR/qlib to QORE_INCLUDE_DIR
+            QORE_INCLUDE_DIR="$OMQ_DIR"/qlib
+            export QORE_INCLUDE_DIR
+            fixed_qi_path=yes
+            env_changed=yes
+        elif [ -z "`echo $QORE_INCLUDE_DIR | grep \"$OMQ_DIR/qlib\"`" ]; then
+            warning adding $OMQ_DIR/qlib to QORE_INCLUDE_DIR
+            QORE_INCLUDE_DIR="$OMQ_DIR/qlib:$QORE_INCLUDE_DIR"
+            export QORE_INCLUDE_DIR
+            fixed_qi_path=yes
+            env_changed=yes
+        fi
+    fi
+}
+
+parse_omq_ds() {
+    # check $OPT_FILE file for omq datasource first
+    if [ -f "$OPT_FILE" ]; then
+        omqds="`grep \"^qorus\.systemdb:\" \"$OPT_FILE\" 2>/dev/null`"
+    fi
+
+    if [ -z "$omqds" ]; then
+        # check $DB_FILE file for omq datasource second for backwards compatibility
+        if [ -f "$DB_FILE" ]; then
+            omqds="`grep omq= \"$DB_FILE\" 2>/dev/null`"
+        fi
+    fi
+
+    echo $omqds
+}
+
+remove_out_of_date() {
+    # remove old include files
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/HTTPClient.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/XmlRpcClient.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/qorus.ql
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/QorusAPI.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/SQLInterface.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/Audit.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/QorusSystemAPI.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/ErrorManager.qc
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/misc.ql
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/qorus-lib-client-system.ql
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/intern/qorus-version.ql
+
+    if [ $LSB -eq 0 ]; then
+        # remove old auto modules
+        upgrade_remove_out_of_date "$OMQ_DIR"/lib/modules/auto/oracle.qmod
+        upgrade_remove_out_of_date "$OMQ_DIR"/lib/modules/auto/mysql.qmod
+    fi
+
+    # remove old check-schema.q script
+    upgrade_remove_out_of_date "$QORUS_BIN/check-schema.q"
+
+    # remove old library files if present
+    if [ $SYSTEM = "HP-UX" ]; then
+        rm -f "$OMQ_DIR"/lib/libqore.sl.1.*
+    else
+        rm -f "$OMQ_DIR"/lib/libqore.so.1.*
+    fi
+
+    # remove old modules replaced by split modules
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/SqlUtil.qm
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/ConnectionProvider.qm
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/BulkSqlUtil.qm
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/CsvUtil.qm
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/FixedLengthUtil.qm
+
+    # remove split modules with updated internals
+    upgrade_remove_out_of_date "$OMQ_DIR"/qlib/SwaggerDataProvider
+}
+
+install_release() {
+    # make sure everything is there
+    for a in $APP $USERCODE; do
+        if [ ! -f "$a" ]; then
+            error missing $a
+        fi
+    done
+    for a in $LOAD_SCRIPTS; do
+        if [ ! -f "$a" ]; then
+            error missing load script: releases/$a
+        fi
+    done
+
+    # change to target directory
+    cd "$OMQ_DIR"
+
+    # remove split user modules before installing release
+    remove_out_of_date
+
+    # install architecture-dependent application files
+    if [ -n "$APP" ]; then
+        # issue #1857: unset and reset LD_PRELOAD before calling gunzip
+        LD_PRELOAD_SAVE="$LD_PRELOAD"
+        unset LD_PRELOAD
+        echo installing Qorus architecture-dependent files from: $APP
+        # first erase any binaries/libraries in the archive
+        gunzip -dc "$dir"/$APP |tar tf - |cut -f1 -d\ |while read a; do if [ -f "$a" ]; then rm "$a"; fi; done
+        # now extract the new versions
+        gunzip -dc "$dir"/$APP |tar xf -
+        if [ -n "$LD_PRELOAD_SAVE" ]; then
+            LD_PRELOAD="$LD_PRELOAD_SAVE"
+        fi
+    fi
+
+    # check for library issues on Linux
+    if [ $LSB -eq 0 -a $SYSTEM = "Linux" ]; then
+        if [ $ARCH = "x86_64" ]; then
+            LS=64
+        fi
+
+        # check for missing libraries
+        lc=`ldd "$OMQ_DIR"/lib/libqore.so 2>/dev/null|grep "not found"`
+        if [ -n "$lc" ]; then
+            echo ERROR: invalid installation, libraries not found
+            echo $lc
+            exit 1
+        fi
+    fi
+
+    # remove old logo file
+    upgrade_remove_out_of_date $OMQ_DIR/etc/qoretechnologies-logo.jpg
+
+    # install architecture-independent files
+    if [ -n "$APPAI" ]; then
+        echo installing Qorus architecture-independent files from: $APPAI
+        # now extract the new versions
+        gunzip -dc "$dir"/$APPAI |tar xf -
+        if [ $? -ne 0 ]; then
+            error extracting files returned an error
+        fi
+    fi
+
+    # install user code
+    if [ -n "$USERCODE" ]; then
+        echo installing Qorus user code from: $USERCODE
+        gunzip -dc "$dir"/$USERCODE |tar xf -
+        if [ $? -ne 0 ]; then
+            error extracting files returned an error
+        fi
+    fi
+
+    # make release directory if it doesn't already exist
+    if [ ! -d "$OMQ_DIR"/releases ]; then
+        mkdir "$OMQ_DIR"/releases
+    fi
+
+    # install release load scripts
+    if [ -n "$LOAD_SCRIPTS" ]; then
+        printf "installing release files: "
+        for a in $LOAD_SCRIPTS; do
+            $CP "$dir"/$a "$OMQ_DIR"/releases
+            if [ $? -ne 0 ]; then
+                error copying "$dir"/$a returned an error
+            fi
+        done
+        echo done
+    fi
+
+    # check for override for system datasource
+    if [ -n "$USER_OMQ" ]; then
+        # check for omq datasource and write it into $OPT_FILE if it does not exist
+        omqds=$(parse_omq_ds)
+        if [ -z "$omqds" ]; then
+            NOW=`date +%Y-%m-%dT%H:%M:%S`
+            printf "# created by Qorus install script at $NOW\nqorus.systemdb: %s\n" "$USER_OMQ" 2>/dev/null >> "$OPT_FILE"
+            if [ $? -ne 0 ]; then
+                warning cannot write to $OPT_FILE
+                warning the system will not start until this file exists with systemdb defined
+            else
+                echo systemdb: $USER_OMQ written into $OPT_FILE
+            fi
+        else
+            warning ignoring $omqds and using $USER_OMQ for system schema
+        fi
+    fi
+
+    # check for override of tablespace names
+    if [ -n "$DATA_TS" -o -n "$INDEX_TS" ]; then
+        # check for $OPT_FILE file and create it if it doesn't exist
+        if [ ! -f "$OPT_FILE" ]; then
+            NOW=`date +%Y-%m-%dT%H:%M:%S`
+            printf "# created by Qorus install script at $NOW\n" 2>/dev/null >"$OPT_FILE"
+            if [ -n "$DATA_TS" ]; then
+                printf "qorus-client.omq-data-tablespace: %s\n" "$DATA_TS" 2>/dev/null >>"$OPT_FILE"
+            fi
+            if [ -n "$INDEX_TS" ]; then
+                printf "qorus-client.omq-index-tablespace: %s\n" "$INDEX_TS" 2>/dev/null >>"$OPT_FILE"
+            fi
+        else
+            warning ignoring $OPT_FILE and using tablespace options $DATA_TS $INDEX_TS
+        fi
+    fi
+
+    if [ -n "$LOAD_SCRIPTS" ]; then
+        ST_CMD="$QORUS_BIN/schema-tool $st_cmd_add"
+        OLOAD_CMD="$QORUS_BIN/oload"
+
+        # do dbparams and omq datasource check if no value was given on the command-line
+        if [ -z "$USER_OMQ" ]; then
+            # check for omq datasource
+            omqds=$(parse_omq_ds)
+            if [ -z "$omqds" ]; then
+                printf "ERROR: the system schema (omq) is not defined in $OPT_FILE\n"
+                do_db_error
+            fi
+        else
+            # if USER_OMQ is set, then amend the schema-tool command-line arguments
+            # to set the system schema parameters
+            ST_CMD="$ST_CMD -Domq=$USER_OMQ"
+            OLOAD_CMD="$OLOAD_CMD -Domq=$USER_OMQ"
+        fi
+
+        if [ -n "$DATA_TS" ]; then
+            ST_CMD="$ST_CMD --data-ts=omq=$DATA_TS"
+            OLOAD_CMD="$OLOAD_CMD --data-ts=omq=$DATA_TS"
+        fi
+
+        if [ -n "$INDEX_TS" ]; then
+            ST_CMD="$ST_CMD --index-ts=omq=$INDEX_TS"
+            OLOAD_CMD="$OLOAD_CMD --index-ts=omq=$INDEX_TS"
+        fi
+
+        if [ -n "$verbose" ]; then
+            echo executing: $ST_CMD
+        fi
+        schema=`$ST_CMD --ignore-warnings`
+        rc=$?
+        # if there was an error
+        if [ $rc -ne 0 ]; then
+            if [ $rc -eq 1 ]; then
+                error schema status is MISSING
+            elif [ $rc -eq 2 ]; then
+                error schema status is INVALID
+            elif [ $rc -eq 3 ]; then
+                error schema status is VERSION-ERROR
+            elif [ $rc -eq 5 ]; then
+                error cannot initialize client library
+            else
+                error "schema status is UNKNOWN (code $rc)"
+            fi
+        fi
+        if [ -z "$schema" ]; then
+            error unable to determine schema status
+        fi
+        echo schema status is $schema
+
+        # verify DB access
+        if [ -n "$verbose" ]; then
+            echo executing: $ST_CMD -t
+        fi
+        db_driver=`$ST_CMD -t  --ignore-warnings`
+        if [ -z "$db_driver" ]; then
+            error unable to determine system schema database driver name
+        fi
+        echo system schema database driver is $db_driver
+        case "$db_driver" in
+            oracle) check_oracle;;
+            pgsql)  check_pgsql;;
+            mysql)  check_mysql;;
+            #freetds) check_freetds;;
+            #sybase) check_sybase;;
+            *)      error database driver $db_driver is not supported for the system schema
+        esac
+
+        # try to create or upgrade system schema
+        if [ "$schema" = "EMPTY" ]; then
+            if [ -n "$verbose" ]; then
+                echo executing: $ST_CMD -V $cmd_add
+            fi
+            $ST_CMD -V $cmd_add
+            if [ $? -ne 0 ]; then
+                error "schema creation failed, aborting installation"
+            fi
+            NEW_INSTALL=yes
+        else
+            if [ -n "$verbose" ]; then
+                echo executing: $ST_CMD --current
+            fi
+            targ=`$ST_CMD --current`
+            if [ "$schema" = "$targ" ]; then
+                echo schema is already at target version $targ
+                if [ -n "$force" ]; then
+                    echo "schema verification forced; running schema alignment with -f option"
+                    # try to upgrade system schema
+                    if [ -n "$verbose" ]; then
+                        echo executing: $ST_CMD -V $cmd_add
+                    fi
+                    $ST_CMD -V $cmd_add
+                    if [ $? -ne 0 ]; then
+                        error "schema verification failed, aborting installation"
+                    fi
+                fi
+
+                # execute new release load script
+                if [ -n "$verbose" ]; then
+                    echo executing: $ST_CMD --new-release $cmd_add
+                fi
+                $ST_CMD --new-release $cmd_add
+            else
+                # try to upgrade system schema
+                if [ -n "$verbose" ]; then
+                    echo executing: $ST_CMD -V $cmd_add
+                fi
+                $ST_CMD -V $cmd_add
+                if [ $? -ne 0 ]; then
+                    error "schema upgrade from $schema to $targ failed, aborting installation"
+                fi
+            fi
+        fi
+
+        printf "executing schema release loader files\n"
+        for a in $LOAD_SCRIPTS; do
+            # ignore any old schema scripts if found, this is now managed by schema-tool
+            if [ -n "`echo $a | grep qorus-.*`" ]; then
+                #echo ignoring schema load script $a
+                continue
+            fi
+
+            echo executing: $OLOAD_CMD @$a $cmd_add
+            $OLOAD_CMD @$a $cmd_add #| tee $OLOAD_OUTPUT
+            if [ $? -ne 0 ]; then
+                error "error in load script $a, aborting installation"
+            fi
+        done
+        echo done executing release files
+    fi
+}
+
+post_install_messages() {
+    if [ "$RESTART_AFTER" = "Y" -o "$env_changed" = "yes" ]; then
+        printf "\n"
+        printf "**********************************************************\n"
+        printf "ATTENTION: MANUAL STEPS NECESSARY TO COMPLETE INSTALLATION\n"
+        printf "**********************************************************\n"
+        printf "\n"
+    fi
+
+    if [ "$env_changed" = "yes" ]; then
+
+        printf "*** this script made changes to your environment in order to install\n"
+        printf "*** Qorus Integration Engine.  You must make these changes permanent\n"
+        printf "*** in order to start the application.  List of changes:\n\n"
+
+        if [ "$fixed_path" = "yes" ]; then
+            printf "   PATH=%s\n\n" "$PATH"
+        fi
+
+        if [ "$fixed_ld_path" = "yes" ]; then
+            printf "   LD_LIBRARY_PATH=%s\n\n" "$LD_LIBRARY_PATH"
+        fi
+
+        if [ "$fixed_dyld_path" = "yes" ]; then
+            printf "   DYLD_LIBRARY_PATH=%s\n\n" "$DYLD_LIBRARY_PATH"
+        fi
+
+        if [ "$fixed_shlib_path" = "yes" ]; then
+            printf "   SHLIB_PATH=%s\n\n" "$SHLIB_PATH"
+        fi
+
+        if [ "$fixed_qi_path" = "yes" ]; then
+            printf "   QORE_INCLUDE_DIR=%s\n\n" "$OMQ_DIR/qlib"
+        fi
+    fi
+
+    if [ "$RESTART_AFTER" = "Y" ]; then
+        checkStopped AFTER
+    fi
+
+    if [ -z "$QORE" -a "$SHUTDOWN_BEFORE" = "Y" ]; then
+        printf "\n"
+        printf " *** Qorus may now be restarted\n"
+        printf "\n"
+    fi
+}
+
+# process any command-line arguments
+command_line $*
+
+set_system_vars
+check_release_contents
+check_environment
+
+echo checks are OK, installing from $dir
+
+pre_install
+
+install_release
+
+# check if qorus is currently running
+# we cannot rely on the return status of ocmd because it was broken in the 1.8.0 releases up to 1.8.0.p2
+output=`ocmd ping 2>/dev/null`
+if [ "$output" = "OK" ]; then
+    running=yes
+else
+    # if Qorus is not running, then ignore any RESTART_AFTER flag
+    unset RESTART_AFTER
+fi
+
+# run upgrade actions
+do_upgrade
+
+post_install
+
+echo installation complete!
+
+post_install_messages

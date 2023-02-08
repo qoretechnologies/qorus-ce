@@ -1,0 +1,401 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires SqlUtil
+%requires QUnit
+%requires Qyaml
+%requires QorusObjectParser
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string qopSrcDir = get_script_dir() + Qore::DirSep + "qorus-object-parser-test" + Qore::DirSep +
+                           "QorusObjectParser" + Qore::DirSep + "test" + Qore::DirSep;
+        string yamlSrcDir = get_script_dir() + Qore::DirSep + "qorus-object-parser-test" + Qore::DirSep +
+                           "Qyaml" + Qore::DirSep + "test" + Qore::DirSep;
+        string issue3274SrcDir = get_script_dir() + Qore::DirSep + "issue-3274" + Qore::DirSep;
+
+        const ignoreFiles = {
+            "service3.qsd": True,
+            "service4.qsd": True,
+            "service5.qsd": True,
+            "config-item-values.yaml": True,
+            "pipeline.yaml": True,
+            "type.yaml": True,
+            "fsm.yaml": True,
+        };
+
+        hash selectMethods;
+    }
+
+    constructor(): Test("QorusIssue3102_oload_yaml", OMQ::version) {
+        selectMethods = {
+            "workflow": {
+                "method": \selectWorkflow(),
+                "files": ("issue3102workflow",)
+            },
+            "class": {
+                "method": \selectClass(),
+                "files": ("issue3102class", "issue3102javaclass")
+            },
+            "step": {
+                "method": \selectStep(),
+                "files": ("issue3102step",),
+            },
+            "service": {
+                "method": \selectService(),
+            },
+            "job": {
+                "method": \selectJob(),
+            },
+            "function": {
+                "method": \selectFunction(),
+                "files": ("issue3102function",)
+            },
+            # "mapper-code": {
+            #     "method": \selectClass(),
+            #     "files": ("issue3102mappercode",)
+            # },
+            "constant": {
+                "method": \selectConstant(),
+            },
+            "group": {
+                "method": \selectGroup(),
+            },
+            "mapper": {
+                "method": \selectMapper(),
+                "files": ("issue3102mapper", "issue3102mapper2")
+            },
+            "connection": {
+                "method": \selectConnection(),
+            },
+            "value-map": {
+                "method": \selectValueMap(),
+            },
+            "queue": {
+                "method": \selectQueue(),
+            },
+            "event": {
+                "method": \selectEvent(),
+            },
+        };
+
+        QorusClient::init2();
+
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private hash<auto> selectInterface(string type, hash select_hash) {
+        AbstractTable interfaceTable = new Table(omq, type).getTable();
+        return interfaceTable.selectRow(select_hash);
+    }
+
+    private hash<auto> selectConstant(string ignored) {
+        return selectInterface("constants", {
+            "columns": ("name", "version", cop_as("description", "desc"), "author", cop_as("body", "code")),
+            "where": {
+                "name": op_eq("issue3102constant"),
+            },
+        });
+    }
+
+    private hash<auto> selectGroup(string ignored) {
+        return selectInterface("groups", {
+            "columns": ("name", cop_as("description", "desc")),
+            "where": {
+                "name": op_eq("issue3102group"),
+            },
+        });
+    }
+
+    private hash<auto> selectQueue(string ignored) {
+        return selectInterface("queues", {
+            "columns": ("name", cop_as("description", "desc")),
+            "where": {
+                "name": op_eq("issue3102queue"),
+            },
+        });
+    }
+
+    private hash<auto> selectEvent(string ignored) {
+        return selectInterface("workflow_event_types", {
+            "columns": ("name", cop_as("description", "desc")),
+            "where": {
+                "name": op_eq("issue3102event"),
+            },
+        });
+    }
+
+    private hash<auto> selectService(string ignored) {
+        return selectInterface("services", {
+            "columns": ("name", "version", "author", cop_as("service_type", "servicetype"),
+                        cop_as("class_name", "\"class-name\""), "autostart", "remote",
+                        # cop_as("service_modules", "modules"),
+                        cop_as("description", "desc"), cop_as("language", "lang"),
+                        cop_as("class_source", "code")),
+            "where": {
+                "name": op_eq("issue3102service"),
+            },
+        });
+    }
+
+    private hash<auto> selectJob(string ignored) {
+        return selectInterface("jobs", {
+            "columns": ("name",  cop_as("class_name", "\"class-name\""), "version", "author",
+                        # cop_as("job_modules", "modules"),
+                        "active",
+                        cop_as("run_skipped", "\"run-skipped\""), "day", "month", "minute", "hour", "wday",
+                        cop_as("description", "desc"), cop_as("expiry_date", "\"expiry-date\""),
+                        cop_as("language", "lang"), "code", "remote"),
+            "where": {
+                "name": op_eq("issue3102job"),
+            },
+        });
+    }
+
+    private hash<auto> selectWorkflow(string name) {
+        return selectInterface("workflows", {
+            "columns": ("name",  "version", "author", "autostart", "sla_threshold", "code", cop_as("language", "lang"),
+                        # cop_as("workflow_modules", "modules"),
+                        cop_as("description", "desc"), "remote"),
+            "where": {
+                "name": op_eq(name),
+            },
+        });
+    }
+
+    private hash<auto> selectValueMap(string ignored) {
+        return selectInterface("value_maps", {
+            "columns": ("name", cop_as("description", "desc"), "author", cop_as("throws_exception", "exception"),
+                        "valuetype", "dateformat",),
+            "where": {
+                "name": op_eq("issue3102vmap"),
+            },
+        });
+    }
+
+    private hash<auto> selectConnection(string ignored) {
+        return selectInterface("connections", {
+            "columns": ("name", cop_as("description", "desc"), "url", "options", "connection_type"),
+            "where": {
+                "name": op_eq("issue3102connection"),
+            },
+        });
+    }
+
+    private hash<auto> selectFunction(string name) {
+        return selectInterface("function_instance", {
+            "columns": ("name", cop_as("function_type", "functiontype"), "version", "author", cop_as("body", "code"),
+                        cop_as("description", "desc")),
+            "where": {
+                "name": op_eq(name),
+            },
+        });
+    }
+
+    private hash<auto> selectClass(string name) {
+        return selectInterface("classes", {
+            "columns": ("name", "version", "author", cop_as("body", "code"), cop_as("description", "desc"),
+                        cop_as("language", "lang")),
+            "where": {
+                "name": op_eq(name),
+            },
+        });
+    }
+
+    private hash<auto> selectStep(string name) {
+        return selectInterface("steps", {
+            "columns": ("name", "steptype", "arraytype", "version", "author", "code", cop_as("description", "desc"),
+                        cop_as("language", "lang"), cop_as("user_interaction", "\"user-interaction\"")),
+            "where": {
+                "name": op_eq(name),
+            },
+        });
+    }
+
+    private hash<auto> selectMapper(string name) {
+        hash<auto> mapper = selectInterface("mappers", {
+            "columns": ("name", "version", "mapperid", "author", cop_as("description", "desc"), cop_as("type", "mappertype"),
+                        cop_as("parse_options", "\"parse-options\""), "fields", "options"),
+            "where": {
+                "name": op_eq(name),
+            },
+        });
+
+        # add mapper-code
+        Table mapper_lib(omq, "mapper_lib");
+        *list<auto> mapper_code = mapper_lib.select({
+            "columns": "name",
+            "where": {"mapperid": mapper.mapperid},
+        }).name;
+        if (mapper_code) {
+            mapper."mapper-code" = mapper_code;
+        }
+        return mapper - "mapperid";
+    }
+
+    private *string readCode(hash yaml, string dir) {
+        if (!exists yaml{"code"}) {
+            return NOTHING;
+        }
+
+        ReadOnlyFile file(dir + yaml{"code"});
+        return file.read(-1);
+    }
+
+    private string wrapOptionCode(string code_, *list args) {
+        string result = "" + code_ + "(";
+        if (exists args) {
+            map result += ($1.typeCode() == NT_STRING ? '"' + $1 + '"' : $1.toString()) + ",", args;
+            result = substr(result, 0, result.length() - 1);
+        }
+        result += ")";
+        return result;
+    }
+
+    private:internal wrapCode(reference<hash> parsed_yaml, string yaml_key, code wrap_function,
+                              bool args) {
+        foreach string key in (keys parsed_yaml{yaml_key}) {
+            if (parsed_yaml{yaml_key}{key}.typeCode() == NT_HASH &&
+                parsed_yaml{yaml_key}{key}.hasKey("code")) {
+
+                parsed_yaml{yaml_key}{key}{"code"} = wrap_function(parsed_yaml{yaml_key}{key}{"code"},
+                                                                   args ? parsed_yaml{yaml_key}{key}{"args"} : NOTHING
+                                                                   );
+                remove parsed_yaml{yaml_key}{key}{"args"};
+            }
+        }
+    }
+
+    private prepareData(Qyaml::ParsedYaml parsed_yaml, string type, string dir) {
+        *string code_ = readCode(parsed_yaml.data_, dir);
+        if (exists code_) {
+            parsed_yaml.data_{"code"} = code_;
+        }
+
+        if (exists parsed_yaml.data_{"author"}) {
+            parsed_yaml.data_{"author"} = parsed_yaml.data_{"author"}.join(", ");
+        }
+
+        switch (type) {
+            case "class":
+                parsed_yaml.data_ -= "support-prefix";
+                break;
+
+            case "step":
+                parsed_yaml.data_ -= "class-name";
+                break;
+
+            case "job":
+                parsed_yaml.data_{"day"} = parsed_yaml.data_{"schedule"}{"days"};
+                parsed_yaml.data_{"month"} = parsed_yaml.data_{"schedule"}{"months"};
+                parsed_yaml.data_{"minute"} = parsed_yaml.data_{"schedule"}{"minutes"};
+                parsed_yaml.data_{"hour"} = parsed_yaml.data_{"schedule"}{"hours"};
+                parsed_yaml.data_{"wday"} = parsed_yaml.data_{"schedule"}{"dow"};
+                parsed_yaml.data_ = parsed_yaml.data_ - ("schedule");
+                break;
+
+            case "service":
+                parsed_yaml.data_ -= ("resource", "text-resource", "bin-resource", "template", "methods");
+                break;
+
+            case "workflow":
+                parsed_yaml.data_ -= ("steps", "keylist", "class-name", "errors", "config-item-values");
+                break;
+
+            case "value-map":
+                parsed_yaml.data_ -= ("value-maps",);
+                break;
+
+            case "mapper":
+                parsed_yaml.data_{"parse-options"} = parsed_yaml.data_{"parse-options"}.join(",");
+
+                wrapCode(\parsed_yaml.data_, "options", \wrapOptionCode(), True);
+                wrapCode(\parsed_yaml.data_{"options"}, "runtime", \wrapOptionCode(), True);
+
+                parsed_yaml.data_{"options"} = serialize_qorus_data(parsed_yaml.data_{"options"});
+                parsed_yaml.data_{"fields"} = serialize_qorus_data(parsed_yaml.data_{"fields"});
+
+                parsed_yaml.data_ -= ("codes",);
+
+                break;
+
+            case "mapper-code":
+                parsed_yaml.data_ -= ("methods", "class-name");
+                break;
+
+            case "connection":
+                parsed_yaml.data_{"connection_type"} = "USER";
+                parsed_yaml.data_{"options"} = serialize_qorus_data(parsed_yaml.data_{"options"});
+                break;
+
+            default: break;
+        }
+
+        parsed_yaml.data_ -= ("type", "groups", "tags", "functions", "vmaps", "mappers", "constants", "classes",
+                              "config-items");
+    }
+
+    private checkInterfaceFromYaml(string type, auto method, string file_name, string dir) {
+        string path = dir + file_name + ".yaml";
+        hash yaml = Qyaml::parse_yaml_file(path);
+
+        Qyaml::Validator validator = Qyaml::create_validator(type);
+        Qyaml::ParsedYaml parsed_yaml_object(yaml);
+        validator.validate(path, parsed_yaml_object);
+
+        prepareData(parsed_yaml_object, type, dir);
+        hash<auto> h = method(file_name);
+        if (type == "connection") {
+            hash<auto> opts = parse_yaml(h.options);
+            # remove default values from options
+            opts -= ("error_passthru", "http_version", "redirect_passthru", "ssl_verify_cert");
+            h.options = make_yaml(opts);
+        }
+        assertEqSoft(parsed_yaml_object.data_ - ("single-instance", "stateless"), h);
+    }
+
+    private checkInterfacesFromYaml(string type, auto method, *softlist files, string dir = yamlSrcDir) {
+        if (exists files) {
+            foreach string file in (files) {
+                checkInterfaceFromYaml(type, method, file, dir);
+            }
+        } else {
+            checkInterfaceFromYaml(type, method, type, dir);
+        }
+    }
+
+    private oloadTest() {
+        printf("------START oload old syntax files------\n");
+        hash result = OloadTestHelper::oloadFiles(qopSrcDir, False, NOTHING, True, ignoreFiles);
+        assertEq(0, result.exit_code);
+        printf("-------END oload old syntax files-------\n");
+
+        printf("------START oload YAML syntax files------\n");
+        result = OloadTestHelper::oloadFiles(yamlSrcDir, False, "\\.yaml$", True, ignoreFiles);
+        assertEq(0, result.exit_code);
+
+        foreach auto type in (keys selectMethods) {
+            checkInterfacesFromYaml(type, selectMethods{type}{"method"}, selectMethods{type}{"files"});
+        }
+        printf("-------END oload YAML syntax files-------\n");
+
+        printf("-------Issue3274 START oload files-------\n");
+        result = OloadTestHelper::oloadFiles(issue3274SrcDir, False, "\\.yaml$", True, ignoreFiles);
+        assertEq(0, result.exit_code);
+        checkInterfacesFromYaml("step", \selectStep(), ("Issue3274Step", "Issue3274Step2"), issue3274SrcDir);
+        checkInterfacesFromYaml("workflow", \selectWorkflow(),
+                                ("ISSUE-3274-WORKFLOW", "ISSUE-3274-WORKFLOW2"), issue3274SrcDir);
+        printf("-------Issue3274 END oload files---------\n");
+    }
+}

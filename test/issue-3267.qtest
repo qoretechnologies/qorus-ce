@@ -1,0 +1,68 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3267Test
+
+class Issue3267Test inherits QorusServiceTest {
+    public {
+        const Timeout = 10s;
+        const PollInterval = 250ms;
+    }
+
+    constructor() : QorusServiceTest("Issue3267Service", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        doTest("Issue3267Service");
+    }
+
+    doTest(string name) {
+        qrest.put("services/" + name + "/config/test", {"value": NOTHING});
+        qrest.put("services/" + name + "/setRemote", {"remote": True});
+        qrest.put("services/" + name + "/load");
+        on_exit qrest.put("services/" + name + "/unload");
+
+        runTests(name);
+        qrest.put("services/" + name + "/setRemote", {"remote": False});
+        runTests(name);
+    }
+
+    runTests(string name) {
+        qrest.put("services/" + name + "/config/test", {"value": NOTHING});
+        # we have to wait for the service to be updated; it happens in the background
+        waitForValue(name);
+        assertNothing(qrest.put("services/" + name + "/get/call"), name);
+        assertNothing(qrest.put("services/" + name + "/getVar/call"), name);
+
+        string val = get_random_string();
+        qrest.put("services/" + name + "/config/test", {"value": val});
+        # we have to wait for the service to be updated; it happens in the background
+        waitForValue(name, val);
+        assertEq(val, qrest.put("services/" + name + "/get/call"), name);
+        assertEq(val, qrest.put("services/" + name + "/getVar/call"), name);
+    }
+
+    private waitForValue(string name, auto val) {
+        date start = now_us();
+        while (True) {
+            auto actual_value = qrest.put("services/" + name + "/getVar/call");
+            if ((actual_value == val) || ((now_us() - start) > Timeout)) {
+                return;
+            }
+            usleep(PollInterval);
+        }
+    }
+}

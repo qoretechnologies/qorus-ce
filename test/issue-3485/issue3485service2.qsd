@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3485service2 inherits QorusService {
+    auto test(auto _data) {
+        # run from FSM automatically
+    }
+}

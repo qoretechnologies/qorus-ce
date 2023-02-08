@@ -1,0 +1,9 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Step2 inherits QorusNormalStep {
+    primary() {
+    }
+}

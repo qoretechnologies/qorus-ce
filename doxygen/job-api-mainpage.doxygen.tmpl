@@ -1,0 +1,227 @@
+/** @page jobapi Job API Reference
+
+    @tableofcontents
+
+    @section jobintro Introduction to the Qorus Job API
+
+    @see
+    - @ref implementingjobs
+    - @ref python_development_jobs
+    - @ref javadevelopment_jobs
+
+    @subsection jobclassapi Job Class API
+
+    The job class APIs are documented here:
+    - \b %Python: @ref OMQ::UserApi::Job::JobApi "jobapi"
+    - \b Java: @ref OMQ::UserApi::Job::JobApi "qore.OMQ.UserApi.Job.JobApi"
+    - \b %Qore: @ref OMQ::UserApi::Job::JobApi "JobApi"
+
+    A job's @ref job_source "job class" must inherit one of:
+    - \b Python: @ref OMQ::UserApi::Job::QorusJob "job.QorusJob"
+    - \b Java: @ref OMQ::UserApi::Job::QorusJob "qore.OMQ.UserApi.Job.QorusJob"
+    - \b %Qore: @ref OMQ::UserApi::Job::QorusJob "Job::QorusJob"
+
+    This means that job code can call static methods defined in the base classes directly.
+
+    For library classes and other job code, calls must be prefixed with the class name (also for all Java code
+    as well).
+
+    @subsection jobprograms Job Qore Program Container
+
+    Each job has a single %Qore @ref Qore::Program "Program" object containing the code to be defined when the job
+    trigger time arrives, as well as any objects imported into the @ref Qore::Program "Program" object
+    (@ref qore_classes "classes", @ref constants "constants", and @ref qore_functions "functions" listed as attributes
+    of the job when the job is defined).  Job @ref Qore::Program "Program" objects are restricted from using elements
+    of the %Qore language related to process and thread control; the use of these functions is either dangerous or
+    could violate the integrity of the Qorus server process and therefore is restricted.
+
+    To enforce these restrictions, job @ref Qore::Program "Program" objects are created with the following sandbox
+    flags:
+    |!Directive|!Constant|!Description
+    |@ref allow-weak-references "%allow-weak-references"|@ref Qore::PO_ALLOW_WEAK_REFERENCES|the \
+        @ref weak_assignment_operator ":= operator" may be used
+    |@ref no-process-control "%no-process-control"|@ref Qore::PO_NO_PROCESS_CONTROL|Functionality that affects the \
+        entire process is unavailable
+    |@ref no-thread-control "%no-thread-control"|@ref Qore::PO_NO_THREAD_CONTROL|Thread management functionality is \
+        unavailable
+    |@ref no-top-level "%no-top-level"|@ref Qore::PO_NO_TOP_LEVEL_STATEMENTS|No code is allowed in the top-level \
+        statement (outside a function or class)
+    |@ref require-our "%require-our"|@ref Qore::PO_REQUIRE_OUR|All variables must be declared before use
+
+    Please note that despite these restrictions, job program objects have most of the Qore language API and class library available for use.
+
+    Furthermore, the following @ref conditional_parsing "parse defines" are defined:
+    |!Define|!Availability|!Description
+    |\c Qorus|\c W, \c S, \c J|Identifies code in Qorus
+    |\c QorusCE|\c W, \c S, \c J|Identifies the Community Edition of Qorus (\c QorusEE is defined in the Enterprise \
+        Edition)
+    |\c QorusHasAlerts|\c W, \c S, \c J|Marks the availability of the @ref systemalertapi "alert API" (Qorus 3.0+)
+    |\c QorusHasTableCache|\c W, \c S, \c J|Marks the availability of the @ref systemsqlcacheapi "table cache API" (Qorus 3.1+)
+    |\c QorusHasUserConnections|\c W, \c S, \c J|Marks the availability of the @ref systemconnapi "connection API" (Qorus 3.0+)
+    |\c QorusJob|\c S|Identifies code used in a job @ref Qore::Program "Program" container
+    |\c QorusServer|\c W, \c S, \c J|Identifies code used in Qorus server interfaces
+
+    Each job's @ref Qore::Program "Program" container is set up with the following imported objects:
+    - @ref jobapimethods
+    - @ref jobapiclasses
+    - @ref jobapimodules
+
+    In addition to the above, all public constants in the OMQ namespace are available.
+
+    @note All defines set in @ref defines (common to workflows, services, and jobs) are also set in job
+    @ref Qore::Program "Program" containers
+
+    @section jobapimethods Job API
+
+    The following APIs are imported into @ref jobprograms "job program logic containers" (see also
+    @ref OMQ::UserApi::Job::JobApi "JobApi" and @ref OMQ::UserApi::Job):
+
+    |!API Method|!Domain|!Availability|!Description
+    |@ref OMQ::UserApi::UserApi::auditCheckEventString() "UserApi::auditCheckEventString()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as a string) is enabled
+    |@ref OMQ::UserApi::UserApi::auditCheckEvent() "UserApi::auditCheckEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as an integer code) is enabled
+    |@ref OMQ::UserApi::UserApi::auditGetMask() "UserApi::auditGetMask()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|returns the audit event mask
+    |@ref OMQ::UserApi::UserApi::auditUserEvent() "UserApi::auditUserEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|creates a user audit event (with audit event code @ref OMQ::AE_USER_EVENT) against the workflow, service, or job instance
+    |@ref OMQ::UserApi::UserApi::callNetworkApi() "UserApi::callNetworkApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgs() "UserApi::callNetworkApiArgs()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions with an explicit argument list argument
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgsWithAuthentication() "UserApi::callNetworkApiArgsWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::callRestApi() "UserApi::callRestApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callRestApiWithAuthentication() "UserApi::callRestApiWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::clearSqlTableCache() "UserApi::clearSqlTableCache()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|clears a cached table from the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::createOrder() "UserApi::createOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in the database and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::createRemoteOrder() "UserApi::createRemoteOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in a @ref remoteconn "remote Qorus instance" and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::deserializeQorusData() "UserApi::deserializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|deserializes strings to %Qore data structures
+    |@ref OMQ::UserApi::UserApi::execSynchronousWorkflow() "UserApi::execSynchronousWorkflow()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|executes a workflow order synchronously and returns the result of execution
+    |@ref OMQ::UserApi::UserApi::executeFsm() "UserApi::executeFsm()"|@ref systemutilityapi "Utility"\
+        |\c W, \c S, \c J|executes a @ref finite_state_machines "finite state machine" registered with the interface \
+        and returns the result
+    |@ref OMQ::UserApi::UserApi::flushSlaEvents() "UserApi::flushSlaEvents()"|@ref sla_api "SLA"|\c W, \c S, \c J|flushes all pending SLA events to the DB
+    |@ref OMQ::UserApi::UserApi::getActiveJobs() "UserApi::getActiveJobs()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about active jobs
+    |@ref OMQ::UserApi::Job::JobApi::getConfigItemHash() "JobApi::getConfigItemHash()"|n/a|\c J|retrieves a hash of all job configuration items
+    |@ref OMQ::UserApi::Job::JobApi::getConfigItemValue() "JobApi::getConfigItemValue()"|n/a|\c J|retrieves the value of a job configuration item
+    |@ref OMQ::UserApi::UserApi::getDatasourceDedicated() "UserApi::getDatasourceDedicated()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a dedicated @ref Qore::SQL::Datasource object
+    |@ref OMQ::UserApi::UserApi::getDatasourcePool() "UserApi::getDatasourcePool()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a shared @ref Qore::SQL::DatasourcePool object
+    |@ref OMQ::UserApi::UserApi::getGlobalConfigItemValue() "UserApi::getGlobalConfigItemValue()"|@ref systeminfoapi|\c W, \c S, \c J|returns the value of the given configuration item on global level
+    |@ref OMQ::UserApi::UserApi::getOption() "UserApi::getOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of one or more system or interface options
+    |@ref OMQ::UserApi::UserApi::getQorusOptions() "UserApi::getQorusOptions()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionsArgs() "UserApi::getQorusOptionsArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfo() "UserApi::getQorusOptionInfo()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfoArgs() "UserApi::getQorusOptionInfoArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getRemoteRestConnection() "UserApi::getRemoteRestConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemRestHelperBase "QorusSystemRestHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRemoteRpcConnection() "UserApi::getRemoteRpcConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowInfo() "UserApi::getRunningWorkflowInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a running workflow execution instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowList() "UserApi::getRunningWorkflowList()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about running workflow execution instances
+    |@ref OMQ::UserApi::UserApi::getServiceInfo() "UserApi::getServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a service
+    |@ref OMQ::UserApi::UserApi::getSessionId() "UserApi::getSessionId()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns the current @ref appsessionmodel "application session ID"
+    |@ref OMQ::UserApi::UserApi::getSqlTable() "UserApi::getSqlTable()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|retrieves an @ref SqlUtil::AbstractTable "AbstractTable" object from the @ref sql-cache "SQL cache" for DML operations
+    |@ref OMQ::UserApi::UserApi::getSqlCacheInfo() "UserApi::getSqlCacheInfo()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|returns information about the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::getSystemInfo() "UserApi::getSystemInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about the system
+    |@ref OMQ::UserApi::UserApi::getSystemServiceInfo() "UserApi::getSystemServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a system service
+    |@ref OMQ::UserApi::UserApi::getUserConnection() "UserApi::getUserConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns the given @ref userconn "user connection" object
+    |@ref OMQ::UserApi::UserApi::getUserServiceInfo() "UserApi::getUserServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a user service
+    |@ref OMQ::UserApi::UserApi::getValueMap() "UserApi::getValueMap()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a value mapping from a value map
+    |@ref OMQ::UserApi::UserApi::getValueMaps() "UserApi::getValueMaps()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a list of all known value sets
+    |@ref OMQ::UserApi::Job::JobApi::err() "JobApi::err()"|@ref jobapioverview "Job API"|\c J|raises job errors with mandatory error and description string arguments
+    |@ref OMQ::UserApi::Job::JobApi::errWithInfo() "JobApi::errWithInfo()"|@ref jobapioverview "Job API"|\c J|raises job errors
+    |@ref OMQ::UserApi::Job::JobApi::getStateData() "JobApi::getStateData()"|@ref jobapioverview "Job API"|\c J|retrieves job state data if available
+    |@ref OMQ::UserApi::Job::JobApi::getInfo() "JobApi::getInfo()"|@ref jobapioverview "Job API"|\c J|retrieves information about the currently-executing job
+    |@ref OMQ::UserApi::UserApi::registerFsmAsObserver() "UserApi::registerFsmAsObserver()"\
+        |@ref systemutilityapi "Utility"|\c W, \c S, \c J|registers a \
+        @ref finite_state_machines "finite state machine" as an event observer
+    |@ref OMQ::UserApi::Job::JobApi::saveInfo() "JobApi::saveInfo()"|@ref jobapioverview "Job API"|\c J|saves information about job processing agaainst the job instance record
+    |@ref OMQ::UserApi::Job::JobApi::saveStateData() "JobApi::saveStateData()"|@ref jobapioverview "Job API"|\c J|saves job state data against the current job instance
+    |@ref OMQ::UserApi::Job::JobApi::setTrigger() "JobApi::setTrigger()"|@ref jobapioverview "Job API"|\c J|sets a custom trigger time for the next job instance
+    |@ref OMQ::UserApi::Job::JobApi::warnWithInfo() "JobApi::warnWithInfo()"|@ref jobapioverview "Job API"|\c J|raises job warnings
+    |@ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"|@ref systemloggingapi "logging"|\c W, \c S, \c J|outputs a log message in the workflow's log file
+    |@ref OMQ::UserApi::UserApi::getNextSequenceValue() "UserApi::getNextSequenceValue()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|returns the next value from the given datasource and database sequence
+    |@ref OMQ::UserApi::UserApi::sleep() "UserApi::sleep()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::usleep() "UserApi::usleep()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::postSlaEventError() "UserApi::postSlaEventError()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts an unsuccessful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSlaEventSuccess() "UserApi::postSlaEventSuccess()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts a successful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSyncEvent() "UserApi::postSyncEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts a workflow synchronization event given the event type name and event key
+    |@ref OMQ::UserApi::UserApi::postUserEvent() "UserApi::postUserEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts an application event of class @ref OMQ::QE_CLASS_USER
+    |@ref OMQ::UserApi::UserApi::propGet() "UserApi::propGet()"|@ref systempropapi "System Props"|\c W, \c S, \c J|returns the value of the given @ref sysprops "system property key" in the given domain or @ref nothing if the system property does not exist
+    |@ref OMQ::UserApi::UserApi::propUpdate() "UserApi::propUpdate()"|@ref systempropapi "System Props"|\c W, \c S, \c J|changes (inserts, updates, or deletes) the value of one or more @ref sysprops "system properties"
+    |@ref OMQ::UserApi::UserApi::qorusGetLocalUrl() "UserApi::qorusGetLocalUrl()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns a URL for the current system
+    |@ref OMQ::UserApi::UserApi::raiseTransientAlert() "UserApi::raiseTransientAlert()"|@ref systemalertapi "Alerts"|\c W, \c S, \c J|raises a transient alert
+    |@ref OMQ::UserApi::UserApi::restartTransaction() "UserApi::restartTransaction()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|enables recovery from restartable DB communication errors
+    |@ref OMQ::UserApi::UserApi::runtimeProperties() "UserApi::runtimeProperties()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about runtime @ref defines "system defines" defined
+    |@ref OMQ::UserApi::UserApi::serializeQorusData() "UserApi::serializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|serializes %Qore data structures to strings
+    |@ref OMQ::UserApi::UserApi::setOption() "UserApi::setOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|sets option values on a workflow, service, or job
+
+    @subsection jobapiclasses Job API Classes
+
+    The following classes are imported into @ref jobprograms "job program logic containers":
+
+    |!Class|!Availability|!Description
+    |@ref OMQ::AbstractFsRemoteReceive "AbstractFsRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote filesystem through a remote Qorus instance
+    |@ref OMQ::AbstractParallelStream "AbstractParallelStream"|\c W, \c S, \c J|provides an abstract base class for streaming data to or from a remote database through a remote Qorus instance and also provides static helper methods
+    |@ref OMQ::DbRemote "DbRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_sqlutil "system.sqlutil" service methods
+    |@ref OMQ::DbRemoteReceive "DbRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote database through a remote Qorus instance
+    |@ref OMQ::DbRemoteSend "DbRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote database through a remote Qorus instance
+    |@ref OMQ::FsRemote "FsRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_fs "system.fs" service methods
+    |@ref OMQ::FsRemoteSend "FsRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote filesystem through a remote Qorus instance
+    |@ref OMQ::UserApi::Job::JobApi "JobApi"|\c J|the primary job API class
+    |@ref OMQ::QorusInboundTableMapper "QorusInboundTableMapper"|\c W, \c S, \c J|provides an API for mapping data to a DB table
+    |@ref OMQ::QorusInboundTableMapperIterator "QorusInboundTableMapperIterator"|\c W, \c S, \c J|provides an iterator-based API for mapping data to a DB table
+    |@ref OMQ::QorusRawSqlStatementOutboundMapper "QorusRawSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using direct SQL statements passed in
+    |@ref OMQ::QorusRemoteServiceHelper "QorusRemoteServiceHelper"|\c W, \c S, \c J|provides an API for calling service methods in remote Qorus instances
+    |@ref OMQ::QorusSqlStatementOutboundMapper "QorusSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using SqlUtil
+    |@ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper"|\c W, \c S, \c J|provides an API for calling RPC API methods in remote Qorus instances
+    |@ref OMQ::QorusSystemRestHelperBase "OMQ::QorusSystemRestHelper"|\c W, \c S, \c J|provides an API for using the REST API in remote Qorus instances
+    |@ref OMQ::UserApi::UserApi "UserApi"|\c W, \c S, \c J|the primary shared Qorus API class
+
+    @subsection jobapimodules Job API Modules
+
+    The following modules are imported by default into @ref jobprograms "job program logic containers":
+
+    |!Name|!Availability|!Description
+    |@ref jsonintro "json"|\c W, \c S, \c J|provides APIs for JSON data serialization and deserialization support
+    |@ref mimeintro "Mime"|\c W, \c S, \c J|provides MIME definitions and functionality
+    |@ref mapperintro "Mapper"|\c W, \c S, \c J|provides a data-mapping API
+    |@ref soapclientintro "SoapClient"|\c W, \c S, \c J|provides a SOAP client API
+    |@ref sqlutilintro "SqlUtil"|\c W, \c S, \c J|provides high-level APIs for programmatic DML (SQL data manipulation), DDL (creating, querying, manipulating database definitions), and DBA operations
+    |@ref tablemapperintro "TableMapper"|\c W, \c S, \c J|provides high-level APIs for mapping data to and from database tables
+    |@ref utilintro "Util"|\c W, \c S, \c J|provides utility APIs
+    |@ref uuidintro "uuid"|\c W, \c S, \c J|provides an API for generating UUIDs
+    |@ref xmlintro "xml"|\c W, \c S, \c J|provides APIs for parsing, validating, and generating XML documents
+    |@ref yamlintro "yaml"|\c W, \c S, \c J|provides APIs for %Qore's YAML-based data serialization and deserialization support
+
+    @note other modules can be imported using the @ref requires "%requires" directive, and it's always safe to @ref requires "%require" a module that's already imported into the current @ref Qore::Program "Program" container
+
+    @section jobapioverview Job API Overview
+
+    This section lists all of the API methods specific to jobs; the main job API classes are:
+    - \b %Python: @ref OMQ::UserApi::Job::JobApi "jobapi"
+    - \b Java: @ref OMQ::UserApi::Job::JobApi "qore.OMQ.UserApi.Job.JobApi"
+    - \b %Qore: @ref OMQ::UserApi::Job::JobApi "JobApi"
+
+    @note
+    - Qorus @ref job_source "job classes" should inherit one of the following classes:
+      - \b %Python: @ref OMQ::UserApi::Job::QorusJob "job.QorusJob"
+      - \b Java: @ref OMQ::UserApi::Job::QorusJob "qore.OMQ.UserApi.Job.QorusJob"
+      - \b %Qore: @ref OMQ::UserApi::Job::QorusJob "QorusJob"
+
+    @see
+    - @ref commonserverapi for APIs and API concepts common to all Qorus server code (workflows, services, and jobs).
+    - @ref commonintro "Qorus Common API" for a definition of API definitions common to all Qorus user code
+      (workflows, services, and jobs) as well as the client library.
+
+    Logging APIs:
+    - \b %Python: @ref OMQ::UserApi::UserApi::logInfo() "UserApi.logInfo()"
+    - \b Java: @ref OMQ::UserApi::UserApi::logInfo() "qore.OMQ.UserApi.UserApi.logInfo()"
+    - \b %Qore: @ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"
+
+    |!API Method|!Description
+    |@ref OMQ::UserApi::Job::JobApi::err() "JobApi::err()"|raises job errors with mandatory error and description string arguments
+    |@ref OMQ::UserApi::Job::JobApi::errWithInfo() "JobApi::errWithInfo()"|raises job errors
+    |@ref OMQ::UserApi::Job::JobApi::getStateData() "JobApi::getStateData()"|retrieves job state data if available
+    |@ref OMQ::UserApi::Job::JobApi::getInfo() "JobApi::getInfo()"|retrieves information about the currently-executing job
+    |@ref OMQ::UserApi::Job::JobApi::saveInfo() "JobApi::saveInfo()"|saves information about job processing agaainst the job instance record
+    |@ref OMQ::UserApi::Job::JobApi::saveStateData() "JobApi::saveStateData()"|saves job state data against the current job instance
+    |@ref OMQ::UserApi::Job::JobApi::setTrigger() "JobApi::setTrigger()"|sets a custom trigger time for the next job instance
+    |@ref OMQ::UserApi::UserApi::sleep() "UserApi::sleep()"|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::usleep() "UserApi::usleep()"|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::Job::JobApi::warnWithInfo() "JobApi::warnWithInfo()"|raises job warnings
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine&reg;"
+*/

@@ -1,0 +1,41 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2677-helper
+# serviceversion: 1.0
+# servicedesc: issue 2677 helper test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue2677Helper
+# autostart: false
+# remote: true
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class Issue2677Helper inherits QorusService {
+    # name: do_stop
+    # desc: stops the issue-2677 service in the background for a deadlock test
+    do_stop() {
+        startThread(\doStopIntern());
+    }
+
+    # name: do_reset
+    # desc: resets the issue-2677 service in the background for a deadlock test
+    do_reset() {
+        startThread(\doResetIntern());
+    }
+
+    # name: stop
+    # desc: stops the service
+    stop() {
+        # this method intentionally left blank
+    }
+
+    private doStopIntern() {
+        callRestApi("PUT", "services/issue-2677/unload");
+    }
+
+    private doResetIntern() {
+        callRestApi("PUT", "services/issue-2677/reset");
+    }
+}

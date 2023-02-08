@@ -1,0 +1,33 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test workflows and services",
+    },
+    "regression": {
+        "desc": "regression test group",
+    },
+};
+
+const step_1 = {
+    "name": "gdpr_test_step:1.0",
+    "subworkflow": True,
+};
+
+const steps = (
+    step_1,
+);
+
+our hash<auto> workflows."GDPR-WF-TEST"."1.0" = {
+    "author": "Qore Technologies, s.r.o.",
+    "desc": "GDPR workflow test: issue 3032, 3033",
+    "steps": steps,
+    "groups": ("test", "regression"),
+};

@@ -1,0 +1,332 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include QorusDistributedProcess.qc
+
+%include cpc-job-api.ql
+
+%exec-class QJob
+
+our QJob Qorus;
+
+# FIXME: remove
+our Datasource omquser;
+
+# qorus-core services client object
+our ClusterServiceManagerClient services;
+
+class QJob inherits QorusInterfaceProcess {
+    public {
+        # session ID
+        int sessionid;
+
+        # job session
+        QjobServerSession session;
+
+         # system schema properties (set by QjobServerSession)
+        hash<auto> sysprops;
+
+        # the job object
+        ClusterQorusJob job;
+
+        # atomic job access
+        Mutex jm();
+        Condition jcond();
+        int jrefs = 0;
+        bool jwaiting = False;
+    }
+
+    private {
+        hash<auto> jobctx;
+
+        #! counter that signals when the job has been created
+        Counter job_cnt(1);
+    }
+
+    constructor() : QorusInterfaceProcess(\ARGV, Opts) {
+        *softint sessionid = shift ARGV;
+        if (!exists sessionid) {
+            usage();
+        }
+        self.sessionid = sessionid;
+        interfaceType = "jobs";
+
+        jobctx = {
+            "job": {
+                "name": interfaceName,
+                "version": interfaceVersion,
+                "jobid": interfaceId,
+            },
+        };
+
+        Qorus = self;
+
+        try {
+            # authorize start before starting job
+            doAuthStart();
+
+            initInterface();
+
+            # create services client objects
+            services = new ClusterServiceManagerClient(core);
+
+            # open job session
+            try {
+                session = new QjobServerSession(sessionid, interfaceId);
+                session.open(audit);
+            } catch (hash<ExceptionInfo> ex) {
+                string err = !debug_system
+                    ? sprintf("Unable to open job session: %s: %s: %s", get_ex_pos(ex), ex.err, ex.desc)
+                    : sprintf("Unable to open job session: %s", get_exception_string(ex));
+                logError(err);
+                exit(QSE_SESSION_ERROR);
+            }
+
+            # initialize and start the job
+            AbstractQorusJob::staticInit();
+            startJob();
+        } catch (hash<ExceptionInfo> ex) {
+            logError("fatal error setting up job: %s", get_exception_string(ex));
+            exit(1);
+        }
+    }
+
+    #! called when a config item used by this interface has its value changed
+    configItemValueChanged(string change_type, string name, string level, auto value) {
+        # nothing to do
+    }
+
+    *hash<auto> getTldContext() {
+        QDBG_LOG("getTldContext() returning %y", tld{QorusSharedContextKeys} + jobctx);
+        return tld{QorusSharedContextKeys} + jobctx;
+    }
+
+    setupMappers() {
+        # log closure
+        code infoLogging = sub (string msg) { logInfo("OMQ: " + msg, argv); };
+
+        # issue #3198: initialize mapper objects after the job has been setup
+        mappers.init(infoLogging, options.get("mapper-modules"));
+    }
+
+    private processAbortedImpl(string process, *hash<ClusterProcInfo> info, bool restarted, date abort_timestamp) {
+        QorusInterfaceProcess::processAbortedImpl(process, info, restarted, abort_timestamp);
+        # we do not need to terminate here if the status is not "running", qorus-master will do that for us
+    }
+
+    private startJob() {
+        # create and initialize local job object
+        try {
+            job = new ClusterQorusJob(interfaceId, interfaceName, interfaceVersion);
+            # signal job creation done
+            job_cnt.dec();
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("Unable to initialize job: %s", get_exception_string(ex));
+            session.close();
+            reportStartupErrorAndDie("failed to create job: %s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+        }
+    }
+
+    private bool refJob() {
+        if (!job && job_cnt.getCount()) {
+            job_cnt.waitForZero();
+        }
+
+        jm.lock();
+        on_exit jm.unlock();
+
+        if (!job) {
+            return False;
+        }
+        ++jrefs;
+        return True;
+    }
+
+    private derefJob() {
+        jm.lock();
+        on_exit jm.unlock();
+
+        if (!--jrefs && jwaiting) {
+            jcond.signal();
+        }
+    }
+
+    private shutdownIntern() {
+        job.stop();
+        {
+            jm.lock();
+            on_exit jm.unlock();
+
+            while (jrefs) {
+                jwaiting = True;
+                jcond.wait(jm);
+                jwaiting = False;
+            }
+
+            # delete job
+            try {
+                # issue #3765: delete program after job; allow job destructor to run normally
+                Program pgm = job.getProgram();
+                # issue #3286 do not allow errors in job destruction to cause a deadlock
+                delete job;
+                delete pgm;
+            } catch (hash<ExceptionInfo> ex) {
+                # log only
+                logError("error destroying job: %s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            }
+        }
+
+        # stop any mapper reloads and avoid race conditions
+        mappers.shutdown();
+
+        # close job session
+        if (session) {
+            session.close();
+        }
+
+        # stop cluster server process event thread
+        stopEventThread();
+
+        logInfo("stopped cluster server process event thread; PID %d exiting normally", getpid());
+
+        # delete all clients
+        deleteAllClients();
+
+        # we need to call exit() in case, for example, there are Java threads running that won't otherwise die
+%ifndef QorusDebugInternals1
+        # don't call exit() when performing memory debugging
+        exit(0);
+%endif
+    }
+
+    synchronized int getSessionId() {
+        if (!exists sessionid) {
+            # get the sessionid from qorus-core
+            sessionid = callCoreFunction("qorus_api_get_session_id");
+        }
+        return sessionid;
+    }
+
+    # required for CryptoKeyHelper
+    *string getKeyOption(string opt) {
+        return options.get(opt);
+    }
+
+    #! Returns the interface object for the process
+    CommonInterfaceBase getInterface() {
+        if (!job) {
+            # we need to wait for startup
+            waitForStartup();
+        }
+
+        return job;
+    }
+
+    #! Returns the interface object for the process, if available
+    *CommonInterfaceBase tryGetInterface() {
+        return job;
+    }
+
+    private logEvent() {
+        if (log_subscribed) {
+            core.sendCmdOneWay(CPC_CORE_LOG_IF, {"method": "jobLogEvent", "args": argv});
+        }
+    }
+
+    #! to enrich the log message
+    private string enrichLogMsg(string msg, auto args) {
+        if (job) {
+            return job.enrichLogMessage(msg, args);
+        }
+        return vsprintf(msg, args);
+    }
+
+    # required by InstanceData but never called in qjob
+    string encodeEncryptSensitiveValue(string svalue) {
+        throw "ERROR";
+    }
+
+    # we cannot block the I/O thread; calls here must be guaranteed to be very fast or must
+    # be made asynchronously in a background thread
+    private bool processCmdImpl(ZSocketRouter sock, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        if (QorusInterfaceProcess::processCmdImpl(sock, index, sender, mboxid, cmd, msg)) {
+            return True;
+        }
+
+        switch (cmd) {
+            case CPC_QJOB_CALL_SUBSYSTEM: {
+                auto msgdata = qorus_cluster_deserialize(msg);
+                background callSubsystem(index, sender, mboxid, msgdata);
+                return True;
+            }
+        }
+        return False;
+    }
+
+    auto deserialize(data d) {
+        return job ? job.deserialize(d) : Serializable::deserialize(d);
+    }
+
+    private callSubsystem(int index, string sender, string mboxid, hash<auto> h) {
+        try {
+            QDBG_LOG("subsystem request: sender: %y TID %d index: %y h: %y", sender, mboxid, index, h);
+            # wait for startup if restarted and not initializing
+            if (restarted && (h.subsystem != "job" || h.method != "init")) {
+                waitForStartup();
+            }
+            create_tld();
+            if (h.tld) {
+                tld += h.tld;
+            }
+            auto rv;
+            switch (h.subsystem) {
+                case "job": {
+                    # issue #2714 ensure that "job" exists while processing
+                    if (!refJob()) {
+                        # return an error to the request as we have already shut down
+                        throw "JOB-SHUTDOWN-ERROR", sprintf("cannot respond to request as job has already shut down; h: %y", h);
+                    }
+                    on_exit derefJob();
+
+                    rv = call_object_method_args(job, h.method, h.args);
+                    break;
+                }
+
+                default:
+                    throw "UNKNOWN-SUBSYSTEM-ERROR", sprintf("qjob subsystem %y is unknown", h.subsystem);
+            }
+            QDBG_LOG("subsystem response: sender: %y TID %d index: %y: %y", sender, mboxid, index, rv);
+            sendAnyResponse(index, sender, mboxid, CPC_OK, rv);
+        } catch (hash<ExceptionInfo> ex) {
+            logError("subsystem exception: sender: %y TID %d index: %y: %s", sender, mboxid, index,
+                get_exception_string(ex));
+            sendExceptionResponse(index, sender, mboxid, ex);
+        }
+    }
+
+    private *int usageImpl() {
+        stderr.printf("usage: %s [options] <api> <node> <master-node> <master-urls> <interfaces> <network-key-path> "
+            "<process-type> <unique-proc-name> <logpath> <restarted> <jobname> <jobver> <stack-size> <sessionid>\n",
+            get_script_name());
+        stderr.printf("this program is not meant to be started by hand\n");
+    }
+}

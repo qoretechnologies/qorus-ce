@@ -1,0 +1,30 @@
+# name: RegressionMainStep
+# version: 1.0
+# desc: Qore regression test main step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class RegressionMainStep inherits QorusEventStep, QoreTest {
+    primary() {
+        regression1();
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "unstable-race-tests": <ConfigItemInfo>{
+                "type": "bool",
+                "default_value": False,
+                "description": "if true then unstable race conditions will be tested",
+                "strictly_local": True,
+            },
+            "test-item": <ConfigItemInfo>{
+                "default_value": "test-value",
+            },
+        };
+    }
+}
+# END

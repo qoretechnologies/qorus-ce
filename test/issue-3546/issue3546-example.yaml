@@ -1,0 +1,33 @@
+swagger: '2.0'
+info:
+  description: >-
+    This is advanced REST example.
+  version: 1.0.0
+  title: Advanced Example REST API
+  contact:
+    email: your@email.com
+host: localhost
+basePath: /issue3546
+paths:
+  '/hello':
+    get:
+      description: Returns 200 OK
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      parameters:
+        - name: name
+          in: header
+          description: your name
+          required: true
+          type: string
+      responses:
+        '200':
+          $ref: '#/responses/Hello'
+
+responses:
+  Hello:
+    description: Hello response
+    schema:
+      type: string

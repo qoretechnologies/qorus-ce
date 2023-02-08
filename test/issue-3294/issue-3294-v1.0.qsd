@@ -1,0 +1,18 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# servicetype: USER
+# service: issue-3294
+# serviceversion: 1.0
+# servicedesc: test service
+# class-name: Issue3294Service
+# autostart: false
+# remote: false
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# classes: Issue3294
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class Issue3294Service inherits Issue3294 {}
+

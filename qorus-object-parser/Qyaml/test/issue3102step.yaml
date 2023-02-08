@@ -1,0 +1,22 @@
+type: step
+steptype: NORMAL
+name: issue3102step
+version: "1.0"
+desc: class-based test step
+author:
+  - Qore Technologies, s.r.o.
+lang: qore
+code: step.qstep
+config-items:
+  - name: issue-3384-config-item-1
+    description: test 1
+    type: string
+  - name: issue-3384-config-item-2
+    description: test 2
+    type: int
+  - name: issue-3384-config-item-3
+    description: test 3
+    type: hash
+  - name: issue-3384-config-item-4
+    description: test 4
+    type: list

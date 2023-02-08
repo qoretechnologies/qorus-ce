@@ -1,0 +1,389 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%requires Schema
+%requires SqlUtil
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3485" + Qore::DirSep;
+        TestSchema schema;
+
+        const ServiceName = "issue3485service";
+        const Service2Name = "issue3485service2";
+
+        const JobName = "Issue3485Job";
+        const StepName = "Issue3485Step";
+        const StepName2 = "Issue3485Step2";
+        const StepName3 = "Issue3485Step3";
+        const WorkflowName = "ISSUE-3485-WORKFLOW";
+
+        const Pipeline1Name = "pipeline1";
+        const Pipeline2Name = "pipeline2";
+        const Pipeline3Name = "pipeline3";
+
+        const ActionClass = "Issue3485Action";
+        const ConditionalClass = "Issue3485Conditional";
+        const Processor1 = "Issue3485Processor1";
+        const Processor2 = "Issue3485Processor2";
+
+        const FSM1 = "fsm1";
+        const FSM2 = "fsm2";
+        const FSM3 = "fsm3";
+        const FSM4 = "fsm4";
+
+        const TestGroup = "issue-3485-" + get_random_string();
+    }
+
+    constructor(): Test("QorusIssue3485FSM", OMQ::version) {
+        QorusClient::init2();
+        addTestCase("mapper tests", \mapperTests());
+        addTestCase("block test", \blockTest());
+        addTestCase("rbac access test", \rbacAccessTest());
+        addTestCase("pipeline input", \testPipelineInput());
+        addTestCase("dependency test", \testDependencies());
+        addTestCase("testJob", \testJob());
+        addTestCase("testService", \testService());
+        addTestCase("testWorkflow", \testWorkflow());
+        set_return_value(main());
+    }
+
+    private globalSetUp() {
+        # delete test group and ignore any exceptions
+        try { qrest.del("groups/" + TestGroup); } catch() {}
+
+        try {
+            # create empty group
+            qrest.post("groups", {
+                "group": TestGroup,
+                "desc": "test empty group",
+            });
+
+            schema = new TestSchema(omqclient.getDatasource("omquser"));
+            schema.align(False, m_options.verbose - 3);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "INVALID-DATASOURCE") {
+                rethrow;
+            }
+        }
+    }
+
+    private globalTearDown() {
+        if (schema) {
+            schema.drop(False, m_options.verbose - 3);
+        }
+
+        # delete test group and ignore any exceptions
+        try { qrest.del("groups/" + TestGroup); } catch() {}
+    }
+
+    private mapperTests() {
+        hash<auto> h = qrest.put("jobs/lowcode-test-1/run");
+        on_error printf("h: %y\n", h);
+        assertEq(OMQ::StatComplete, h.status);
+        h = qrest.put("jobs/lowcode-test-2/run");
+        assertEq(OMQ::StatComplete, h.status);
+    }
+
+    private blockTest() {
+        # clear state data before test
+        qrest.put("services/fsm-flow-test/setStateData", {"data": NOTHING});
+
+        qrest.put("services/fsm-flow-test/test1/call");
+        assertEq({
+            "state": {
+                "fsm-flow-test-1": {
+                    "state1": True,
+                },
+                "block1.state1": True,
+            },
+            "cnt": 2,
+        }, qrest.get("services/fsm-flow-test/state"));
+
+        # clear state data before test
+        qrest.put("services/fsm-flow-test/setStateData", {"data": NOTHING});
+
+        qrest.put("services/fsm-flow-test/test2/call");
+        assertEq({
+            "state": {
+                "fsm-flow-test-2": {
+                    "state1": True,
+                },
+                "block1.state1": True,
+            },
+            "cnt": 2,
+        }, qrest.get("services/fsm-flow-test/state"));
+
+        # clear state data before test
+        qrest.put("services/fsm-flow-test/setStateData", {"data": NOTHING});
+
+        qrest.put("services/fsm-flow-test/test3/call");
+        assertEq({
+            "state": {
+                "fsm-flow-test-3": {
+                    "state1": True,
+                },
+                "block1.state1": True,
+            },
+            "cnt": 2,
+        }, qrest.get("services/fsm-flow-test/state"));
+
+        # clear state data before test
+        qrest.put("services/fsm-flow-test/setStateData", {"data": NOTHING});
+
+        qrest.put("services/fsm-flow-test/test4/call");
+        assertEq({
+            "state": {
+                "fsm-flow-test-4": {
+                    "state1": True,
+                },
+            },
+        }, qrest.get("services/fsm-flow-test/state"));
+
+        # clear state data before test
+        qrest.put("services/fsm-flow-test/setStateData", {"data": NOTHING});
+        qrest.put("services/fsm-flow-test/test5/call");
+        assertEq({
+            "value": True,
+        }, qrest.get("services/fsm-flow-test/state"));
+    }
+
+    private rbacAccessTest() {
+        assertEq("pipeline1", qrest.get("pipelines/pipeline1").name);
+        assertEq("fsm1", qrest.get("fsms/fsm1").name);
+    }
+
+    private testPipelineInput() {
+        if (!schema) {
+            testSkip("no omquser datasource");
+        }
+
+        # clear state data before test
+        qrest.put("jobs/issue-3485-pipeline-test/setPersistentStateData", {"data": NOTHING});
+
+        hash<auto> resp = qrest.put("jobs/issue-3485-pipeline-test/run");
+        assertEq(StatComplete, resp.status);
+
+        assertEq({
+            "fsm": {
+                "fsm5": True,
+            },
+            "state": {
+                "fsm5.state2": True,
+            },
+            "Issue3485Processor2-prefix1-col_1": (
+                2,
+            ),
+            "Issue3485Processor2-prefix1-col_2": (
+                "number 2",
+            ),
+        }, qrest.get("jobs/issue-3485-pipeline-test/persistent-state"));
+    }
+
+    private testDependencies() {
+        assertTrue(qrest.get("workflows/ISSUE-3485-WORKFLOW/enabled"));
+        assertTrue(qrest.get("services/issue3485service/enabled"));
+        assertTrue(qrest.get("jobs/Issue3485Job/enabled"));
+
+        auto val = qrest.get("fsms/fsm2/config/state2:fsm-connector-test-write-value/value");
+        {
+            # disable FSM2 by unconfiguring a config item
+            qrest.del("fsms/fsm2/config/state2:fsm-connector-test-write-value");
+
+            # re-enable FSM2 by reconfiguring the config item
+            on_exit qrest.put("fsms/fsm2/config/state2:fsm-connector-test-write-value", {"value": val});
+
+            waitForIxAlerts("workflows", WorkflowName, False);
+            waitForIxAlerts("services", ServiceName, False);
+            waitForIxAlerts("jobs", JobName, False);
+        }
+
+        waitForIxAlerts("workflows", WorkflowName, True);
+        waitForIxAlerts("services", ServiceName, True);
+        waitForIxAlerts("jobs", JobName, True);
+    }
+
+    private waitForIxAlerts(string type, string name, bool no_alerts, timeout max_wait = 20s) {
+        date timeout = now_us() + max_wait;
+        while (True) {
+            bool status = !qrest.get(type + "/" + name + "/alerts");
+            if (status == no_alerts) {
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "IX-TIMEOUT-ERROR", sprintf("%s %y did not get %sabled in the timeout period", type, name,
+                    no_alerts ? "en" : "dis");
+            }
+            sleep(250ms);
+        }
+
+        assertTrue(True);
+    }
+
+    private testService() {
+        # unload service
+        qrest.put("services/issue3485service/unload");
+
+        # clear state data
+        qrest.put("services/issue3485service/setStateData", {"data": NOTHING});
+        qrest.put("services/issue3485service2/setStateData", {"data": NOTHING});
+
+        #printf("---------START service1 test-----------\n");
+        hash<auto> init_data = {"test_service": "data"};
+        auto result = qrest.put("services/issue3485service/test?action=call", {"args": (init_data,)});
+        #printf("resp: %y\n", result);
+        assertNothing(result);
+
+        # should go to state3, state5
+        *hash<auto> state = qrest.get("services/issue3485service/state");
+        assertEq({
+            "fsm1.state3": True,
+            "fsm1.state5": True,
+            "fsm2.state2": True,
+        }, state.state);
+        assertEq({
+            "fsm1": True,
+            "fsm2": True,
+            "fsm-event-test": True,
+        }, state.fsm);
+
+        #printf("---------START service2 test-----------\n");
+        init_data = {"test_service2": "data"};
+        result = qrest.put("services/issue3485service2/test?action=call", {"args": (init_data,)});
+        #printf("resp: %y\n", result);
+        assertNothing(result);
+
+        # should go to state3, state5
+        state = qrest.get("services/issue3485service2/state");
+        assertEq({
+            "fsm4.state3": True,
+            "fsm4.state5": True,
+        }, state.state);
+
+        #printf("----------END service2 test------------\n");
+    }
+
+    private testJob() {
+        # clear job persistent data
+        qrest.put("jobs/Issue3485Job/setPersistentStateData", {"data": NOTHING});
+
+        #printf("---------START job test-----------\n");
+        auto resp = qrest.put("jobs/Issue3485Job/run");
+        #printf("job instance created: %y\n", resp);
+        assertEq(StatComplete, resp.status);
+
+        auto persistent_data = qrest.get("jobs/Issue3485Job/persistent-state");
+        #printf("persistent state: %N\n", persistent_data);
+        assertEq({
+            "fsm1.state3": True,
+            "fsm1.state5": True,
+            "fsm2.state2": True,
+        }, persistent_data.state);
+        assertEq({
+            "fsm1": True,
+            "fsm2": True,
+        }, persistent_data.fsm);
+
+        # test java job with Java processors
+        resp = qrest.put("jobs/issue-3485-java-test/run");
+        assertEq(StatComplete, resp.status);
+        assertEq({
+            "Issue3485JavaProcessor2-prefix1-test1": "one",
+            "Issue3485JavaProcessor2-prefix1-test2": "two",
+        }, qrest.get("jobresults/" + resp.job_instanceid + "/info"));
+
+        # test Python job with Python processors
+        resp = qrest.put("jobs/issue-3485-python-test/run");
+        assertEq(StatComplete, resp.status);
+        assertEq({
+            "Issue3485PythonProcessor2-prefix1-test1": "one",
+            "Issue3485PythonProcessor2-prefix1-test2": "two",
+        }, qrest.get("jobresults/" + resp.job_instanceid + "/info"));
+    }
+
+    private testWorkflow() {
+        #printf("---------START workflow test-----------\n");
+        auto resp = qrest.post("workflows/ISSUE-3485-WORKFLOW?action=execSynchronous",
+                               {"staticdata": {"test": "123"}});
+        #printf("resp: %N\n", resp);
+        assertEq(StatComplete, resp.status);
+
+        *hash<auto> fsms = resp.dynamicdata;
+        assertEq({
+            "fsm1.state3": True,
+            "fsm1.state5": True,
+            "fsm2.state2": True,
+            "fsm3.state2": True,
+        }, fsms.state);
+        assertEq({
+            "fsm1": True,
+            "fsm2": True,
+            "fsm3": True,
+        }, fsms.fsm);
+
+        # test retry workflow
+        resp = qrest.post("workflows/FSM-RETRY-TEST/execSynchronous", {"staticdata": {}});
+        assertEq(StatComplete, resp.status);
+        #printf("---------START workflow test-----------\n");
+    }
+}
+
+class TestSchema inherits AbstractSchema {
+    public {
+        const SchemaName = "TestSchema";
+        const SchemaVersion = "1.0";
+
+        const T_Pipe_Table_1 = {
+            "columns": {
+                "col_1": c_number(15, True, "PK column"),
+                "col_2": c_varchar(15, True, "string column"),
+            },
+            "primary_key": {"name": "pk_pipe_table_1", "columns": "col_1"},
+        };
+
+        const Tables = {
+            "pipe_table_1": T_Pipe_Table_1,
+        };
+
+        const SRD_Pipe_Table_1 = (
+            ("col_1", "col_2"),
+            (1, "number 1"),
+            (2, "number 2"),
+        );
+
+        const StrictReferenceData = {
+            "pipe_table_1": SRD_Pipe_Table_1,
+        };
+    }
+
+    constructor(AbstractDatasource ds, *string dts, *string its) : AbstractSchema(ds, dts, its) {
+    }
+
+    private string getNameImpl() {
+        return SchemaName;
+    }
+
+    private string getVersionImpl() {
+        return SchemaVersion;
+    }
+
+    private *hash<auto> getTablesImpl() {
+        return Tables;
+    }
+
+    private hash<auto> getStrictReferenceDataHashImpl() {
+        return StrictReferenceData;
+    }
+}

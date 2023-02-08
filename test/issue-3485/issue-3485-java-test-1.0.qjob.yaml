@@ -1,0 +1,29 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3485-java-test
+desc: Java pipeline test job
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3485JavaTest
+fsm:
+    [
+        {
+            "name": "java-test-fsm",
+            "triggers": [
+                {
+                    "method": "run"
+                }
+            ]
+        }
+    ]
+lang: java
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+code: issue-3485-java-test-1.0-job/Issue3485JavaTest.java

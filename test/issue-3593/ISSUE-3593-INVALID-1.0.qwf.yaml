@@ -1,0 +1,19 @@
+# This is a generated file, don't edit!
+type: workflow
+name: ISSUE-3593-INVALID
+desc: 'test for #3593: https://git.qoretechnologies.com/qorus/issues/-/issues/3593'
+version: "1.0"
+class-name: Issue3593Workflow
+base-class-name: QorusWorkflow
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - regression
+  - test
+autostart: 0
+steps:
+    [
+        "Issue3593Step:1.0"
+    ]
+code: ISSUE-3593-INVALID-1.0.qwf

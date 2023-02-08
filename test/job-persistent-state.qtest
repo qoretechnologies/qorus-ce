@@ -1,0 +1,35 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class JobPersistentStateTest
+
+class JobPersistentStateTest inherits Test {
+    constructor() : Test("JobPersistentStateTest", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        int count = qrest.get("jobs/job-persistent-state-test/persistent-state").count ?? 0;
+        assertEq(StatComplete, qrest.put("jobs/job-persistent-state-test/run").status);
+        assertEq(++count, qrest.get("jobs/job-persistent-state-test/persistent-state/count"));
+
+        # update state data manually
+        hash<auto> pdata = {
+            "count": count,
+            "str": get_random_string(),
+        };
+        qrest.put("jobs/job-persistent-state-test/setPersistentStateData", {"data": pdata});
+        hash<auto> jdata = qrest.get("jobs/job-persistent-state-test/persistent-state");
+        assertEq(pdata, jdata);
+    }
+}

@@ -1,0 +1,56 @@
+type: job
+name: issue3303job
+version: "1.0"
+desc: Test job written using YAML format
+author:
+  - Qore Technologies, s.r.o.
+active: true
+run-skipped: false
+single-instance: false
+schedule:
+  minutes: "5"
+  hours: "4"
+  days: "*"
+  months: "*"
+  dow: "*"
+expiry-date: 2019-12-13
+class-name: issue3303job
+lang: qore
+code: issue3303job.qjob
+config-items:
+  - name: issue-3303-test-config-item-1
+    parent:
+      interface-type: class
+      interface-name: issue3303class
+      interface-version: "1.0"
+    description: child config item inheriting from the same config item defined by issue3303class:1.0 class
+  - name: issue-3303-test-config-item-2
+    parent:
+      interface-type: class
+      interface-name: issue3303class
+      interface-version: "1.0"
+    description: child config item inheriting from the same config item defined by issue3303class:1.0 class
+    default_value: test_1
+  - name: issue-3303-test-config-item-3
+    type: "*hash"
+    default_value:
+      test_key_1: test_1
+      test_key_2: test_2
+    description: test config item of type *hash
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3303-test-config-item-4
+    type: string
+    default_value: test_2
+    allowed_values:
+      - test_1
+      - test_2
+      - test_3
+    description: test config item of type string
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3303-test-config-item-5
+    type: "*string"
+    default_value: null
+    description: test config item of type *string
+    config_group: Test Group

@@ -1,0 +1,37 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3102service inherits QorusService {
+    init() {
+        logInfo("init() method called");
+    }
+
+    string getString() {
+        return "string";
+    }
+
+    auto echo(auto arg) {
+        return arg;
+    }
+
+    auto echoInternal(auto arg) {
+        return arg;
+    }
+
+    private myPrivMethod() {
+    }
+
+    int getInt() {
+        return 1;
+    }
+
+    throwException() {
+        throw "ERROR", "test error";
+    }
+
+    int echo(int i) {
+        return i;
+    }
+}

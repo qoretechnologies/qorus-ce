@@ -1,0 +1,27 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: GENERIC
+# version: 1.0
+# desc: attach-error attach function
+# name: attach_error
+# author: Qore Technologies, sro
+%new-style
+%require-types
+
+sub attach_error() {
+    throw "ATTACH-ERROR", "this workflow can never be executed because the attach function always throws an error";
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: attach-error dummy step function
+# name: attach_error_1
+# author: Qore Technologies, sro
+%new-style
+%require-types
+
+# this function will never be executed
+sub attach_error_1() {
+}
+# END

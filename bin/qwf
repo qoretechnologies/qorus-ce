@@ -1,0 +1,376 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include QorusDistributedProcess.qc
+
+%include cpc-core-api.ql
+%include cpc-wf-api.ql
+
+%exec-class QWf
+
+our QWf Qorus;
+our ClusterSegmentManager SM;
+our ClusterServiceManagerClient services;
+
+class QWf inherits CryptoKeyHelper, QorusInterfaceProcess {
+    public {
+        # session ID
+        int sessionid;
+
+        #! the workflow object
+        Workflow wf;
+
+        # workflow execution control object
+        ClusterControl control;
+
+        # workflow synchronization event manager client
+        QorusCoreSubsystemClientBase SEM;
+
+        # server error manager client
+        QorusCoreSubsystemClientBase EM;
+
+        # server workflow order stats client
+        QorusCoreSubsystemClientBase orderStats;
+
+        # workflow queue thread pool
+        WorkflowQueueThreadPool wqtp();
+
+        # workflow session
+        QwfServerSession session;
+
+        # system schema properties (set by QwfServerSession)
+        hash<auto> sysprops;
+
+        # startup notification counter
+        Counter startup_done(1);
+
+        # execution instances in-progress counter
+        Counter exec_cnt();
+    }
+
+    constructor() : QorusInterfaceProcess(\ARGV, Opts) {
+        try {
+            interfaceType = "workflows";
+            on_error deleteAllClients();
+
+            *softint sessionid = shift ARGV;
+            if (!exists sessionid) {
+                usage();
+            }
+            self.sessionid = sessionid;
+
+            Qorus = self;
+
+            # authorize start before starting workflow
+            doAuthStart();
+
+            # initialize interface and wait for qorus-core process
+            initInterface();
+
+            # setup the sensitive data encryption key
+            setupEncryption();
+
+            SEM = new QorusCoreSubsystemClientBase(core, "SEM");
+            EM = new QorusCoreSubsystemClientBase(core, "EM");
+            orderStats = new QorusCoreSubsystemClientBase(core, "orderStats");
+            # create services client objects
+            services = new ClusterServiceManagerClient(core);
+
+            # open workflow session
+            try {
+                session = new QwfServerSession(sessionid, interfaceId);
+                session.open(audit);
+            } catch (hash<ExceptionInfo> ex) {
+                logError("Unable to open workflow session: %s", get_exception_string(ex));
+                exit(QSE_SESSION_ERROR);
+            }
+
+            # start workflow process
+            startWorkflow();
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("error starting workflow: %s", get_exception_string(ex));
+            exit(QSE_STARTUP_ERROR);
+        }
+    }
+
+    destructor() {
+        exec_cnt.waitForZero();
+    }
+
+    #! called when a config item used by this interface has its value changed
+    configItemValueChanged(string change_type, string name, string level, auto value) {
+        # nothing to do
+    }
+
+    *ErrorDef getError(softstring wfid, string err) {
+        *binary b = EM.getErrorExtern(wfid, err);
+        return b ? Serializable::deserialize(b) : NOTHING;
+    }
+
+    *hash<auto> getTldContext() {
+        hash<auto> rv = tld{QorusSharedContextKeys};
+        if (tld.wfe) {
+            rv.wf += tld.wfe{WorkflowOrderCallContextKeys};
+            rv.wf += tld.wfe.wf{WorkflowCallContextKeys};
+            rv.wf.stepid = tld.stepID;
+            rv.wf.ind = tld.ind;
+            if (tld.index) {
+                rv.wf.options = Qorus.control.execHash{tld.index}.getAllOptions();
+            }
+        } else if (tld.wf) {
+            rv.wf += tld.wf{WorkflowCallContextKeys};
+        }
+        #QDBG_LOG("getTldContext() rv: %y tld: %y", rv, tld);
+        return rv;
+    }
+
+    #! Returns the interface object for the process
+    CommonInterfaceBase getInterface() {
+        if (!SM.local_swd) {
+            # we need to wait for startup
+            waitForStartup();
+        }
+
+        return SM.local_swd.wf;
+    }
+
+    #! Returns the interface object for the process, if available
+    *CommonInterfaceBase tryGetInterface() {
+        return SM.local_swd.wf;
+    }
+
+    shutdown() {
+        if (startup_cnt.getCount()) {
+            logInfo("waiting for startup to complete before starting shutdown");
+            date now = now_us();
+            waitForStartup();
+            logInfo("startup complete; waited %y; continuing shutdown", now_us() - now);
+        }
+        if (exec_cnt.getCount()) {
+            logInfo("waiting for execution instances to complete before starting shutdown");
+            date now = now_us();
+            exec_cnt.waitForZero();
+            logInfo("all execution instances shut down; waited %y; continuing shutdown", now_us() - now);
+        }
+        QorusInterfaceProcess::shutdown();
+    }
+
+    private processAbortedImpl(string process, *hash<ClusterProcInfo> info, bool restarted, date abort_timestamp) {
+        QorusInterfaceProcess::processAbortedImpl(process, info, restarted, abort_timestamp);
+        if (process == QDP_NAME_QORUS_CORE) {
+            if (!isRunning()) {
+                logError("qorus-core terminated while in state %y; aborting process immediately", getState());
+                exit(QSE_STARTUP_ERROR);
+            }
+            # issue #3957: mark synchronous execution instances that they need to inform qorus-core when they
+            # terminate
+            if (control) {
+                background control.qorusCoreAborted();
+            }
+        }
+    }
+
+    private startWorkflow() {
+        # shut down gracefully if the Workflow object cannot be initialized
+        try {
+            control = new ClusterControl(interfaceId);
+
+            wf = control.getWorkflow();
+
+            SM = new ClusterSegmentManager(wf);
+
+            # initialize WorkflowQueue thread pool
+            wqtp.start();
+
+            # log closure
+            code infoLogging = sub (string msg) { logInfo("OMQ: " + msg, argv); };
+
+            # initialize mapper objects
+            mappers.init(infoLogging, options.get("mapper-modules"));
+
+            # signal startup done
+            Qorus.setStateRunning();
+        } catch (hash<ExceptionInfo> ex) {
+            logError("Unable to initialize workflow: %s", get_exception_string(ex));
+            session.close();
+            string err = Qorus.getDebugSystem()
+                ? get_exception_string(ex)
+                : sprintf("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            reportStartupErrorAndDie("failed to create workflow: %s", err);
+        }
+    }
+
+    private shutdownIntern() {
+        # ensure all wf exec instances have stopped first
+        control.waitForStop();
+
+        # shutdown the segment manager
+        if (SM) {
+            if (SM.local_swd) {
+                try {
+                    SM.local_swd.stopAndDeleteWorkflowQueue();
+                } catch (hash<ExceptionInfo> ex) {
+                    logError("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+                }
+            }
+
+            try {
+                SM.shutdown();
+            } catch (hash<ExceptionInfo> ex) {
+                logError("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            }
+        }
+
+        # stop any mapper reloads and avoid race conditions
+        mappers.shutdown();
+
+        # stop WorkflowQueue thread pool
+        delete wqtp;
+
+        # close workflow session
+        if (session) {
+            session.close();
+        }
+
+        # stop cluster server process event thread
+        stopEventThread();
+
+        logInfo("stopped cluster server process event thread; PID %d exiting normally", getpid());
+
+        # delete all clients
+        deleteAllClients();
+
+        # we need to call exit() in case for example there are Java threads running that won't otherwise die
+%ifndef QorusDebugInternals1
+        # don't call exit() when performing memory debugging
+        exit(0);
+%endif
+    }
+
+    int getSessionId() {
+        return sessionid;
+    }
+
+    # required for CryptoKeyHelper
+    *string getKeyOption(string opt) {
+        return options.get(opt);
+    }
+
+    private logEvent() {
+        if (log_subscribed) {
+            core.sendCmdOneWay(CPC_CORE_LOG_IF, {"method": "workflowLogEvent", "args": argv});
+        }
+    }
+
+    #! to enrich the log message
+    private string enrichLogMsg(string msg, auto args) {
+        if (wf) {
+            return wf.enrichLogMsg(msg, args);
+        }
+        return vsprintf(msg, args);
+    }
+
+    # we cannot block the I/O thread; calls here must be guaranteed to be very fast or must
+    # be made asynchronously in a background thread
+    private bool processCmdImpl(ZSocketRouter sock, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        if (QorusInterfaceProcess::processCmdImpl(sock, index, sender, mboxid, cmd, msg))
+            return True;
+
+        switch (cmd) {
+            case CPC_QWF_CALL_SUBSYSTEM: {
+                auto msgdata = qorus_cluster_deserialize(msg);
+                background callSubsystem(index, sender, mboxid, msgdata);
+                return True;
+            }
+        }
+        return False;
+    }
+
+    auto deserialize(data d) {
+        return control ? control.deserialize(d) : Serializable::deserialize(d);
+    }
+
+    private callSubsystem(int index, string sender, string mboxid, hash<auto> h) {
+        try {
+            QDBG_LOG("subsystem request: sender: %y TID %d index: %y h: %y", sender, mboxid, index, h);
+            create_tld();
+            if (h.tld) {
+                tld += h.tld;
+            }
+            auto rv;
+            switch (h.subsystem) {
+                case "control":
+                    if (!control || !SM.local_swd.WC) {
+                        # we need to wait for startup
+                        waitForStartup();
+                    }
+                    rv = call_object_method_args(control, h.method, h.args);
+                    break;
+
+                case "wfi":
+                    tld.index = h.index;
+                    if (!control || !SM.local_swd.WC) {
+                        # we need to wait for startup
+                        waitForStartup();
+                    }
+                    if (!control.execHash{h.index}) {
+                        throw "INVALID-WORKFLOW-EXECUTION-INSTANCE", sprintf("tried to access unknown/invalid "
+                            "workflow execution instance %y; valid workflow execution instance indices: %y", h.index,
+                            keys control.execHash);
+                    }
+                    rv = call_object_method_args(control.execHash{h.index}, h.method, h.args);
+                    break;
+
+                case "swd":
+                    if (!SM.local_swd) {
+                        # we need to wait for startup
+                        waitForStartup();
+                    }
+                    rv = call_object_method_args(SM.local_swd, h.method, h.args);
+                    break;
+
+                case "wfq":
+                    if (!SM.local_swd.WC) {
+                        # we need to wait for startup
+                        waitForStartup();
+                    }
+                    rv = call_object_method_args(SM.local_swd.WC, h.method, h.args);
+                    break;
+
+                default:
+                    throw "UNKNOWN-SUBSYSTEM-ERROR", sprintf("qwf subsystem %y is unknown", h.subsystem);
+            }
+            QDBG_LOG("subsystem response: sender: %y TID %d index: %y: %y", sender, mboxid, index, rv);
+            sendAnyResponse(index, sender, mboxid, CPC_OK, rv);
+        } catch (hash<ExceptionInfo> ex) {
+            logError("subsystem exception: sender: %y TID %d index: %y: %y", sender, mboxid, index, get_exception_string(ex));
+            sendExceptionResponse(index, sender, mboxid, ex);
+        }
+    }
+
+    private *int usageImpl() {
+        stderr.printf("usage: %s [options] <api> <node> <master-node> <master-urls> <interfaces> <network-key-path> "
+            "<process-type> <unique-proc-name> <logpath> <restarted> <wfname> <wfver> <stack-size> <sessionid>\n",
+            get_script_name());
+        stderr.printf("this program is not meant to be started by hand\n");
+    }
+}

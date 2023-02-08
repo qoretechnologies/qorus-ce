@@ -1,0 +1,30 @@
+type: mapper
+mappertype: Mapper
+name: mapper-test-2
+version: "1.0"
+desc: mapper test mapper
+author:
+  - Qore Technologies, s.r.o.
+parse-options:
+  - PO_NEW_STYLE
+  - PO_REQUIRE_TYPES
+  - PO_STRICT_ARGS
+
+options:
+  mapper-input:
+    type: remote
+    name: mapper-test-2
+    path: /datasources/omquser/table_1
+  mapper-output:
+    type: remote
+    name: mapper-test-2
+    path: /datasources/omquser/table_2
+  output_provider_bulk: true
+
+fields:
+  output_1:
+    name: input_1
+  output_2:
+    name: input_2
+  output_3:
+    constant: 123

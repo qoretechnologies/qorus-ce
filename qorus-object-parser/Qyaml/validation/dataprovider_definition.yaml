@@ -1,0 +1,45 @@
+dataprovider:
+  required:
+    type:
+      type: string
+    name:
+      type: string
+  optional:
+    args:
+      type: any
+    desc:
+      type: string
+    can_manage_fields:
+      type: bool
+    custom-fields:
+      type: hash
+    is_api_call:
+      type: bool
+    path:
+      type: string
+    supports_request:
+      type: bool
+    supports_read:
+      type: bool
+    use_args:
+      type: bool
+    search_args:
+      type: hash
+    search_options:
+      type: hash
+    update_args:
+      type: hash
+    create_args:
+      type: list
+    create_args_freeform:
+      type: list|hash
+    supports_update:
+      type: bool
+    supports_create:
+      type: bool
+    supports_delete:
+      type: bool
+    descriptions:
+      type: list
+    options:
+      type: hash

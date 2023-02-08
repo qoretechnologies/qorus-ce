@@ -1,0 +1,35 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires SoapDataProvider
+
+class MapperTest1 inherits QorusService {
+    init() {
+        logInfo("init() method called");
+    }
+
+    hash<auto> get(string symbol) {
+        # make sure the SOAP service is running
+        callRestApi("PUT", "services/simple/load");
+        # must reset the mapper before using the embedded connection
+        callRestApi("PUT", "mappers/mapper-test-3/reload");
+        Mapper mapper = getMapper("mapper-test-3");
+        SoapRequestDataProvider dp = cast<SoapRequestDataProvider>(mapper.getInputProvider());
+        hash<auto> resp = dp.doRequest({"body": {"tickerSymbol": symbol}});
+        logInfo("symbol: %y -> %N", symbol, resp);
+        return resp;
+    }
+
+    auto exprTest(*string f) {
+        Mapper mapper = getMapper("mapper-test-4");
+        hash<auto> rv = mapper.mapData({});
+        return exists f ? rv{f} : rv;
+    }
+
+    hash<auto> doNestedTest(hash<auto> input) {
+        Mapper mapper = getMapper("mapper-test-parent");
+        return mapper.mapData(input);
+    }
+}

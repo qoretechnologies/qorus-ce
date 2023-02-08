@@ -1,0 +1,19 @@
+# This is a generated file, don't edit!
+type: class
+name: FsmDepTest
+desc: FSM dep test connector
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: writeValue
+    method: writeValue
+    type: input-output
+lang: qore
+version: "1.0"
+code: FsmDepTest-1.0.qclass
+config-items:
+  - name: fsm-connector-test-write-value
+    config_group: FSM Connector
+    description: FSM connector test write value
+    strictly_local: true
+    type: hash

@@ -1,0 +1,13 @@
+# This is a generated file, don't edit!
+type: class
+name: TestEventSource
+desc: test event source class
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: event
+    method: raiseEvent
+    type: event
+lang: qore
+version: "1.0"
+code: TestEventSource-1.0.qclass

@@ -1,0 +1,35 @@
+# This is a generated file, don't edit!
+type: pipeline
+name: pipeline5
+desc: pipeline 5
+children:
+  - name: Issue3485PythonProcessor1
+    type: processor
+    pid: "id1"
+    config-items:
+      - name: pfx
+        value:
+            "prefix1"
+        parent:
+            interface-name: Issue3485PythonProcessor1
+            interface-type: class
+            interface-version: "1.0"
+      - name: crec
+        parent:
+            interface-name: Issue3485PythonProcessor1
+            interface-type: class
+            interface-version: "1.0"
+      - name: raise_error
+        value:
+            false
+        parent:
+            interface-name: Issue3485PythonProcessor1
+            interface-type: class
+            interface-version: "1.0"
+    children:
+      - name: Issue3485PythonProcessor2
+        type: processor
+        pid: "id2"
+groups:
+  - regression
+  - test

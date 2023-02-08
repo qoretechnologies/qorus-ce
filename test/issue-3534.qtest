@@ -1,0 +1,44 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue3534
+
+class QorusIssue3534 inherits Test {
+    constructor() : Test("Issue3534Service", "1.0", \ARGV) {
+        QorusClient::init();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        hash<auto> svc = qrest.get("services/issue-3534");
+        if (svc.remote) {
+            qrest.put("services/issue-3534/setRemote", {"remote": False});
+        }
+        doTest();
+        qrest.put("services/issue-3534/setRemote", {"remote": True});
+        doTest();
+    }
+
+    doTest() {
+        qrest.put("services/issue-3534/load");
+        on_exit qrest.put("services/issue-3534/unload");
+
+        DataStreamClient rest({
+            "url": UserApi::qorusGetLocalUrl(),
+        });
+        assertEq("OK", rest.get("issue-3534").body);
+    }
+}

@@ -1,0 +1,25 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class DataContextTest
+
+class DataContextTest inherits Test {
+    constructor() : Test("DataContextTest", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        assertEq(StatComplete, qrest.put("jobs/context-data-test/run").status);
+        assertTrue(qrest.put("services/context-data-test/test/call"));
+    }
+}

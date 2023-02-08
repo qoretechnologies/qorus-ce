@@ -1,0 +1,143 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file MapperTestSchema.qsm Qorus Integration System mapper test schema
+
+/*
+  Qorus Integration Engine
+
+  Copyright (C) 2003 - 2022 Qore Technologies, s.r.o., all rights reserved
+
+  **** NOTICE ****
+    All information contained herein is, and remains the property of Qore
+    Technologies, s.r.o. and its suppliers, if any.  The intellectual and
+    technical concepts contained herein are proprietary to Qore Technologies,
+    s.r.o. and its suppliers and may be covered by Czech, European, U.S. and
+    Foreign Patents, patents in process, and are protected by trade secret or
+    copyright law.  Dissemination of this information or reproduction of this
+    material is strictly forbidden unless prior written permission is obtained
+    from Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9.4
+
+module MapperTestSchema {
+    version = "1.0";
+    desc = "Qorus mapper test schema module";
+    author = "Qore Technologies, s.r.o. <info@qoretechnologies.com>";
+    url = "https://qoretechnologies.com";
+}
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%requires Schema
+%requires SqlUtil
+
+%new-style
+%strict-args
+%require-types
+%strict-args
+%enable-all-warnings
+
+# private namespace for private schema declarations
+namespace Private {
+    const GenericOptions = {
+        "replace": True,
+    };
+
+    const IndexOptions = {
+        "driver": {
+            "oracle": {
+                "compute_statistics": True,
+            },
+        },
+    };
+
+    const ColumnOptions = {
+        "driver": {
+            "oracle": {"character_semantics": True,},
+        },
+    };
+
+    const T_Table_1 = {
+        "columns": {
+            "input_1": c_number(15, True, "PK column"),
+            "input_2": c_varchar(15, True, "string column"),
+        },
+        "primary_key": {"name": "pk_table_1", "columns": ("input_1")},
+    };
+
+    const T_Table_2 = {
+        "columns": {
+            "output_1": c_varchar(15, True, "string column"),
+            "output_2": c_varchar(15, True, "string column"),
+            "output_3": c_number(15, True, "number column"),
+        },
+    };
+
+    const Tables = {
+        "table_1": T_Table_1,
+        "table_2": T_Table_2,
+    };
+}
+
+public namespace MapperTestSchema {
+    public string sub get_datasource_name() {
+        return "omquser";
+    }
+
+    public MapperTestSchema sub get_user_schema(AbstractDatasource ds, *string dts, *string its) {
+        return new MapperTestSchema(ds, dts, its);
+    }
+
+    public class MapperTestSchema inherits AbstractSchema {
+        public {
+            const SchemaName = "MapperTestSchema";
+            const SchemaVersion = "1.0";
+
+            const SRD_Mapper_1 = (
+                ("input_1", "input_2"),
+                (1, "number 1"),
+                (2, "number 2"),
+            );
+
+            const StrictReferenceData = {
+                "table_1": SRD_Mapper_1,
+            };
+        }
+
+        constructor(AbstractDatasource ds, *string dts, *string its) :  AbstractSchema(ds, dts, its) {
+        }
+
+        private string getNameImpl() {
+            return SchemaName;
+        }
+
+        private string getVersionImpl() {
+            return SchemaVersion;
+        }
+
+        private *hash getTablesImpl() {
+            return Tables;
+        }
+
+        private *hash getSequencesImpl() {
+        }
+
+        private *hash getIndexOptionsImpl() {
+            return IndexOptions;
+        }
+
+        private *hash getGenericOptionsImpl() {
+            return GenericOptions;
+        }
+
+        private *hash getColumnOptionsImpl() {
+            return ColumnOptions;
+        }
+
+        private hash<auto> getStrictReferenceDataHashImpl() {
+            return StrictReferenceData;
+        }
+    }
+}

@@ -1,0 +1,27 @@
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class issue3364step inherits QorusNormalArrayStep {
+    softlist<auto> array() {
+        return ("test1", "test2", "test3");
+    }
+
+    primary(auto array_arg) {
+        logInfo("array_arg: %s", array_arg);
+
+        Mapper mapper = UserApi::getMapper("issue3364mapper");
+        logInfo("mapper: %y", mapper);
+
+        hash input = {
+            "input-1": "adasd",
+            "input-2": "sadsds",
+            "input-3": 23213
+        };
+
+        hash<auto> mapped_data = mapper.mapData(input);
+        logInfo("mapped data: %y", mapped_data);
+        WorkflowApi::updateDynamicData({"mapped_data": mapped_data});
+    }
+}

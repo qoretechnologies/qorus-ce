@@ -1,0 +1,1110 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusObjectParser.qm file parser for Qorus System files
+
+/*
+  Qorus Integration Engine
+
+  Copyright (C) 2003 - 2022 Qore Technologies, s.r.o., all rights reserved
+
+  **** NOTICE ****
+    All information contained herein is, and remains the property of Qore
+    Technologies, s.r.o. and its suppliers, if any.  The intellectual and
+    technical concepts contained herein are proprietary to Qore Technologies,
+    s.r.o. and its suppliers and may be covered by Czech, European, U.S. and
+    Foreign Patents, patents in process, and are protected by trade secret or
+    copyright law.  Dissemination of this information or reproduction of this
+    material is strictly forbidden unless prior written permission is obtained
+    from Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 1.0
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires Util
+%requires Logger
+
+module QorusObjectParser {
+    version = "1.0";
+    desc = "Qorus object file parser";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+public namespace QorusObjectParser {
+
+    # private helper class used to create QorusObject when all data are ready
+    class QorusObjectFactory {
+        public {
+            string type;
+            hash tagDefinitions;
+            hash tags;
+            hash userTags = {};
+        }
+
+        QorusObject createQorusObject() {
+            if (!type) {
+                throw "QORUS-OBJECT-FACTORY-ERROR", sprintf("cannot create a QorusObject, type must be set");
+            }
+            if (!tagDefinitions) {
+                throw "QORUS-OBJECT-FACTORY-ERROR", sprintf("cannot create a QorusObject, tag definitions must be set");
+            }
+            if (!tags) {
+                throw "QORUS-OBJECT-FACTORY-ERROR", sprintf("cannot create a QorusObject, tags must be set");
+            }
+
+            return new QorusObject(type, tagDefinitions, tags, userTags);
+        }
+    }
+
+    # Tag parser for parsing metadata tags in qorus file
+    class TagParser {
+        private {
+            # all QorusObjects in the file
+            list<QorusObject> qorusObjects();
+
+            # qorus object factory for the current qorusObject
+            QorusObjectFactory qorusObjectFactory();
+
+            # object's string buffer
+            string buffer;
+
+            string fileName;
+
+            int lineNumber = 0;
+            int lineNumberOffset = 0;
+
+            string encoding = "utf8";
+
+            bool showMissingTagWarning = True;
+            bool ignoreEmptyDefinitions = False;
+        }
+
+        constructor(string object_type, hash tag_definitions, string file_name) {
+            fileName = normalize_dir(file_name);
+
+            qorusObjectFactory.type = object_type;
+
+            foreach hash<auto> iterator in (tag_definitions.pairIterator()) {
+                string tag = iterator.key;
+                auto tag_info = iterator.value;
+                # transform list into a hash
+                if (tag_info{"values"}) {
+                    tag_definitions{tag}{"values"} = map {$1: True}, tag_info{"values"};
+                }
+                if (tag_info{"default"} && tag_info{"values"} && !tag_definitions{tag}{"values"}{tag_info{"default"}}) {
+                    throw "QORUS-OBJECT-PARSER-ERROR",
+                        sprintf("tag %y has a default value (%y) which is not in the acceptable values list: %y",
+                                tag, tag_info{"default"}, tag_info{"values"});
+                }
+            }
+
+            qorusObjectFactory.tagDefinitions = tag_definitions;
+        }
+
+        /* Sets an encoding for the TagParser
+            @param encoding string to set
+        */
+        setEncoding(string encoding) {
+            self.encoding = encoding;
+        }
+
+        /* Sets the flag that determines if missing tag warnings should be shown or not
+            @param show_missing_tag_warning if True then missing tag warnings will be shown otherwise no
+        */
+
+        setShowMissingTagWarning(bool show_missing_tag_warning) {
+            showMissingTagWarning = show_missing_tag_warning;
+        }
+
+        private bool checkDuplication(string tag, string value, hash<auto> tag_definition) {
+            if (!qorusObjectFactory.tags{tag}) {
+                return True;
+            }
+
+            if (buffer) {
+                # if there is intervening code, check for duplicate tag processing reggardless of "multi" or "list" settings
+                string err = sprintf("ignoring '%s' tag specified multiple times with intervening code in %s "
+                    "definition; possibly missing END tag", tag, qorusObjectFactory.type);
+                if (qorusObjectFactory.tags{"name"}) {
+                    err += sprintf(" while defining '%s'", qorusObjectFactory.tags{"name"});
+                }
+                warningln(err);
+                return False;
+            } else if (!tag_definition{"multi"} && !tag_definition{"list"}) {
+                string err = sprintf("'%s' specified twice in %s definition", tag, qorusObjectFactory.type);
+                if (qorusObjectFactory.tags{"name"}) {
+                    err += sprintf(" while defining '%s'", qorusObjectFactory.tags{"name"});
+                }
+                errorln(err);
+            }
+
+            return True;
+        }
+
+        private:internal bool checkAndSaveTag(string tag, string value) {
+            hash<auto> tag_definition = qorusObjectFactory.tagDefinitions{tag};
+            Parser::logger.debug("TagParser::checkAndSaveTag(): tag: %s, value: %s, tag definition: %N", tag, value,
+                                 tag_definition);
+
+            trim value;
+            if (!checkDuplication(tag, value, tag_definition)) {
+                return False;
+            }
+
+            auto result = convertValue(tag_definition, value);
+
+            bool ok = False;
+            if (shouldTagBeSaved(tag, \result, \ok)) {
+                save(tag_definition, tag, result);
+            }
+
+            return ok;
+        }
+
+        private auto convertValue(hash tag_definition, string value) {
+            auto result;
+            switch (tag_definition{"type"}) {
+                case Type::Boolean:
+                    result = parse_boolean(value);
+                    break;
+
+                case Type::Date:
+                    result = date(value);
+                    break;
+
+                case Type::Int:
+                    result = int(value);
+                    break;
+
+                default:
+                    result = value;
+                    break;
+            }
+            return result;
+        }
+
+        private:internal save(hash tag_definition, string tag, auto value) {
+            if (qorusObjectFactory.tags{tag}) {
+                if (tag_definition{"list"}) {
+                    qorusObjectFactory.tags{tag} += value;
+                } else {
+                    qorusObjectFactory.tags{tag} += tag_definition{"multi"} + value;
+                }
+            } else {
+                qorusObjectFactory.tags{tag} = tag_definition{"list"} ? list(value) : value;
+            }
+
+            if (tag_definition{"values"} && !tag_definition{"values"}{value}) {
+                errorln("tag %y has value %y; expecting one of %y", tag, value, keys tag_definition{"values"});
+            }
+            Parser::logger.debug("TagParser::save() saved tag %y with value  %y", tag, value);
+        }
+
+        /* Parses the given file in the constructor and returns a list of QorusObject
+            @param file_iterator optional line iterator (fileName given in the constructor will be used only for info)
+            @return list of QorusObject
+        */
+        list<QorusObject> parse(AbstractLineIterator file_iterator = new FileLineIterator(fileName)) {
+            Parser::logger.debug("TagParser parsing %s", fileName);
+
+            while (file_iterator.next()) {
+                string file_line = file_iterator.getValue();
+                lineNumber = file_iterator.index();
+                Parser::logger.debug("TagParser:parse(): parsing %d line: %s", lineNumber, file_line);
+
+                (*string tag, *string tag_value) = getTagAndValue(file_line);
+                Parser::logger.debug("TagParser:parse(): tag: %s, tag_value: %s", tag, tag_value);
+
+                if (tag && tag_value && qorusObjectFactory.tagDefinitions{tag} && checkAndSaveTag(tag, tag_value)) {
+                    # check and discard any code already gathered
+                    Parser::logger.trace("TagParser:parse(): checkBuffer will be called");
+                    checkBuffer(file_line);
+                } else if (tag == "TAG" && tag_value) {
+                    Parser::logger.trace("TagParser:parse(): gotUserTag will be called");
+                    gotUserTag(tag_value);
+                } else if (checkEnd(file_line)) {
+                    Parser::logger.trace("TagParser:parse(): gotEnd will be called");
+                    gotEnd();
+                } else {
+                    Parser::logger.trace("TagParser:parse(): no match");
+                    if (lineNumberOffset == 0) {
+                        setLineNumberOffset(lineNumber - 1);
+                    }
+                    noMatch(file_line);
+                }
+            }
+
+            onFileParsed();
+
+            if (!ignoreEmptyDefinitions && qorusObjects.empty()) {
+                error("contained no %s definitions", qorusObjectFactory.type);
+            }
+            Parser::logger.debug("%s: parsed successfully", fileName);
+            return qorusObjects;
+        }
+
+        #! can be overriden by a subclass
+        private onFileParsed() {
+        }
+
+        private:internal gotUserTag(string tag_value) {
+            trim tag_value;
+            (*string user_tag, *string user_tag_value) = (tag_value =~ x/^([a-z][-a-z0-9_]*)[ \t]*:[ \t]*(.*)$/i);
+            if (!user_tag || !user_tag_value) {
+                error("cannot parse user tag value: %y; expecting \"tag: value...\"", tag_value);
+            }
+
+            trim user_tag;
+            trim user_tag_value;
+
+            if (qorusObjectFactory.userTags{user_tag}) {
+                error("user tag %y given twice (original tag value: %y, new tag value: %y)",
+                      user_tag, qorusObjectFactory.userTags{user_tag}, user_tag_value);
+            }
+            qorusObjectFactory.userTags{user_tag} = user_tag_value;
+        }
+
+        private:internal checkLength(auto tag_definition, string tag) {
+            if (tag_definition{"maxlen"} && strlen(qorusObjectFactory.tags{tag}) > tag_definition{"maxlen"}) {
+                int old_length = length(qorusObjectFactory.tags{tag});
+                qorusObjectFactory.tags{tag} = trunc_str(qorusObjectFactory.tags{tag}, tag_definition{"maxlen"},
+                                                         encoding);
+                warning("%s of %s %s truncated to %d characters to fit in DB column with max byte len of %d bytes "
+                        "(was %d characters)", tag, qorusObjectFactory.type, qorusObjectFactory.tags{"name"},
+                        length(qorusObjectFactory.tags{tag}), tag_definition{"maxlen"}, old_length);
+            }
+        }
+
+        # can be overriden by a subclass
+        private gotEnd() {
+            Parser::logger.trace("TagParser::gotEnd(): qorusObjectFactory: %y", qorusObjectFactory);
+
+            # assign default values to all missing object tags
+            foreach hash<auto> iterator in (qorusObjectFactory.tagDefinitions.pairIterator()) {
+                if (exists iterator.value{"default"} && !exists qorusObjectFactory.tags{iterator.key}) {
+                    Parser::logger.trace("TagParser::gotEnd(): fill default value: %y for %y",
+                                         iterator.value{"default"}, iterator.key);
+                    qorusObjectFactory.tags{iterator.key} = iterator.value{"default"};
+                }
+            }
+
+            foreach string tag in (keys qorusObjectFactory.tagDefinitions) {
+                auto tag_definition = qorusObjectFactory.tagDefinitions{tag};
+
+                # check that all mandatory object tags have been defined
+                if (tag_definition{"mandatory"} && !exists qorusObjectFactory.tags{tag}) {
+                    missingTagError(tag);
+                }
+
+                # check if maximum length has been exceeded
+                checkLength(tag_definition, tag);
+
+                # check if tags with the warn flag have been defined and issue warning if not
+                if (tag_definition{"warn"} && !exists qorusObjectFactory.tags{tag}) {
+                    missingTagWarning(tag);
+                }
+            }
+
+            # add informational tags about the object being loaded
+            qorusObjectFactory.userTags += {
+                "_source": fileName,
+                "_offset": lineNumberOffset,
+                "_host": gethostname(),
+                "_user": getusername(),
+            };
+            # issue #2796: remove offset to make sure it's set with the next code line
+            clearLineNumberOffset();
+
+            # check name validity here - empty name is allowed, if any of child class derives name
+            # it must be then validated by the class itself
+            validate_object_name(qorusObjectFactory.tags{"name"});
+
+            qorusObjectFactory.tags{"code"} = buffer;
+            doEnd();
+
+            saveAndResetQorusObject();
+        }
+
+        private clearLineNumberOffset() {
+            remove lineNumberOffset;
+        }
+
+        private:internal saveAndResetQorusObject() {
+            QorusObject qorus_object = qorusObjectFactory.createQorusObject();
+            push qorusObjects, qorus_object;
+
+            Parser::logger.debug("TagParser::saveAndResetQorusObject(): qorus_object: %y", qorus_object);
+            Parser::logger.debug("TagParser::saveAndResetQorusObject(): serialized: %n",
+                                 qorus_object.serializeMembers());
+
+            QorusObjectFactory newQorusObjectFactory = new QorusObjectFactory();
+            newQorusObjectFactory.type = qorusObjectFactory.type;
+            newQorusObjectFactory.tagDefinitions = qorusObjectFactory.tagDefinitions;
+            qorusObjectFactory = newQorusObjectFactory;
+
+            delete buffer;
+        }
+
+        #! to be reimplemented in derived classes
+        private doEnd() {
+        }
+
+        # can be overriden by a subclass
+        private *list<string> getTagAndValue(string file_line) {
+            return (file_line =~ x/^(?:\#|\/\/) {0,2}([a-z][-a-z0-9_]*)[ \t]*:[ \t]*(.*)$/i);
+        }
+
+        # can be overriden by a subclass
+        private bool checkEnd(string file_line) {
+            return (file_line =~ /^(?:\#|\/\/) {0,2}END([^A-Za-z0-9]|$)/);
+        }
+
+        private setLineNumberOffset(int val) {
+            lineNumberOffset = val;
+        }
+
+        # can be overriden by a subclass
+        private checkBuffer(string file_line) {
+            if (!buffer) {
+                if (lineNumberOffset) {
+                    setLineNumberOffset(0);
+                }
+                return;
+            }
+
+            trim buffer;
+            # see if there is any code in the buffer
+            for (int j = 0; j < buffer.size(); ++j) {
+                if (buffer[j] =~ /[[:space:]]/) {
+                    continue;
+                }
+
+                if (buffer[j] == "#") {
+                    # ignore Qore comments outside a code definition
+                    j = buffer.find("\n", j);
+                    if (j == -1) {
+                        break;
+                    }
+                } else if (buffer[j] == "/" && buffer[j + 1] == "/") {
+                    # ignore Java comments outside a code definition
+                    j = buffer.find("\n", j + 1);
+                    if (j == -1) {
+                        break;
+                    }
+                } else if (buffer[j] == "/" && buffer[j + 1] == "*") {
+                    j = buffer.find("*/", j + 2);
+                    if (j == -1) {
+                        error("unterminated block comment found in discarded code starting on line %d", lineNumberOffset);
+                    }
+                    ++j;
+                } else {
+                    error("code found outside of an object definition starting on line %d;"
+                          " move inside the following code object definition to correct this error",
+                          lineNumberOffset, buffer);
+                }
+            }
+            delete buffer;
+        }
+
+        private missingTagWarning(string tag) {
+            if (!showMissingTagWarning) {
+                return;
+            }
+
+            string err = sprintf("'%s' has not been defined for %s", tag, qorusObjectFactory.type);
+            if (exists qorusObjectFactory.tags{"name"}) {
+                err += sprintf(" while defining '%s'", qorusObjectFactory.tags{"name"});
+            }
+            warning(err);
+        }
+
+        private missingTagError(string tag) {
+            string err = sprintf("'%s' has not been defined for %s", tag, qorusObjectFactory.type);
+            if (exists qorusObjectFactory.tags{"name"}) {
+                err += sprintf(" while defining '%s'", qorusObjectFactory.tags{"name"});
+            }
+            error(err);
+        }
+
+        final private errorln(string msg) {
+            throw "QORUS-OBJECT-PARSER-ERROR", sprintf("%s:%d: %s", fileName, lineNumber, vsprintf(msg, argv));
+        }
+
+        final private error(string msg) {
+            throw "QORUS-OBJECT-PARSER-ERROR", sprintf("%s: %s", fileName, vsprintf(msg, argv));
+        }
+
+        final private warningln(string msg) {
+            Parser::logger.warn("%s:%d: %s", fileName, lineNumber, vsprintf(msg, argv));
+        }
+
+        final private warning(string msg) {
+            Parser::logger.warn("%s: %s", fileName, vsprintf(msg, argv));
+        }
+
+        # can be overriden by a subclass
+        # returns True if tag should be saved
+        private bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            ok = True;
+
+            if (tag == "define-group") {
+                (*string group_name, *string desc) = (value =~ x/(.*):(.*)/);
+                trim group_name;
+                trim desc;
+                if (!group_name || !desc) {
+                    errorln("malformed 'define-group' definition; must be in format: 'name: description'; got: %y", value);
+                }
+                qorusObjectFactory.tags{"definedGroups"}{group_name}{"desc"} = desc;
+                return False;
+            }
+            if (tag == "groups") {
+                list groups = split(",", value);
+                qorusObjectFactory.tags{"groups"} += trim groups;
+                return False;
+            }
+            if (TagToLibraryType.hasKey(tag)) {
+                addLibrary(value, tag);
+                return False;
+            }
+            if (tag == "parse-options") {
+                gotParseOptionsTag(\value);
+                return False;
+            }
+
+            return True;
+        }
+
+        private:internal gotParseOptionsTag(reference value) {
+            list<string> options = value.split(",");
+            trim options;
+
+            foreach string option in (options) {
+                *int parse_code = ParseOptionStringMap{option};
+                if (!parse_code) {
+                    errorln("parse-options tag contains unknown parse option %y", option);
+                }
+                if (!(parse_code & ParseOptionMask)) {
+                    errorln("parse-options tag contains illegal parse option %y; valid parse options: %y",
+                            option, (map ParseOptionCodeMap.$1, ParseOptionList));
+                }
+            }
+            qorusObjectFactory.tags{"parse_options"} = (foldl $1 + "," + $2, options);
+        }
+
+        private:internal addLibrary(string line, string type) {
+            foreach string name in (split(",", line)) {
+                if (!qorusObjectFactory.tags{type}) {
+                    qorusObjectFactory.tags{type} = list();
+                }
+                qorusObjectFactory.tags{type} += trim name;
+            }
+        }
+
+        # can be overriden by a subclass
+        private noMatch(string line) {
+            buffer += line + "\n";
+        }
+    }
+
+    # parses all the method in the given service
+    class ServiceMethodParser inherits TagParser {
+        private {
+            int startLine = 0;
+            # int last_tag_line = -1;
+            bool classBasedService = False;
+
+            bool ignoreBuffer = True;
+            string classBasedBuffer;
+            string language;
+        }
+
+        constructor(string file_name, bool class_based_service, int start_line, string lang)
+            : TagParser("service method", ServiceMethodTags, file_name) {
+            Parser::logger.trace("ServiceMethodParser:constructor(): file: %y, start_line: %y", file_name, start_line);
+
+            classBasedService = class_based_service;
+            startLine = start_line;
+            language = lang;
+
+            # issue #3416: set the offset to the line where code starts for class-based services for all methods
+            if (class_based_service) {
+                lineNumberOffset = start_line;
+            }
+
+            # issue #3247: do not throw an error if there are no service methods; the service may inherit methods;
+            # this will be checked in service validation
+            ignoreEmptyDefinitions = True;
+        }
+
+        private clearLineNumberOffset() {
+            # issue #3416: only clear the line number offset if we are not in a class-based service
+            if (!classBasedService) {
+                TagParser::clearLineNumberOffset();
+            }
+        }
+
+        private setLineNumberOffset(int val) {
+            # issue #3416: only set the line number offset if we are not in a class-based service
+            if (!classBasedService && !ignoreBuffer) {
+                TagParser::setLineNumberOffset(val);
+            }
+        }
+
+        private bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            Parser::logger.trace("ServiceMethodParser::shouldTagBeSaved called, buffer: %y,"
+                                 " classBasedService: %y", buffer, classBasedService);
+
+            if (buffer && classBasedService) {
+                Parser::logger.trace("ServiceMethodParser::shouldTagBeSaved gotEnd() will be called");
+                gotEnd();
+                delete buffer;
+            }
+
+            ok = True;
+            switch (tag) {
+                case "author":
+                case "desc":
+                case "name":
+                case "internal":
+                case "write":
+                case "define-auth":
+                    ignoreBuffer = False;
+                    return True;
+
+                case "lock":
+                    if (!inlist(value, AllSLTypes)) {
+                        error("unknown lock specifier %y", value);
+                    }
+                    ignoreBuffer = False;
+                    return True;
+
+                case "import-code":
+                    try {
+                        ReadOnlyFile file(value);
+                        buffer += file.read(-1); # add the entire file to the buffer
+                    } catch (hash<ExceptionInfo> ex) {
+                        errorln("error importing code: %s: %s", ex.err, ex.desc);
+                    }
+                    ignoreBuffer = False;
+                    return True;
+            }
+
+            ok = False;
+            return False;
+        }
+
+        private noMatch(string line) {
+            Parser::logger.trace("ServiceMethodParser::noMatch called");
+            if (lineNumber <= startLine) {
+                setLineNumberOffset(lineNumber);
+                return;
+            }
+            Parser::logger.trace("ServiceMethodParser::noMatch(): lineNumber: %y, startLine: %y", lineNumber,
+                                    startLine);
+
+            if (!classBasedService) {
+                buffer += line ? line + "\n" : "";
+
+                # try to automatically detect name if not present
+                if (!exists qorusObjectFactory.tags{"name"} && line =~ /sub +[A-Za-z_][A-Za-z0-9_]* *\(/) {
+                    string name = (line =~ x/(sub +)([A-Za-z_][A-Za-z0-9_]*) *\(/)[1];
+                    trim name;
+                    qorusObjectFactory.tags{"name"} = name;
+                }
+            } else if (!ignoreBuffer) {
+                buffer += line + "\n";
+            }
+        }
+
+        private doEnd() {
+            if (!exists qorusObjectFactory.tags{"code"} || !qorusObjectFactory.tags{"code"}.val() ||
+                !qorusObjectFactory.tags{"name"}.val()) {
+
+                error("service methods must have a name and a body (name: %y, lock: %y, body.size(): %d, info: %y)",
+                      qorusObjectFactory.tags{"name"}, qorusObjectFactory.tags{"lock"},
+                      exists qorusObjectFactory.tags{"code"} ? qorusObjectFactory.tags{"code"}.size() : 0,
+                      qorusObjectFactory.tags);
+            }
+
+            if (classBasedService) {
+                delete qorusObjectFactory.tags{"code"};
+            }
+        }
+
+        private *list<string> getTagAndValue(string file_line) {
+            if (lineNumber <= startLine) {
+                Parser::logger.debug("ServiceMethodParser::getTagAndValue(): ignore line");
+                return NOTHING; # don't parse anything until start line
+            }
+
+            if (classBasedService) {
+                classBasedBuffer += file_line + "\n";
+            }
+
+            return (file_line =~ x/^\s*(?:\#|\/\/) {0,2}([a-z][-a-z0-9_]*)\s*:\s*(.*)$/i);
+        }
+
+        private checkBuffer(string file_line) {}
+
+        private bool checkDuplication(string tag, string value, hash<auto> tag_definition) {
+            if (classBasedService) {
+                return True; # don't check duplication because of the way how the service methods are parsed
+            }
+            return TagParser::checkDuplication(tag, value, tag_definition);
+        }
+
+        string getClassBasedBuffer() {
+            return classBasedBuffer;
+        }
+
+        private gotEnd() {
+            TagParser::gotEnd();
+            if (!ignoreBuffer && !classBasedService) {
+                ignoreBuffer = True;
+            }
+        }
+
+        private onFileParsed() {
+            # check if there is any buffered methods
+            if (buffer !~ /^\s*$/ && classBasedService) {
+                gotEnd();
+                delete buffer;
+            }
+        }
+
+    } # ServiceMethodParser
+
+    class ServiceParser inherits TagParser {
+        constructor(hash tag_definitions, string file_name)
+            : TagParser("service", tag_definitions, file_name) {
+        }
+
+        private bool checkEnd(string file_line) {
+            return (file_line =~ /^(?:\#|\/\/) {0,2}ENDSERVICE/);
+        }
+
+        private bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            Parser::logger.trace("ServiceParser::shouldTagBeSaved() tag: %y, value: %y", tag, value);
+
+            ok = True;
+            switch (tag) {
+                case "service-modules":
+                    if (!exists qorusObjectFactory.tags{"modules"}) {
+                        qorusObjectFactory.tags{"modules"} = list(value);
+                    } else {
+                        qorusObjectFactory.tags{"modules"} += value;
+                    }
+                    return True;
+
+                case "service":
+                    qorusObjectFactory.tags{"name"} = value;
+                    return True;
+
+                case "servicedesc":
+                    if (qorusObjectFactory.tags{"desc"}) {
+                        qorusObjectFactory.tags{"desc"} += " " + value;
+                    } else {
+                        qorusObjectFactory.tags{"desc"} = value;
+                    }
+                    return True;
+
+                case "serviceversion":
+                    qorusObjectFactory.tags{"version"} = value;
+                    return True;
+
+                case "serviceauthor":
+                    if (qorusObjectFactory.tags{"author"}) {
+                        qorusObjectFactory.tags{"author"} += value;
+                    } else {
+                        qorusObjectFactory.tags{"author"} = list(value);
+                    }
+                    return True;
+
+                case "servicepatch":
+                    qorusObjectFactory.tags{"patch"} = value;
+                    return True;
+
+                case "servicetype":
+                    value = toupper(value);
+                    if (value != "SYSTEM" && value != "USER") {
+                        errorln("servicetype '%s' is not valid", tolower(value));
+                    }
+                    return True;
+
+                case "template":
+                case "text-resource":
+                case "bin-resource":
+                case "resource":
+                    trim value;
+                    if (PlatformOS == "Windows") {
+                        value =~ s/\//\\/g;
+                    }
+                    if (absolute_path(value)) {
+                        error("%s: %y is an absolute path; resource paths must be relative", tag, value);
+                    }
+
+                    qorusObjectFactory.tags{tag} += qorusObjectFactory.tags{tag} ? value : list(value);
+                    return False;
+
+                case "define-auth-label":
+                    qorusObjectFactory.tags{"authlabels"} = Util::parse_to_qore_value(value);
+                    return False;
+            }
+            return TagParser::shouldTagBeSaved(tag, \value, \ok);
+        }
+
+        private doEnd() {
+            Parser::logger.trace("ServiceParser:doEnd()");
+
+            if (!qorusObjectFactory.tags{"service"}) {
+                error("no 'service' tag defining the service name found before ENDSERVICE");
+            }
+
+            validate_object_name(qorusObjectFactory.tags{"service"});
+
+            if (!qorusObjectFactory.tags{"serviceversion"}) {
+                error("no 'serviceversion' tag defining the service version found before ENDSERVICE");
+            }
+
+            if (qorusObjectFactory.tags{"lang"} == "java") {
+                qorusObjectFactory.tags{"class-based"} = True;
+            }
+
+            # set "class-based" automatically if "class-name" is set
+            if (qorusObjectFactory.tags{"class-name"} && !exists qorusObjectFactory.tags{"class-based"}) {
+                qorusObjectFactory.tags{"class-based"} = True;
+            }
+
+            if (qorusObjectFactory.tags{"class-name"} && qorusObjectFactory.tags{"class-based"} == False) {
+                error("class-based flag cannot be set to false when the 'class-name' tag is present");
+            }
+
+            if (!exists qorusObjectFactory.tags{"class-based"}) {
+                qorusObjectFactory.tags{"class-based"} = False;
+            } else if (qorusObjectFactory.tags{"class-based"}) {
+                # issue #3416: set the offset to the line where code starts for class-based services
+                lineNumberOffset = lineNumber;
+                qorusObjectFactory.userTags._offset = lineNumber;
+            }
+
+            if (!qorusObjectFactory.tags{"servicedesc"}) {
+                missingTagWarning("servicedesc");
+            }
+
+            Parser::logger.trace("ServiceParser::doEnd(): Parse service methods");
+            bool class_based = qorusObjectFactory.tags{"class-based"};
+            ServiceMethodParser method_parser(fileName, class_based, class_based ? lineNumberOffset : lineNumber,
+                                              qorusObjectFactory.tags{"lang"});
+            qorusObjects += method_parser.parse();
+
+            if (qorusObjectFactory.tags{"class-based"} == True) {
+                qorusObjectFactory.tags{"code"} = method_parser.getClassBasedBuffer();
+            } else {
+                # code is not needed for function-based services (methods code will be saved)
+                delete qorusObjectFactory.tags{"code"};
+            }
+
+            Parser::logger.trace("ServiceParser::doEnd(): Service methods parsed");
+        }
+
+    } # class ServiceParser
+
+    class JobParser inherits TagParser {
+        constructor(hash tag_definitions, string file_name)
+            : TagParser("job", tag_definitions, file_name) {
+        }
+
+        private bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            ok = True;
+            switch (tag) {
+                case "job-modules":
+                    if (!exists qorusObjectFactory.tags{"modules"}) {
+                        qorusObjectFactory.tags{"modules"} = list(value);
+                    } else {
+                        qorusObjectFactory.tags{"modules"} += value;
+                    }
+                    return True;
+
+                case "expiry-date":
+                    if (value < now()) {
+                        warningln("job %y created with past expiry_date: %y", qorusObjectFactory.tags{"name"}, value);
+                    }
+                    return True;
+
+                case "schedule":
+                    trim value;
+                    # convert multiple spaces into a single space
+                    value =~ s/ +/ /g;
+
+                    list schedule = split(" ", value);
+                    if (elements schedule != 5) {
+                        errorln("'schedule' does not have 5 fields in the format <minutes> <hours> <days> <months>"
+                                " <days-of-week>");
+                    }
+
+                    value = {
+                        "minutes": schedule[0],
+                        "hours"  : schedule[1],
+                        "days"   : schedule[2],
+                        "months" : schedule[3],
+                        "dow"    : schedule[4],
+                    };
+                    return True;
+
+                case "duration":
+                    trim value;
+                    if (!value.intp() || (value.toInt() <= 0)) {
+                        errorln("'duration' must be a positive integer in seconds; got %y instead", value);
+                    }
+                    value = value.toInt();
+                    return True;
+            }
+            return TagParser::shouldTagBeSaved(tag, \value, \ok);
+        }
+
+        private doEnd() {
+            if (!buffer) {
+                error("code for job %y is empty", qorusObjectFactory.tags{"name"});
+            }
+
+            if (qorusObjectFactory.tags{"lang"} == "java") {
+                qorusObjectFactory.tags{"class-based"} = True;
+            }
+
+            # set "class-based" automatically if "class-name" is set
+            if (qorusObjectFactory.tags{"class-name"}) {
+                if (!exists qorusObjectFactory.tags{"class-based"}) {
+                    qorusObjectFactory.tags{"class-based"} = True;
+                } else if (qorusObjectFactory.tags{"class-based"} == False) {
+                    error("class-based flag cannot be set to false when the 'class-name' tag is present");
+                }
+            } else if (!exists qorusObjectFactory.tags{"class-based"}) {
+                qorusObjectFactory.tags{"class-based"} = False;
+            }
+
+            TagParser::doEnd();
+        }
+
+    } # class JobParser
+
+    class MapperParser inherits TagParser {
+        private {
+             # current key
+            string key;
+
+            # current value buffer
+            string value;
+
+            string type; # option or field
+        }
+
+        constructor(hash tag_definitions, string file_name)
+            : TagParser("mapper", tag_definitions, file_name) {
+        }
+
+        private finalize() {
+            Parser::logger.trace("MapperParser::finalize(): %y, %y, %y", type, key, value);
+
+            trim value;
+
+            if (type == "option") {
+                qorusObjectFactory.tags{"options"}{key} = value;
+            } else {
+                qorusObjectFactory.tags{"fields"}{key} = value;
+            }
+
+            delete key;
+            delete value;
+            delete type;
+        }
+
+        private typeMatch(string line, string new_type) {
+            Parser::logger.debug("MapperParser::typeMatch(): %y, %y, %y", line, new_type, type);
+
+            if (type) {
+                finalize();
+            }
+
+            if (new_type == "option") {
+                line =~ s/^OPTION://;
+            } else if (new_type == "field") {
+                line =~ s/^FIELD://;
+            }
+
+            trim line;
+
+            (*string key, *string value) = (line =~ x/([^:]+):(.+)$/);
+            trim key;
+
+            # remove quotes on key
+            if (key =~ /^(".*"|'.*')$/) {
+                key =~ s/^.(.*).$/$1/;
+            }
+            if (!key || !value) {
+                error("%s declaration not in <key>: <value> format", new_type.upr());
+            }
+
+            if (new_type == "option") {
+                if (qorusObjectFactory.tags{"options"}{key}) {
+                    error("mapper %s key %y declared twice", new_type, key);
+                }
+            } else if (new_type == "field") {
+                if (qorusObjectFactory.tags{"fields"}{key}) {
+                    error("mapper %s key %y declared twice", new_type, key);
+                }
+            }
+
+            self.key = key;
+            self.value = value;
+            type = new_type;
+        }
+
+        private noMatch(string line) {
+            if (line =~ /^OPTION:/) {
+                typeMatch(line, "option");
+            } else if (line =~ /^FIELD:/) {
+                typeMatch(line, "field");
+            } else if (type) {
+                value += "\n" + line;
+            } else if (!(line =~ /^\s?#/ || line =~ /^\s*$/)) {
+                error("unidentified text found in mapper declaration: %y", line);
+            }
+        }
+
+        private doEnd() {
+            # finalize any pending field or option declaration
+            finalize();
+
+            if (!qorusObjectFactory.tags{"fields"}) {
+                error("cannot create a mapper with no field declarations");
+            }
+        }
+
+    } # class MapperParser
+
+    class FunctionParser inherits TagParser {
+        private {
+            list<string> sublist = ();
+        }
+
+        constructor(hash tag_definitions, string file_name)
+            : TagParser("function", tag_definitions, file_name) {
+        }
+
+        private bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            ok = True;
+            if (tag == "type") {
+                if (!inlist(value, AllFunctionTypes)) {
+                    errorln("type '%s' is not a recognized function type (valid values: %y)", value, AllFunctionTypes);
+                }
+                return True;
+            }
+
+            if (!qorusObjectFactory.tags{"type"}) {
+                warning("tag '%s: %s' ignored; only tags after the 'type' tag are processed", tag, value);
+                delete qorusObjectFactory.tags{tag};
+                ok = False;
+                return False;
+            }
+
+            if (tag == "name") {
+                qorusObjectFactory.tags{"hardcoded_name"} = value;
+                return True;
+            }
+
+            return True;
+        }
+
+        private noMatch(string line) {
+            if (!qorusObjectFactory.tags{"type"}) {
+                return;
+            }
+
+            # try to automatically detect name if not present
+            if (line =~ /sub +[A-Za-z][A-Za-z0-9_]* *\(/) {
+                string name = (line =~ x/(sub +)([A-Za-z][A-Za-z0-9_]*) *\(/)[1];
+                trim name;
+                sublist += name;
+                if (!qorusObjectFactory.tags{"hardcoded_name"}.val()) {
+                    qorusObjectFactory.tags{"derived_name"} = name;
+                }
+            }
+            buffer += line + "\n";
+        }
+
+        private doEnd() {
+            if (!qorusObjectFactory.tags{"name"}.val()) {
+                if (qorusObjectFactory.tags{"derived_name"}.val()) {
+                    qorusObjectFactory.tags{"name"} = qorusObjectFactory.tags{"derived_name"};
+                    validate_object_name(qorusObjectFactory.tags{"name"});
+                } else {
+                    error("no function was defined in the code block to derive the name of the function object and "
+                          "no explicit name tag was given");
+                }
+            }
+
+            if (qorusObjectFactory.tags{"type"} != FT_Generic && qorusObjectFactory.tags{"hardcoded_name"}.val() &&
+                !inlist(qorusObjectFactory.tags{"name"}, sublist)) {
+
+                error("function name %y was not defined in this code block", qorusObjectFactory.tags{"hardcoded_name"});
+            }
+        }
+
+    } # class FunctionParser
+
+    class ValueMapParser inherits TagParser {
+        private {
+            const DefaultDateFormat = "DD.MM.YYYY";
+
+            const AllowedTypes = {
+                "string": True,
+                "int": True,
+                "float": True,
+                "date": True,
+                "raw": True,
+            };
+        }
+
+        constructor(hash tag_definitions, string file_name)
+            : TagParser("value map", tag_definitions, file_name) {
+        }
+
+        bool shouldTagBeSaved(string tag, reference value, reference<bool> ok) {
+            ok = True;
+            switch (tag) {
+                case "exception":
+                    qorusObjectFactory.tags{"throws_exception"} = parse_boolean(value).toInt(); # toInt() for pgsql
+                    return True;
+
+                case "dateformat":
+                    qorusObjectFactory.tags{"dateformat"} = value;
+                    return False;
+
+                case "valuetype":
+                    if (!AllowedTypes{value}) {
+                        error("Invalid valuetype '%s'; expected one of %y", value, AllowedTypes.keys());
+                    }
+                    if (value == "raw") {
+                        qorusObjectFactory.tags{"valuetype"} = "string";
+                        qorusObjectFactory.tags{"raw"} = True;
+                    } else {
+                        qorusObjectFactory.tags{"valuetype"} = value;
+                        qorusObjectFactory.tags{"raw"} = False;
+                    }
+                    return False;
+            }
+            return TagParser::shouldTagBeSaved(tag, \value, \ok);
+        }
+
+        private doEnd() {
+            if (!exists qorusObjectFactory.tags{"dateformat"}) {
+                qorusObjectFactory.tags{"dateformat"} = DefaultDateFormat;
+            }
+        }
+    } # class ValueMapParser
+
+} # namespace QorusObjectParser

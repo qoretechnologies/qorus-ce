@@ -1,0 +1,121 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: eventhelper
+# parse-options: PO_NEW_STYLE
+# serviceversion: 1.0
+# servicedesc: generates events for the EVENT-TEST workflow
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the eventhelper service
+const DEFAULTS = (
+    "min"        : 2,   # minimum steps with the same event ID
+    "max"        : 20,  # maximum steps with the same event ID
+    "post-delay" : 10    # delay in seconds between posting unposted events
+);
+
+const EventType = "event-test";
+
+hash sub get_options() {
+    # get options for service
+    *hash props = UserApi::propGet(ServiceApi::getServiceInfo().name);
+
+    hash h;
+
+    foreach string k in (keys DEFAULTS)
+        h{k} = exists props{k} ? int(props{k}) : DEFAULTS{k};
+
+    return h;
+}
+
+int sub get_max() {
+    hash opt = get_options();
+    #printf("opt: %N\n", opt);
+    int range = opt.max - opt.min;
+    return rand() % range + opt.min;
+}
+
+sub new_event() {
+    stats.count = 0;
+    stats.max = get_max();
+    stats.event = UUID::get(UUID::LowerCase);
+}
+
+# background thread for posting unposted events
+sub poster() {
+    on_exit {
+        delete running;
+        delete stop;
+        UserApi::logInfo("posting thread terminating");
+    }
+
+    while (!stop) {
+        *list l = omqservice.system.info.getUnpostedEventsFromName(EventType){EventType};
+
+        #UserApi::logInfo("got list: %n", l);
+
+        foreach string event in (l) {
+            UserApi::logInfo("posting event %n", event);
+            UserApi::callNetworkApi("omq.system.post-event", EventType, event);
+        }
+
+        hash opt = get_options();
+
+        my c = opt."post-delay";
+        while (--c) {
+            if (stop)
+                break;
+            UserApi::sleep(1);
+        }
+    }
+}
+
+sub init() {
+    our int running = 0;
+    our bool stop = False;
+    our hash stats =
+	( "served" : 0,
+	  "cycles" : 0 );
+    new_event();
+}
+# END
+
+# desc: stops the service
+sub stop() {
+    stop = True;
+}
+# END
+
+# desc: returns an event ID from the service
+synchronized string sub get() {
+    if (++stats.count >= stats.max)
+	new_event();
+    ++stats.served;
+    return stats.event;
+}
+# END
+
+# desc: provides information about the service
+hash sub info() {
+    return stats;
+}
+# END
+
+# desc: starts the background event posting thread
+synchronized sub startPosting() {
+    if (!running) {
+        running = ServiceApi::startThread(\poster());
+        return sprintf("TID %n", running);
+    } else {
+        throw "ERROR", sprintf("retry thread already running as TID %d", running);
+    }
+}
+# END
+
+# desc: stops the posting thread if running
+sub stopPosting() {
+    stop = True;
+}
+# END

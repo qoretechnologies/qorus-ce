@@ -1,0 +1,32 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3102mapper3
+# version: 1.0
+# desc: mapper old syntax test
+# type: Mapper
+# author: Qore Technologies
+# functions: issue3102mapperlib
+# parse-options: PO_NEW_STYLE
+# define-group: test: test interfaces
+# groups: test
+
+OPTION: input: {
+    "test": {"desc": "hash data"},
+}
+OPTION: output: {
+    "output-1": {},
+    "output-2": {},
+    "output-3": {
+        "mand": True
+    },
+    "output-4": {},
+}
+OPTION: runtime: (
+    "output-5": now(),
+)
+
+FIELD: "output-1": {"sequence": "test_sequence_2"}
+FIELD: "output-2": {"constant": get_value("testdata2")}
+FIELD: "output-3": "test.test2"
+FIELD: "output-4": {"code": string sub(any ignored, hash rec) { return rec.test123 + "_" + rec.test2; } }
+# END

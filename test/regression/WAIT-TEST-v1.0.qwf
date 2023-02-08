@@ -1,0 +1,22 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups.test.desc = "test interfaces";
+
+const Steps = (
+    "wait_test:1.0",
+);
+
+our hash<auto> workflows."WAIT-TEST"."1.0" = {
+    "desc": "wait test workflow",
+    "author": "Qore Technologies, s.r.o.",
+    "steps": Steps,
+    "groups": "test",
+    "sla_threshold": 60,
+};

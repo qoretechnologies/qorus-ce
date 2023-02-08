@@ -1,0 +1,20 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test connection automatic management";
+
+$steps = (
+          "conn_test1:1.0",
+         );
+
+$workflows."CONN-TEST"."1.0" = (
+    "desc"          : "connection automatic management test",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : $steps,
+    "groups"        : "test",
+    "autostart"     : 0,
+ );

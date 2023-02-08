@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: service
+name: issue3485service
+desc: issue-3485-service
+base-class-name: QorusService
+class-name: issue3485service
+classes:
+  - TestEventSource
+fsm:
+  - name: fsm1
+    triggers:
+    - method: test
+  - name: fsm-event-test
+    triggers:
+    - class: TestEventSource
+      connector: event
+lang: qore
+autostart: false
+version: "1.0"
+servicetype: USER
+code: issue3485service.qsd
+methods:
+  - name: test
+    desc: test
+  - name: test2
+    desc: test2

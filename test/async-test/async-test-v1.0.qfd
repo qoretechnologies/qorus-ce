@@ -1,0 +1,20 @@
+# type: ASYNC-START
+# version: 1.0
+# desc: array test function
+# author: Qore Technologies, sro
+sub async_test_1() {
+    my *string $key = WorkflowApi::getStaticData().key;
+    if (!exists $key)
+    	throw "KEY-ERROR", "missing key 'key' in static order data";
+
+    UserApi::submitAsyncKey($key);
+}
+# END
+
+# type: ASYNC-END
+# version: 1.0
+# desc: test async end function
+# author: Qore Technologies, sro
+sub async_test_end_1(any $data) {
+}
+# END

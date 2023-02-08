@@ -1,0 +1,78 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusPassiveWorkflowTest {
+    private {
+        const ParentWorkflowName = "EXAMPLE-MAIN";
+        const ChildWorkflowName1 = "EXAMPLE-SUBWF-1";
+        const ChildWorkflowName2 = "EXAMPLE-SUBWF-2";
+    }
+
+    constructor() : QorusPassiveWorkflowTest(ParentWorkflowName, "1.0", \ARGV, Opts) {
+        addTestCase(ParentWorkflowName, \mainTest());
+
+        set_return_value(main());
+    }
+
+    mainTest() {
+        # ensure workflows are enabled
+        hash<auto> pwf = qrest.get("workflows/" + ParentWorkflowName);
+        hash<auto> cwf1 = qrest.get("workflows/" + ChildWorkflowName1);
+        hash<auto> cwf2 = qrest.get("workflows/" + ChildWorkflowName2);
+
+        if (!pwf.enabled) {
+            qrest.put("workflows/" + ParentWorkflowName + "/enable");
+        }
+        if (pwf.autostart) {
+            qrest.put("workflows/" + ParentWorkflowName + "/setAutostart", {"autostart": 0});
+        }
+        if (!cwf1.enabled) {
+            qrest.put("workflows/" + ChildWorkflowName1 + "/enable");
+        }
+        if (cwf1.autostart) {
+            qrest.put("workflows/" + ChildWorkflowName1 + "/setAutostart", {"autostart": 0});
+        }
+        if (!cwf2.enabled) {
+            qrest.put("workflows/" + ChildWorkflowName2 + "/enable");
+        }
+        if (cwf2.autostart) {
+            qrest.put("workflows/" + ChildWorkflowName2 + "/setAutostart", {"autostart": 0});
+        }
+
+        # set remote = true
+        if (pwf.remote) {
+            qrest.put("workflows/" + ParentWorkflowName + "/setRemote", {"remote": True});
+        }
+        if (!cwf1.remote) {
+            qrest.put("workflows/" + ChildWorkflowName1 + "/setRemote", {"remote": True});
+        }
+        if (!cwf2.remote) {
+            qrest.put("workflows/" + ChildWorkflowName2 + "/setRemote", {"remote": True});
+        }
+        doWorkflowTest();
+
+        qrest.put("workflows/" + ParentWorkflowName + "/setRemote", {"remote": False});
+        qrest.put("workflows/" + ChildWorkflowName1 + "/setRemote", {"remote": False});
+        qrest.put("workflows/" + ChildWorkflowName2 + "/setRemote", {"remote": False});
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        ExecSynchronousOrder action({
+            "name": ParentWorkflowName,
+            "staticdata": {},
+        });
+        exec(action);
+        softint wfiid = action.result().workflow_instanceid;
+        hash<auto> wh = qrest.get("orders/" + wfiid);
+        assertEq(6, wh.StepInstances.size());
+    }
+}

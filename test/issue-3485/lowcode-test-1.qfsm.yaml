@@ -1,0 +1,46 @@
+# This is a generated file, don't edit!
+type: fsm
+name: lowcode-test-1
+desc: low code test
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 131
+            'y': 66
+        initial: false
+        name: pipeline
+        desc: ''
+        type: state
+        id: B_7WEu5RU
+        action:
+            type: pipeline
+            value: pipeline7
+        transitions:
+            -
+                state: '2'
+                language: qore
+    '2':
+        position:
+            x: 395
+            'y': 65
+        initial: false
+        name: State 2
+        desc: ''
+        type: state
+        id: AmMBRMWg_
+        action:
+            type: connector
+            value:
+                class: LowCodeGetData
+                connector: getData
+        config-items:
+          - name: get-data
+            value:
+                "$jinfo:map"
+            parent:
+                interface-type: class
+                interface-name: LowCodeGetData
+                interface-version: '1.0'

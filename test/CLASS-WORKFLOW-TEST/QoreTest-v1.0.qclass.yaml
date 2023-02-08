@@ -1,0 +1,8 @@
+type: class
+name: QoreTest
+version: "1.0"
+desc: Qore test class
+author:
+  - Qore Technologies, s.r.o.
+code: QoreTest-v1.0.qclass
+class-name: QoreTest

@@ -1,0 +1,54 @@
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+public class QoreTest {
+    static assertEq(auto expects, auto actual, *string label) {
+        QoreTest::assertIntern("assertEq", expects, actual, label);
+    }
+
+    static assertTrue(bool b, *string label) {
+        QoreTest::assertIntern("assertTrue", True, b, label);
+    }
+
+    static assertFalse(bool b, *string label) {
+        QoreTest::assertIntern("assertFalse", False, b, label);
+    }
+
+    static assertNothing(auto v, *string label) {
+        QoreTest::assertIntern("assertNothing", NOTHING, v, label);
+    }
+
+    static assertThrows(string err, code code) {
+        try {
+            call_function_args(code, argv);
+            QoreTest::assertIntern("assertThrows", sprintf("expected exception: %y", err), "no exception thrown");
+        } catch (hash<auto> ex) {
+            QoreTest::assertIntern("assertThrows", err, ex.err);
+        }
+    }
+
+    static assertIntern(string method, auto expects, auto actual, *string label, int stack_offset = 4) {
+        string desc = sprintf("%s: assertEq() ", QoreTest::getSourceLocation(stack_offset));
+        if (expects === actual) {
+            desc += "OK";
+            if (label) {
+                desc += sprintf(" (%s)", label);
+            }
+            UserApi::logInfo(desc);
+            return;
+        }
+
+        desc += sprintf("expected %y; got %y", expects, actual);
+        if (label) {
+            desc += sprintf(" (%s)", label);
+        }
+        throw "ERROR", desc;
+    }
+
+    static string getSourceLocation(int stack_offset) {
+        hash<auto> h = UserApi::get_thread_call_stack()[stack_offset];
+        return sprintf("%s:%d", h.file, h.line + h.offset);
+    }
+}

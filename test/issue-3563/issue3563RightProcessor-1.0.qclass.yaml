@@ -1,0 +1,9 @@
+# This is a generated file, don't edit!
+type: class
+name: issue3563RightProcessor
+desc: test
+lang: qore
+version: "1.0"
+processor: {}
+base-class-name: AbstractDataProcessor
+code: issue3563RightProcessor-1.0.qclass

@@ -1,0 +1,4 @@
+do not include these files directly, only include qorus-client.ql
+
+while the functionality will remain; these files may disappear in a future release of Qorus
+(the functionality may be directly provided by a Qorus module or the qore library)

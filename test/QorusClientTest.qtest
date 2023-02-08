@@ -1,0 +1,309 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/qlib/intern
+# for parsing cron timer strings
+%include qorus-client.ql
+
+%requires QUnit
+
+%exec-class QorusClientTest
+
+# returns a 401 Unauthorized response to all requests
+class My401Handler inherits AbstractHttpRequestHandler  {
+    constructor() : AbstractHttpRequestHandler(new PermissiveAuthenticator()) {
+    }
+
+    hash handleRequest(hash cx, hash hdr, *data body) {
+        return makeResponse(401, "unauthorized");
+    }
+}
+
+# returns a 401 Unauthorized response to all requests
+class Test401Server inherits HttpServer {
+    public {}
+
+    private {
+        int verbose;
+        int port;
+    }
+
+    constructor(int verbose = 0) : HttpServer(NOTHING, \logError(), verbose > 2) {
+        self.verbose = verbose;
+
+        # setup REST handler
+        My401Handler my401Handler();
+        setDefaultHandler("401", my401Handler);
+
+        port = addListener(<HttpListenerOptionInfo>{"service": 0}).port;
+    }
+
+    int getPort() {
+        return port;
+    }
+
+    logDebug(string fmt) {
+        printf("HTTP DEBUG: %s\n", vsprintf(fmt, argv));
+    }
+
+    logError(string fmt) {
+        printf("HTTP ERROR: %s\n", vsprintf(fmt, argv));
+    }
+
+    logInfo(string fmt) {
+        printf("HTTP INFO: %s\n", vsprintf(fmt, argv));
+    }
+}
+
+class QorusClientTest inherits QUnit::Test {
+    public {}
+
+    private {
+        #! flag if the system was started for these tests
+        bool started;
+
+        #! command-line options
+        const MyOpts = Opts + {};
+
+        const OptionColumn = 25;
+
+        const Scripts = (
+            ("cmd": "ocmd", "args": "help debug"),
+            ("cmd": "ojview",),
+            ("cmd": "oprop",),
+            ("cmd": "ostart", "args": "ARRAYTEST"),
+            ("cmd": "ostatus",),
+            ("cmd": "ostop", "args": "ARRAYTEST"),
+            ("cmd": "oview",),
+            ("cmd": "qevent", "args": "-L"),
+        );
+    }
+
+    constructor() : Test("QorusClientTest", OMQ::version, \ARGV, MyOpts) {
+        QorusClient::init2();
+        addTestCase("swagger2service", \swagger2ServiceTest());
+        addTestCase("remote/qorus", \remoteQorusTest());
+        addTestCase("remote/user", \remoteUserTest());
+        addTestCase("remote/datasource", \remoteDatasourceTest());
+        addTestCase("cron-trigger", \cronTriggerTest());
+        addTestCase("props", \propTest());
+        addTestCase("cmdline programs", \cmdLineProgramTest());
+        addTestCase("make-release", \makeReleaseTest());
+
+        set_return_value(main());
+    }
+
+    private usageIntern() {
+        TestReporter::usageIntern(OptionColumn);
+    }
+
+    globalTearDown() {
+    }
+
+    swagger2ServiceTest() {
+        string output = tmp_location() + DirSep + get_random_string(20) + ".qsd";
+        string loc = normalize_dir(get_script_dir() + "../test/swagger2service/swagger-test1.yaml");
+        on_exit {
+            unlink(output);
+            unlink(output + ".yaml");
+        }
+        string cmd = sprintf("\"" + get_script_dir() + DirSep + ".." + DirSep + "bin" + DirSep + "swagger2service\" \"" + loc + "\" -f \"" + output + "\"");
+        string script_output = backquote(cmd + " 2>&1");
+        assertRegex("swagger-test1.yaml", script_output);
+    }
+
+    remoteQorusTest() {
+        # backup current file
+        string name = sprintf("test_" + get_random_string(30));
+        string url = "qorus://localhost:8001";
+        hash conn_opts = {
+            "connect_timeout": 120,
+            "timeout": 15,
+        };
+        omq.exec("insert into connections (name, description, url, options, connection_type) values (%v, %v, %v, %v, %v)",
+                 name, "unit test", url, serialize_qorus_data(conn_opts), "REMOTE");
+        on_exit {
+            omq.exec("delete from connections where name = %v and connection_type = %v", name, "REMOTE");
+        }
+
+        QorusClientAPI newclient();
+
+        hash<auto> h = newclient.getRemoteConfig(name, True);
+        assertEq(120, h.opts.connect_timeout);
+        assertEq(15, h.opts.timeout);
+
+        QorusSystemRestHelper rest(name, True);
+        assertEq(120000, rest.getConnectTimeout());
+        assertEq(15000, rest.getTimeout());
+
+        # test #2262
+        if (ENV.QORE_CONNECTION_PROVIDERS =~ /QorusConnectionProvider/) {
+            Program p(PO_NEW_STYLE);
+            p.loadModule("ConnectionProvider");
+            p.parse("hash<auto> sub get1() { return get_connections(); } hash<auto> sub get2() { return get_connection_hash(); }", "conn");
+            hash<string, AbstractConnection> ch = p.callFunction("get1");
+            assertEq("QorusHttpConnection", ch{name}.className());
+            hash<auto> cih = p.callFunction("get2");
+            assertEq("http", cih{name}.type);
+            assertEq(name, cih{name}.name);
+        }
+    }
+
+    remoteUserTest() {
+        # backup current file
+        string name = sprintf("test_" + get_random_string(30));
+        string url = "rest://localhost:8001";
+        hash conn_opts = {
+            "connect_timeout": 120,
+            "timeout": 15,
+        };
+        omq.exec("insert into connections (name, description, url, options, connection_type) values (%v, %v, %v, %v, %v)",
+                 name, "unit test", url, serialize_qorus_data(conn_opts), "USER");
+        on_exit {
+            omq.exec("delete from connections where name = %v and connection_type = %v", name, "USER");
+        }
+
+        QorusClientAPI newclient();
+
+        hash<auto> h = newclient.getUserConnectionInfo(name);
+        assertEq(120, h.opts.connect_timeout);
+        assertEq(15, h.opts.timeout);
+        assertEq(url, h.url);
+    }
+
+    remoteDatasourceTest() {
+        # backup current file
+        string name = sprintf("test_" + get_random_string(30));
+        string url = "db://pgsql:omq/omq@omq";
+        hash conn_opts = {};
+        omq.exec("insert into connections (name, description, url, options, connection_type) values (%v, %v, %v, %v, %v)",
+                 name, "unit test", url, serialize_qorus_data(conn_opts), "DATASOURCE");
+        on_exit {
+            omq.exec("delete from connections where name = %v and connection_type = %v", name, "DATASOURCE");
+        }
+
+        QorusClientAPI newclient();
+
+        *AbstractDatasource ds = newclient.getDatasource(name);
+        assertEq(True, exists ds);
+        # the same DS must be cached
+        assertEq(ds, newclient.getDatasource(name));
+
+        string bad_name = name + "bad";
+        try {
+            ds = newclient.getDatasource(bad_name);
+            assertEq(True, False, "Exception must be thrown");
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("INVALID-DATASOURCE", ex.err);
+        }
+    }
+
+    cronTriggerTest() {
+        CronTrigger ct(0, 0, 1, 1, "*");
+
+        assertEq(2016-01-01T00:00:00, ct.findNext(2015-11-26));
+    }
+
+    propTest() {
+        assertEq(3, UserApi::propGet().omq.size());
+        assertEq(OMQ::datamodel, UserApi::propGet("omq", "schema-version"));
+        assertEq(3, UserApi::propGet("omq").size());
+        assertEq(OMQ::datamodel, UserApi::propGet("omq", "schema-version"));
+
+        # make sure we return NOTHING if the domain or key do not exist
+        assertEq(NOTHING, UserApi::propGet(get_random_string(50), get_random_string(50)));
+    }
+
+    cmdLineProgramTest() {
+        Test401Server hs();
+        on_exit hs.stop();
+
+        string url = sprintf("http://localhost:%d", hs.getPort());
+        foreach hash sh in (Scripts) {
+            string str = execScript(url, sh.cmd, sh.args);
+            if (m_options.verbose > 2)
+                printf("cmd: %s: %s", sh.cmd, str);
+            if (str !~ /Unauthorized/)
+                printf("ERR: cmd: %s output: %s\n", sh.cmd + (sh.args ? (" " + sh.args) : ""), str);
+            assertEq(True, str =~ /Unauthorized/, "unauthorized " + sh.cmd);
+        }
+
+        string str = doBackquote("qrest " + url);
+        assertEq(True, str =~ /Unauthorized/, "unauthorized qrest");
+    }
+
+    # issue #1914 test for correct service resource creation in release tar files
+    makeReleaseTest() {
+        string tmp = tmp_location();
+        string bdir = sprintf("%s%s%s", tmp, DirSep, get_random_string());
+        mkdir(bdir);
+        on_exit
+            system("rm -rf " + bdir);
+
+        string jsdir = bdir + DirSep + "js";
+        mkdir(jsdir);
+
+        string jstestdir = jsdir + DirSep + "test";
+        mkdir(jstestdir);
+
+        string jsname = sprintf("%s.js", get_random_string());
+        string fname = sprintf("%s%s%s", jstestdir, DirSep, jsname);
+
+        # create resource file
+        File f();
+        f.open2(fname, O_CREAT | O_WRONLY | O_TRUNC);
+        f.write("test");
+
+        string svc = sprintf("%s%stest-v1.0.qsd", bdir, DirSep);
+
+        # create service file
+        f.open2(svc, O_CREAT | O_WRONLY | O_TRUNC);
+        f.printf("# service: test\n# serviceversion: 1.0\n# servicedesc: test\n# resource: js/*\n# ENDSERVICE\n\n# desc: test\nsub init() {}\n# END\n");
+
+        string cwd = getcwd();
+        chdir(bdir);
+        on_exit
+            chdir(cwd);
+        string cmd = sprintf("make-release -r%s -Puser test test-v1.0.qsd", tmp);
+        doSystem(cmd);
+
+        cmd = sprintf("tar tf %s/qorus-user-test/qorus-user-test.tar.gz | grep %s", tmp, jsname);
+        string output = trim(backquote(cmd));
+
+        assertEq("user/js/test/" + jsname, output);
+    }
+
+    static int doSystem(string cmd) {
+        cmd = vsprintf(cmd, argv);
+
+%ifdef Windows
+        return system(cmd + ">nul");
+%else
+        #system(cmd);
+        return system(cmd + ">/dev/null 2>/dev/null");
+%endif
+    }
+
+    static string execScript(string url, string cmd, *string args) {
+        if (args)
+            cmd += " " + args;
+        cmd += sprintf(" -u%s", url);
+        return QorusClientTest::doBackquote(cmd);
+    }
+
+    static string doBackquote(string cmd) {
+        cmd = vsprintf(cmd, argv);
+        # redirect stderr to stdout (works on Unix and Windows)
+        return backquote(cmd + " 2>&1");
+    }
+}

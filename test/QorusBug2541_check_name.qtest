@@ -1,0 +1,419 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires Util
+%requires QUnit
+%requires QorusClientCore
+%requires QorusRemoteDevelopmentClient
+%requires FsUtil
+%requires RestClient
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+
+    private {
+        # workflow
+        const WFFileName = "ISSUE2541-v1.0.qwf";
+        const WFFileContent = "
+$format_version = \"2.6\";
+
+$groups.test.desc = \"test 2541 issue\";
+
+$simple = ( \"ref_2541_test_1:1.0\" );
+
+$workflows.\"ISSUE2541/A\".\"1.0\" =
+    ( \"desc\": \"simple subworkflow test workflow\",
+      \"author\": \"Qore Technologies\",
+      \"steps\"	: $simple,
+      \"groups\": \"test\",
+      \"classes\": (\"test-class_2541\"),
+      );
+";
+        # function for workflow
+        const WorkflowFunctionFileName = "ref_2541_test_1.qfd";
+        const WorkflowFunctionContent = "
+# type: STEP
+# name: ref_2541_test_1
+# version: 1.0
+# desc: test step
+# author: Qore Technologies
+
+sub ref_2541_test_1() {
+    # do nothing here
+}
+# END
+        ";
+
+        # class
+        const ClassFileName = "class_2541.qclass";
+        const ClassFileContent = "
+# type: GENERIC
+# name: test-/class_2541
+# desc: Test debug class
+# version: 1.0
+# parse-options: PO_NEW_STYLE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+
+class TestClass2541 {
+    private {
+        hash props;
+    }
+
+    constructor() {
+    }
+
+    testMethod() {
+    }
+}
+# END
+";
+
+        # functions
+        const FunctionsFileName = "function_2541.qfd";
+        const FunctionsFileContent = "
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus test function library
+
+# type: STEP
+# name: ref_test_/1
+# version: 1.0
+# desc: test function
+# author: Qore Technologies
+sub ref_test_1() {
+    # do nothing here
+}
+# END
+        ";
+
+        # constant
+        const ConstFileName = "const_2541.qconst";
+        const ConstFileContent = "
+# name: TestConstant/s1
+# version: 1.0
+# desc: test constants 1
+# author: Qore Technologies
+const t1 = 1;
+# END
+        ";
+
+        # vmap
+        const VMapFileName = "vmap_2541.qvmap";
+        const VMapFileContent = "
+# name: test/1
+# desc: test value map
+# exception: true
+# valuetype: raw
+# define-group: TEST/2541: issue 2541 test interface objects
+# groups: TEST/2541
+\"foo\",1,true
+\"bar\",\"lorem ipsum\",false
+# END
+        ";
+
+        # mapper
+        const MapperFileName = "mapper_2541.qmapper";
+        const MapperFileContent = "
+# name: mapper_2/541
+# version: 1.0
+# desc: Test table mapper for documentation
+# type: Mapper
+# author: Joesephine Programmer (Qore Technologies, s.r.o.)
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: TEST/2541: test interface objects
+# groups: TEST/2541
+OPTION: datasource: \"omquser\"
+OPTION: table: \"test_table\"
+OPTION: input: (
+    \"order_id\": \"unique order ID\",
+    \"cust_id\": \"customer ID\",
+    \"dealer_id\": \"dealer ID\",
+    \"ordered_quantity\": \"product quantity\",
+    \"product_id\": \"product ID\",
+    \"order_date\": \"the date and time the order was made\",
+    )
+# id is populated from the sequence \"test_table_s\" in the target datasource
+FIELD: id: (\"sequence\": \"test_table_s\")
+FIELD: source_system: (\"constant\": \"ORDERS\")
+# note that comments are preserved but ignored
+FIELD: order_number: (\"name\": \"order_id\")
+# order_code is populated according to a closure combining the cust_id and order_id values into a single string
+FIELD: order_code: (\"code\": string sub (any ignored, hash rec) {
+        return sprintf(\"%s-%s\", rec.cust_id, rec.order_id);
+    },
+)
+FIELD: customer_number: (\"name\": \"customer_id\")
+FIELD: dealer_code: (\"name\": \"dealer_id\")
+FIELD: product_code: (\"name\": \"product_id\")
+FIELD: qty: (\"name\": \"ordered_quantity\")
+FIELD: ordered_date: (\"name\": \"order_date\")
+# created_date is populated with the current date and time when the row is inserted
+FIELD: created_date: (\"code\": date sub (any ignored, hash rec) { return now_us(); })
+# END
+        ";
+
+        # service
+        const ServiceFileName = "service_2541.qsd";
+        const ServiceFileContent = "
+# service: test_servi/ce
+# serviceversion: 1.0
+# patch: p1
+# servicedesc: test service
+# define-group: TEST/2541: test interface objects
+# groups: TEST/2541
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# TAG: test-code: true
+# ENDSERVICE
+
+# name: testMethod
+# desc: test method
+int sub testMethod(int arg){
+    return arg + 1;
+}
+# END
+        ";
+
+        # job
+        const JobFileName = "job_2541.qjob";
+        const JobFileContent = "
+# name: te/st
+# version: 1.0
+# desc: test job, run every 10 minutes every hour, every weekday
+# schedule: */10 * * * mon-fri
+# single-instance: false
+# active: true
+# run-skipped: true
+# define-group: TEST/2541: test interface objects
+# groups: TEST/2541
+# TAG: test-code: true
+%new-style
+%require-types
+%strict-args
+sub run() {
+    UserApi::logInfo(\"job info: %y\", job_info());
+}
+# END
+        ";
+        hash<auto> OloadTestData = {
+            "workflow":
+                {
+                    "name": WFFileName,
+                    "content": WFFileContent,
+                },
+            "class":
+                {
+                    "name": ClassFileName,
+                    "content": ClassFileContent,
+                },
+            "function":
+                {
+                    "name": FunctionsFileName,
+                    "content": FunctionsFileContent,
+                },
+            "constant":
+                {
+                    "name": ConstFileName,
+                    "content": ConstFileContent,
+                },
+            "vmap":
+                {
+                    "name": VMapFileName,
+                    "content": VMapFileContent,
+                },
+            "mapper":
+                {
+                    "name": MapperFileName,
+                    "content": MapperFileContent,
+                },
+            "service":
+                {
+                    "name": ServiceFileName,
+                    "content": ServiceFileContent,
+                },
+            "job":
+                {
+                    "name": JobFileName,
+                    "content": JobFileContent,
+                },
+        };
+
+        list<auto> RestTestData = (
+            {
+                "path": "errors",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing error",
+                }
+            },
+            {
+                "path": "errors?action=createOrUpdate",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing error",
+                }
+            },
+            {
+                "path": "slas",
+                "name": "name",
+                "data": {
+                    "name": "TEST-SLA/A",
+                    "description": "testing SLA",
+                }
+            },
+            {
+                "path": "remote/datasources",
+                "name": "name",
+                "data": {
+                    "name": "TEST-DATASOURCE/A",
+                    "desc": "testing DATASOURCE",
+                    "url": "test",
+                }
+            },
+            {
+                "path": "remote/user",
+                "name": "name",
+                "data": {
+                    "name": "TEST-USER-CONNECTION/A",
+                    "desc": "testing USER",
+                    "url": "ftp@ftp",
+                }
+            },
+            {
+                "path": "errors/global",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing ERROR",
+                }
+            },
+            {
+                "path": "errors/global?action=createOrUpdate",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing ERROR",
+                }
+            },
+            {
+                "path": "errors/workflow/REGRESSION-TEST",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing ERROR",
+                }
+            },
+            {
+                "path": "groups",
+                "name": "group",
+                "data": {
+                    "group": "TEST-GROUP/A",
+                    "desc": "testing GROUP",
+                }
+            },
+            {
+                "path": "workflows/REGRESSION-TEST/errors",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing ERROR",
+                }
+            },
+            {
+                "path": "workflows/REGRESSION-TEST/errors?action=createOrUpdate",
+                "name": "error",
+                "data": {
+                    "error": "TEST-ERROR/A",
+                    "description": "testing ERROR",
+                }
+            },
+        );
+
+        const USER = "admin";
+
+        const DEFAULT_OPTIONS = {"reload": True, "validate": True, "verbosity-level": 1};
+
+        TmpDir tmpDir("qorusBug2541");
+
+        RemoteDevelopment::Client remoteDevClient();
+    }
+
+    constructor(): Test("QorusBug2541_check_name", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("test REST API", \restTest());
+        addTestCase("test oload", \oloadTest());
+
+        set_return_value(main());
+    }
+
+    private createFile(string file_path, string content) {
+        File file();
+        file.open2(file_path, O_CREAT|O_WRONLY|O_TRUNC);
+        file.write(content);
+    }
+
+    private restTest() {
+        foreach hash<auto> rest_data in (RestTestData) {
+            hash<auto> info;
+            # issue #3210: provide more info in case of an error
+            on_error printf("ERROR rest_data: %y\ninfo: %N\n", rest_data, info);
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", ".*400.*Bad Request.*",
+                         \qrest.post(), (rest_data{"path"}, rest_data{"data"}, \info));
+
+            assertEq(400, info."response-code");
+            assertRegex(sprintf("invalid characters.*%s",
+                                rest_data{"data"}{rest_data{"name"}}),
+                        info."response-body");
+        }
+    }
+
+    private oloadTest() {
+        code create_and_deploy_file = hash<auto> sub (string interface_name, string interace_content) {
+            string file_path = join_paths(tmpDir.path, interface_name);
+            createFile(file_path, interace_content);
+
+            on_exit unlink(file_path); # ensure that this file won't appear in the next deployment
+
+            DeployRequest request = new DeployRequest(remoteDevClient.createFileListFromDirectory(
+                                                      tmpDir.path + Qore::DirSep, True),
+                                                      USER, NOTHING, DEFAULT_OPTIONS);
+            hash<auto> response = remoteDevClient.post(request, 30s);
+            return response;
+        };
+
+        # deploy step file for workflow test
+        create_and_deploy_file(WorkflowFunctionFileName, WorkflowFunctionContent);
+
+        code run_oload_test = sub (string interface_type) {
+            hash<auto> response = create_and_deploy_file(OloadTestData{interface_type}{"name"},
+                                                         OloadTestData{interface_type}{"content"});
+            on_error printf("resp: %N\n", response);
+            assertEq(STATUS_FAILED, response{"status"});
+            assertRegex("(invalid characters|not allowed characters)", response{"stderr"});
+        };
+
+        map run_oload_test($1), keys OloadTestData;
+
+        # delete step from Qorus
+        DeleteRequest delete_request = new DeleteRequest({"function": ({"name": "ref_2541_test_1",
+                                                                        "version": "1.0"},),
+                                                         "options": DEFAULT_OPTIONS - "validate"},
+                                                         USER, NOTHING);
+        hash<auto> delete_response = remoteDevClient.post(delete_request, 30s);
+        on_error printf("resp: %N\n", delete_response);
+        assertEq(STATUS_FINISHED, delete_response{"status"});
+        assertRegex(".*deleted from the database.*", delete_response{"stdout"});
+    }
+} # class Main

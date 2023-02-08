@@ -1,0 +1,32 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: test job function
+# author: Qore Technologies, s.r.o.
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const InfoKeys = ("last_executed",);
+const PropDomain = "test";
+const PropKey = "test-job-error";
+
+sub test_job_1() {
+    bool do_error;
+    if (JobApi::propGet(PropDomain, PropKey)) {
+        do_error = True;
+        JobApi::propUpdate(PropDomain, PropKey);
+    }
+
+    # 25% chance of an error, 50% chance that the error will be a business error
+    if (do_error || !(rand() % 4))
+	    JobApi::err("TEST-JOB-ERROR", "error description", ("hash-a": True), OMQ::ES_Major, rand() % 2 ? True : False);
+
+    hash jh = JobApi::getInfo();
+    UserApi::logInfo("info: %y", jh);
+    JobApi::saveInfo(("info-1": now_us()) + jh{InfoKeys});
+}
+# END

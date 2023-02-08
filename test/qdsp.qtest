@@ -1,0 +1,814 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%define QORUS_STANDALONE_TEST True
+# issue #2473: fix qdsp.qtest on Darwin
+%define DARWIN True
+%define MEMORY_POLLING True
+%define QorusDebugInternals True
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include ../Classes/QorusProcessManager.qc
+%include ../Classes/AbstractQorusInternProcess.qc
+%include ../Classes/AbstractQorusClientProcess.qc
+%include ../Classes/NetworkKeyHelper.qc
+%include ../Classes/QdspProcess.qc
+%include ../Classes/AbstractQorusProcess.qc
+%include ../Classes/QorusPassiveMasterProcess.qc
+%include ../Classes/QorusMasterClient.qc
+%include ../Classes/AbstractLogger.qc
+%include ../Classes/AbstractQorusClient.qc
+%include ../Classes/QorusSharedApi.qc
+%include ../Classes/QdspClient.qc
+%include ../Classes/AbstractQorusClusterApi.qc
+%include ../Classes/QorusMasterCoreQsvcCommon.qc
+%include ../lib/cpc-api.ql
+%include ../lib/cpc-dsp-api.ql
+%include ../lib/cpc-master-api.ql
+%include ../lib/cpc-core-api.ql
+%include ../lib/cpc-wf-api.ql
+
+%requires QUnit
+%requires Util
+
+%requires uuid
+%requires process
+%requires uuid
+%requires yaml
+%requires sysconf
+%requires msgpack
+
+%requires QorusClientCore
+
+%requires SqlUtil
+%requires BulkSqlUtil
+%requires Schema
+%requires Logger
+
+%exec-class QdspTest
+
+our QdspTest Qorus;
+
+int sub get_limit_soft_nproc() { return MAXINT; }
+int sub get_limit_soft_nofile() { return MAXINT; }
+
+class QdspTest inherits Test, AbstractQorusProcessManager, QorusMasterCoreQsvcCommon {
+    public {
+        const MyOpts = Opts + {
+            "loglevel": "L,log-level:s",
+            "connstr": "c,connstr=s",
+        };
+    }
+
+    private {
+        # qdsp process control object
+        QdspProcess qdspc;
+
+        # datasource pool connection string
+        list<string> pool_urls;
+
+        # datasource connection string
+        string connstr;
+
+        # datasource name
+        string dsname = "omquser";
+
+        # test schema
+        QdspTestSchema schema;
+
+        # termination test started
+        bool term_test;
+
+        # hash to override qorus options
+        hash qorus_options_override;
+
+        # dsp warning queue for warning test
+        Queue dwq();
+
+        # bulk insert data set size
+        const BulkSize = 10;
+
+        # option column
+        const OptionColumn = 27;
+
+        # server has coord_mode
+        bool coord_mode;
+
+        # restart count
+        int restart_count = 0;
+    }
+
+    constructor() : Test("qdsp", "1.0", \ARGV, MyOpts), AbstractQorusProcessManager() {
+        Qorus = self;
+        /*
+        if (m_options.verbose > 1)
+            verbose = m_options.verbose - 1;
+        */
+
+        addTestCase("qdsp", \qdspTest());
+        addTestCase("rset", \rsetTest());
+        addTestCase("reset", \resetTest());
+        # keep the term, warning, and timeout tests last
+        addTestCase("term", \termTest());
+        addTestCase("warn", \warningTest());
+        addTestCase("timeout", \timeoutTest());
+
+        connstr = m_options.connstr ?? omqclient.getDatasourceConnectionString(dsname);
+        if (startCluster()) {
+            on_exit {
+                stopCluster();
+                # delete all clients on exit to ensure that I/O threads are stopped
+                deleteAllClients();
+            }
+
+            # get remote datasource
+            QdspClient dsp(self, dsname);
+            {
+                on_error dsp.rollback();
+                on_success dsp.commit();
+                # create the test schema using the remote datasource
+                schema = new QdspTestSchema(dsp);
+                schema.align(False, m_options.verbose - 2);
+                dsp.exec("delete from qdsp_test");
+            }
+
+            # drop on exit
+            on_exit {
+                on_error dsp.rollback();
+                on_success dsp.commit();
+                schema.drop(True, m_options.verbose - 2);
+            }
+
+            set_return_value(main());
+        }
+    }
+
+    private initNodeImpl() {
+        QorusClient::init();
+    }
+
+    logArgs(int lvl, string msg, auto args) {
+        # vprintf(msg, args);
+    }
+
+    private usageIntern() {
+        TestReporter::usageIntern(OptionColumn);
+        printOption("-L,--log-level=ARG", "set the log level for the remote qdsp process", OptionColumn);
+        printOption("-c,--connstr=ARG", "override the connection string for the datasource", OptionColumn);
+    }
+
+    bool getDebugSystem() {
+        return m_options.verbose > 2;
+    }
+
+    handleRemoteProcessAbort(list<hash<ClusterProcInfo>> info_list) {
+    }
+
+    handlePassiveShutdown(int index, string sender, string mboxid, string node) {
+    }
+
+    handlePassiveMasterRegistration(ZMsg msg, int index, string sender, string mboxid) {
+    }
+
+    *hash<LoggerParams> getQdspLoggerParams(string name) {
+        return <LoggerParams>{
+            "level": LoggerLevel::ALL, #m_options.loglevel ? LoggerLevel::getLevel(m_options.loglevel).getValue() : LoggerLevel::INFO,
+            "name": "qdsp-test-logger",
+            "additivity": False,
+            "appenders": {
+                "1": <AppenderParams>{"appenderType": "LoggerAppenderFileRotate",},
+            },
+        };
+    }
+
+    qdspTest() {
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+        assertEq(True, dsp.ping());
+
+        assertTrue(exists dsp.getServerVersion());
+        assertEq(False, dsp.inTransaction());
+        assertTrue(exists dsp.getClientVersion());
+        assertEq(False, dsp.inTransaction());
+        assertEq(Type::Hash, dsp.getOptionHash().type());
+
+        hash<auto> info = dsp.getInfo();
+        #printf("info: %y\n", info);
+        assertEq(Type::Int, info.threads.type());
+
+        coord_mode = info.coord_mode;
+        if (!coord_mode) {
+            hash<auto> h = dsp.getUsageInfo();
+            #printf("h: %y\n", h);
+            assertEq(0, h.wait_max);
+        }
+
+        int caps = dsp.getCapabilities();
+        assertGt(0, caps);
+
+        assertEq(False, dsp.inTransaction());
+
+        on_error dsp.rollback();
+        on_success dsp.commit();
+
+        # ensure that no transaction is started when there is an exception in an implicit transaction
+        try {
+            dsp.exec("xxxx error xxxx");
+        } catch (hash<ExceptionInfo> ex) {
+            assertTrue(True);
+        }
+
+        assertEq(False, dsp.inTransaction());
+
+        auto v = dsp.exec("insert into qdsp_test (str, id) values (%v, %v)", "test", 100);
+        assertEq(1, v);
+
+        assertEq(True, dsp.inTransaction());
+        assertEq(parse_datasource(m_options.connstr ?? omqclient.getDatasourceConnectionString(dsname)).db, dsp.getDBName());
+        assertEq(("str": ("test",), "id": (100,)), dsp.select("select str, id from qdsp_test"));
+
+        Table table(dsp, "qdsp_test");
+        assertEq(("str": "test", "id": 100), table.find(100){"str", "id"});
+
+        assertThrows(coord_mode ? "DATASOURCE-TRANSACTION-EXCEPTION" : "DATASOURCEPOOL-LOCK-EXCEPTION",
+            \throw_thread_resource_exceptions());
+
+        # ensure that the data is no longer available after the automatic rollback
+        assertEq(("str": (), "id": ()), dsp.select("select str, id from qdsp_test"));
+        assertEq(False, dsp.inTransaction());
+
+        assertEq({}, info.stmt);
+
+        AbstractSQLStatement stmt = dsp.getSQLStatement();
+        stmt.beginTransaction();
+        stmt.prepare("select str, id from qdsp_test");
+        assertEq(True, dsp.inTransaction());
+        assertEq("select str, id from qdsp_test", stmt.getSQL());
+        info = dsp.getInfo();
+        assertEq(1, info.stmt.size());
+        assertEq({}, stmt.fetchColumns());
+        assertEq(True, dsp.inTransaction());
+        stmt.commit();
+        assertEq(False, dsp.inTransaction());
+        assertEq("select str, id from qdsp_test", stmt.getSQL());
+        info = dsp.getInfo();
+        assertEq(1, info.stmt.size());
+        assertEq({}, stmt.fetchColumns());
+        assertEq(True, dsp.inTransaction());
+        stmt.commit();
+        delete stmt;
+        assertEq(False, dsp.inTransaction());
+        info = dsp.getInfo();
+        assertEq({}, info.stmt);
+
+        # create data for bulk inserts
+        list<hash<auto>> insert_data = ();
+        for (int i = 0; i < BulkSize; ++i) {
+            insert_data += {
+                "id": i,
+                "str": get_random_string(20),
+                "char_f": "X",
+                "date_f": now().midnight(),
+                "timestamp_f": now_us(),
+                "int_f": rand() % 100,
+                "blob_f": get_random_bytes(20),
+                "clob_f": get_random_string(50),
+            };
+        }
+
+        # check bulk operations
+        BulkInsertOperation insert(table, ("block_size": 3));
+
+        {
+            on_success insert.flush();
+            on_error insert.discard();
+
+            assertEq(NOTHING, insert.queueData(getRows(insert_data, 0, 2)));
+            assertEq(2, insert.size());
+            assertEq(NOTHING, insert.queueData(getRows(insert_data, 2, 4)));
+            assertEq(NOTHING, insert.queueData(getRows(insert_data, 4)));
+        }
+
+        # compare data inserted
+        list<hash<auto>> l = table.selectRows(("orderby": "id"));
+        assertEq(BulkSize, l.size());
+        map assertEq(insert_data[$#], $1), l;
+
+        {
+            QdspClient dsp1(self, dsname);
+            dsp1.exec("insert into qdsp_test (str, id) values (%v, %v)", "test", 200);
+            assertThrows("DATASOURCEPOOL-ERROR", sub () { delete dsp1; });
+        }
+
+        {
+            QdspClient dsp1(self, dsname);
+            Table table1(dsp1, "qdsp_test");
+            stmt = table1.getStatement();
+            assertTrue(dsp1.inTransaction());
+            assertThrows("DATASOURCEPOOL-ERROR", sub () { delete dsp1; });
+            delete stmt;
+        }
+    }
+
+    rsetTest() {
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+        if (dsp.getDriverName() != "oracle")
+            testSkip("can only run on oracle");
+
+        on_exit
+            dsp.rollback();
+
+        # create procedure
+        dsp.exec("create or replace procedure qdsp_test_stmt(resultset out sys_refcursor) is begin open resultset for select * from qdsp_test; end;");
+
+        on_exit
+            dsp.exec("drop procedure qdsp_test_stmt");
+
+        AbstractSQLStatement stmt = dsp.exec("begin qdsp_test_stmt(:out); end;", RESULTSET).out;
+        list rows = stmt.fetchRows();
+        assertEq(10, rows.size());
+    }
+
+    resetTest() {
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+
+        # set the optimal numbers option
+        string omq_connstr = string orig_omq_connstr = dsp.getConfigString();
+        if (omq_connstr =~ /{/) {
+            omq_connstr =~ s/}/,optimal-numbers}/;
+        } else {
+            omq_connstr += "{optimal-numbers}";
+        }
+
+        hash<auto> conn_hash = {
+            "connstr": omq_connstr,
+        };
+
+        # reset internal process object
+        updateProcessInfo(dsp.getRemoteProcessId(), conn_hash);
+        assertEq(conn_hash.connstr, qdspc.getProcessInfo().connstr);
+        hash<auto> info = dsp.getInfo();
+        assertEq(orig_omq_connstr, info.connstr);
+        assertNRegex("optimal-numbers", info.connstr);
+
+        # reset qdsp server
+        string old_hash;
+        if (!info.coord_mode) {
+            old_hash = info."pool-hash";
+        }
+        dsp.reset(conn_hash);
+        connstr = conn_hash.connstr;
+        info = dsp.getInfo();
+        assertRegex("optimal-numbers", info.connstr);
+
+        # check for new pool if not in coordinated mode
+        if (!info.coord_mode) {
+            hash<auto> new_info = dsp.getInfo();
+            assertNeq(old_hash, new_info."pool-hash");
+
+            # test automatic reset with exception
+            testAutomaticReset(dsp, new_info);
+        }
+
+        # toggle coordinated mode and test
+        int old_restart_count = restart_count;
+
+        bool new_coord_mode = !info.coord_mode;
+        conn_hash.connstr = Qore::replace(conn_hash.connstr, "}", ",coord-mode=" + (new_coord_mode ? "true" : "false") + "}");
+        # reset internal process object
+        updateProcessInfo(dsp.getRemoteProcessId(), conn_hash);
+        assertEq(conn_hash.connstr, qdspc.getProcessInfo().connstr);
+        # reset qdsp server
+        dsp.reset(conn_hash);
+        connstr = conn_hash.connstr;
+
+        hash<auto> new_info = dsp.getInfo();
+        assertEq(old_restart_count + 1, restart_count);
+        assertEq(new_coord_mode, new_info.coord_mode);
+
+        if (!new_coord_mode) {
+            # test automatic reset with exception
+            testAutomaticReset(dsp, new_info);
+        }
+    }
+
+    private testAutomaticReset(QdspClient dsp, hash<auto> info) {
+        # qdsp process is not in coordinated mode
+        assertFalse(info.coord_mode);
+
+        checkResetDatasource("qdsp-" + dsname, {
+            "err": "QDSP-TEST-RESET",
+            "desc": "test",
+        });
+
+        hash<auto> new_info = dsp.getInfo();
+        assertNeq(info."pool-hash", new_info."pool-hash");
+    }
+
+    termTest() {
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+        on_exit
+            dsp.rollback();
+
+        assertEq(False, dsp.inTransaction());
+
+        auto v = dsp.exec("insert into qdsp_test (str, id) values (%v, %v)", "test", 100);
+        assertEq(1, v);
+
+        assertEq(True, dsp.inTransaction());
+
+        # set "termination test started" flag
+        term_test = True;
+
+        # kill the qdsp process
+        qdspc.terminate();
+
+        if (!dsp.coordMode()) {
+            assertThrows("DATASOURCEPOOL-PROCESS-ERROR", \dsp.selectRows(), "select * from qdsp_test");
+        }
+    }
+
+    warningTest() {
+        # restart qdsp process with 1 connection and 1 ms warning
+        setupWarningTest();
+
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+        on_error
+            dsp.rollback();
+
+        # allocate a connection to this thread
+        dsp.beginTransaction();
+
+        # start contention thread
+        Counter c(1);
+        background doWarningConnection(c);
+        c.waitForZero();
+
+        # we have to sleep because we have to ensure that there is enough contention
+        # to raise the warning, but not enough to raise an error, because a warning
+        # is not raised in case there is an error
+        usleep(500ms);
+        dsp.rollback();
+
+        # wait for warning to be delivered
+        hash<auto> h = dwq.get();
+        UserApi::logInfo("got warning hash: %y", h);
+
+        # test warning values
+        assertEq(Type::String, h.desc.type());
+        assertGe(1000, h.time);
+        assertEq(1, h.to);
+        assertEq(dsname, h.dsn);
+    }
+
+    timeoutTest() {
+        # restart qdsp process with 1 connection and 1 ms error
+        setupTimeoutTest();
+
+        # get remote datasource
+        QdspClient dsp0(self, dsname);
+        on_exit
+            dsp0.rollback();
+
+        # allocate a connection to this thread
+        dsp0.beginTransaction();
+
+        # get second datasource
+        QdspClient dsp1(self, dsname);
+        on_exit
+            dsp1.rollback();
+
+        assertThrows("DATASOURCEPOOL-TIMEOUT", \dsp1.beginTransaction());
+    }
+
+    hash getRuntimePropsImpl() {
+        return {};
+    }
+
+    private doWarningConnection(Counter c) {
+        # get remote datasource
+        QdspClient dsp(self, dsname);
+        on_exit
+            dsp.rollback();
+
+        c.dec();
+        # allocate a connection to this thread
+        dsp.beginTransaction();
+    }
+
+    private string getSingleConnectionString() {
+        string tconnstr;
+        {
+            hash ch = parse_datasource(connstr);
+            ch.options += (
+                "min": 1,
+                "max": 1,
+            );
+            tconnstr = ch.type + ":";
+            if (ch.user) {
+                tconnstr += ch.user;
+            }
+            if (ch.pass) {
+                tconnstr += "/" + ch.pass;
+            }
+            if (ch.db) {
+                tconnstr += "@" + ch.db;
+            }
+            if (ch.charset) {
+                tconnstr += "(" + ch.charset + ")";
+            }
+            if (ch.host) {
+                tconnstr += "%" + ch.host;
+                if (ch.port) {
+                    tconnstr += ":" + ch.port;
+                }
+            }
+            tconnstr += "{";
+            tconnstr += foldl $1 + "," + $2, (map sprintf("%s=%s", $1.key, $1.value), ch.options.pairIterator());
+            tconnstr += "}";
+        }
+        return tconnstr;
+    }
+
+    private restartQdspProcessWithOptions(hash<auto> opts) {
+        # restart with 1 connection and a 1 ms warning
+        # get new connection string
+        string tconnstr = getSingleConnectionString();
+        UserApi::logInfo("new connection string: %s", tconnstr);
+
+        # override options
+        qorus_options_override = opts;
+
+        # start datasource pool process with new conection info and 1 ms warning
+        # stop process
+        stopProcess(qdspc);
+        # restart with new options
+        qdspc = new QdspProcess(self, node, gethostname(), False, dsname, tconnstr, getLoggerParams());
+        # when this method returns, the pool URL has been set
+        assertEq(True, startQdsp());
+
+        # update URLs for process
+        processAbortedImpl(qdspc.getId(), qdspc, True);
+    }
+
+    private *hash<LoggerParams> makeLoggerParams(*hash<auto> input_params, string type, *string name) {
+        return QorusMasterCoreCommon::makeLoggerParams(qorus_parse_options("qorus"), input_params, type, name);
+    }
+
+    private *hash<auto> getLoggerParams() {
+        *hash<auto> rv = QorusMasterCoreCommon::getLoggerParams("qdsp", "omquser", "omquser");
+        return rv;
+    }
+
+    private setupWarningTest() {
+        restartQdspProcessWithOptions({
+            "dsp-warning-timeout": 1,
+        });
+    }
+
+    private setupTimeoutTest() {
+        restartQdspProcessWithOptions({
+            "dsp-error-timeout": 1,
+        });
+    }
+
+    private bool processMsg(MyRouter router, string sender, string mboxid, string cmd, ZMsg msg) {
+        if (AbstractQorusProcessManager::processMsg(router, sender, mboxid, cmd, msg))
+            return True;
+        if (cmd == CPC_CORE_DSP_TIMEOUT_WARNING) {
+            # push warning hash on queue
+            dwq.push(qorus_cluster_deserialize(msg));
+            # return without acknowledging the message
+            return True;
+        }
+        return False;
+    }
+
+    private static hash getRows(list l, int start, int end = -1) {
+        if (end < 0)
+            end = l.size();
+        hash<auto> h = map {$1: ()}, keys l[0];
+
+        for (int i = start; i < end; ++i)
+            map h{$1.key} += $1.value, l[i].pairIterator();
+
+        return h;
+    }
+
+    checkResetDatasource(string server_name, hash<auto> ex) {
+        if (ex.err == "QDSP-TEST-RESET") {
+            # send reset cmd to qdsp process
+            try {
+                QdspClient dsp(self, dsname);
+                dsp.reset({"connstr": connstr});
+            } catch (hash<ExceptionInfo> ex) {
+                UserApi::logInfo("exception resetting datasource: %s: %s", ex.err, ex.desc);
+            }
+        }
+    }
+
+    private bool startClusterImpl() {
+        hash<auto> opts = qorus_parse_options("qorus");
+        omqds = new Datasource(opts.systemdb);
+        # start datasource pool process
+        qdspc = new QdspProcess(self, node, gethostname(), False, dsname, connstr, getLoggerParams());
+        # when this method returns, the pool URL has been set
+        return startQdsp();
+    }
+
+    private bool startQdsp() {
+        # when this method returns, the pool URL has been set
+        if (addProcess(qdspc)) {
+            pool_urls = qdspc.getUrls();
+            setUrls(qdspc.getId(), pool_urls);
+            return True;
+        }
+        return False;
+    }
+
+    private stopClusterImpl() {
+        if (qdspc) {
+            stopProcess(qdspc.getId());
+        }
+    }
+
+    private bool getClusterProcessInfo(ZSocketRouter router, int index, string sender, string mboxid, string pname) {
+        if (pname == "qorus-core") {
+            hash<auto> h = {
+                "status": "RUNNING",
+                "urls": master_urls,
+                "host": gethostname(),
+                "pid": getpid(),
+                "type": QDP_NAME_QORUS_CORE,
+                "client_id": "-",
+            };
+            router.send(sender, mboxid, CPC_OK, qorus_cluster_serialize(h));
+            return True;
+        }
+        return False;
+    }
+
+    private handleMsgFromUnknownSender(ZSocketRouter router, ZMsg msg, string sender, string mboxid, string key,
+        auto cmd_arg) {
+        #printf("handleMsgFromUnknownSender() sender: %y mboxid: %y key: %y cmd_arg: %y\n", sender, mboxid, key, cmd_arg);
+        # handle debug calls to qorus-core
+        if (key == "CORE-CALL-FUNCTION" && cmd_arg.name == "get_qorus_options" && cmd_arg.args == "instance-key") {
+            router.send(sender, mboxid, CPC_OK, qorus_cluster_serialize({"instance-key": "key"}));
+            return;
+        }
+        AbstractQorusProcessManager::handleMsgFromUnknownSender(router, msg, sender, mboxid, key, cmd_arg);
+    }
+
+    # server method: check if the process should be restarted
+    private bool processAbortedRestartImpl(string id, AbstractQorusProcess proc, bool restart, reference<hash> ctx) {
+        return restart;
+    }
+
+    # server method: called after the cluster server process has been potentially restarted
+    private processAbortedImpl(string id, AbstractQorusProcess proc, bool restarted, *hash<auto> ctx) {
+        if (restarted) {
+            updateUrls(proc.getId(), proc.getUrls());
+            ++restart_count;
+        }
+        abortedProcessNotification(id, proc.getClusterProcInfo(), restarted, now_us());
+    }
+
+    # distributed process API: called when an abort notification is sent (before the process is restarted)
+    private processAbortNotificationImpl(string process) {
+        # this method intentionally left blank
+    }
+
+    # distributed process API: called after the cluster server process has been potentially restarted
+    processAbortedImpl(string process, *hash<ClusterProcInfo> info, bool restarted, date abort_timestamp) {
+        # this method intentionally left blank
+    }
+
+    hash getInfo() {
+        return {};
+    }
+
+    # returns the unique network ID
+    string getNetworkId() {
+        return "qdsp-test";
+    }
+
+    # return all Qorus options
+    private hash getOptionsImpl() {
+        return omqclient.getOptions("qorus") + qorus_options_override;
+    }
+
+    # return the value of a single Qorus option
+    private auto getOptionImpl(string opt) {
+        return qorus_options_override{opt} ?? omqclient.getOptions("qorus"){opt};
+    }
+
+    private logImpl(int lvl, string msg) {
+        printf(msg + "\n");
+    }
+
+    logCommonInfo(string fmt) {
+        logImpl(LL_INFO, vsprintf(fmt, argv));
+    }
+
+    logCommonDebug(string fmt) {
+        logImpl(LL_DEBUG_1, vsprintf(fmt, argv));
+    }
+
+    logCommonFatal(string fmt) {
+        logImpl(LL_IMPORTANT, vsprintf(fmt, argv));
+    }
+
+    # called when a message is received from a new master process
+    private processSelfMsgImpl(ZSocketRouter router, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        throw "UNIMPLEMENTED";
+    }
+
+    static hash getOptions() {
+        QorusClient::init();
+        # turn off verbose logging in the server
+        return QorusClient::parseOptions("qorus") + ("verbose": 0);
+    }
+}
+
+class QdspTestSchema inherits AbstractSchema {
+    public {
+        const SchemaName = "QdspTestSchema";
+        const SchemaVersion = "1.0";
+    }
+
+    private {
+        const T_QdspTest = {
+            "columns" : {
+                "id": c_number(14, True, "an example comment with 'quotes'"),
+                "str": c_varchar(50, "varchar column"),
+                "char_f": c_char(1, "char column"),
+                "date_f": c_date("date column"),
+                "timestamp_f": c_timestamp("timestamp column"),
+                "int_f": c_int("integer column"),
+                "blob_f": c_blob(),
+                "clob_f": c_clob(),
+            },
+            "primary_key": {"name": "pk_qdsp_test", "columns": ("id")},
+            "indexes": {
+                "driver": {
+                    "oracle": {
+                        "pk_qdsp_test": {"columns": "id",},
+                    },
+                },
+            },
+        };
+
+        const Tables = {
+            "qdsp_test": T_QdspTest,
+        };
+
+        const Sequences = {
+            "qdsp_test_seq": {},
+        };
+    }
+
+    constructor(AbstractDatasource ds, *string dts, *string its) : AbstractSchema(ds, dts, its) {
+    }
+
+    private string getNameImpl() {
+        return SchemaName;
+    }
+
+    private string getVersionImpl() {
+        return SchemaVersion;
+    }
+
+    private *hash getTablesImpl() {
+        return Tables;
+    }
+
+    private *hash getSequencesImpl() {
+        return Sequences;
+    }
+}
+
+sub QDBG_ASSERT() {
+    delete argv;
+}
+sub QDBG_LOG(string fmt) {
+    Qorus.UserApi::logDebug(vsprintf(fmt, argv));
+}
+sub QDBG_CLOG(string fmt) {
+    Qorus.UserApi::logDebug(vsprintf(fmt, argv));
+}

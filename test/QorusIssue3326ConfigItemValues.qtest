@@ -1,0 +1,119 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3326" + Qore::DirSep;
+
+        const SERVICE_NAME = "issue3326service";
+        const JOB_NAME = "issue3326job";
+        const STEP_NAME = "issue3326step";
+        const WORKFLOW_NAME = "ISSUE-3326-WORKFLOW";
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:" + WORKFLOW_NAME + ":1.0",
+            "step:" + STEP_NAME + ":1.0",
+            "service:" + SERVICE_NAME + ":1.0",
+            "job:" + JOB_NAME + ":1.0",
+            "queue:issue3326queue",
+        );
+    }
+
+    constructor(): Test("QorusIssue3326ConfigItemValues", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private testGlobalConfigItemValue(string item_name, auto expected_value, bool use_number_eq = False) {
+        auto value = qrest.get("system/config/" + item_name).value;
+        if (use_number_eq) {
+            assertNumberEq(expected_value, value);
+        } else{
+            assertEq(expected_value, value);
+        }
+        printf("OK\n");
+    }
+
+    private testConfigItemValue(
+        string interface_type,
+        string interface_name,
+        string item_name,
+        auto expected_value,
+        bool use_number_eq = False)
+    {
+        auto value = qrest.get(interface_type + "s/" + interface_name + "/config/" + item_name).value;
+        if (use_number_eq) {
+            assertNumberEq(expected_value, value);
+        } else{
+            assertEq(expected_value, value);
+        }
+        printf("OK\n");
+    }
+
+    private oloadTest() {
+        printf("------START oload interfaces------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload interfaces-------\n");
+
+        printf("-----test config item values------\n");
+        string config_item_1 = "issue-3326-test-config-item-1";
+        string config_item_2 = "issue-3326-test-config-item-2";
+        string config_item_3 = "issue-3326-test-config-item-3";
+        string config_item_5 = "issue-3326-test-config-item-5";
+        string config_item_7 = "issue-3326-test-config-item-7";
+
+        printf("%y service %y config item value: ", SERVICE_NAME, config_item_5);
+        testConfigItemValue("service", SERVICE_NAME, config_item_5, NOTHING);
+        printf("%y config item global value: ", config_item_5);
+        testGlobalConfigItemValue(config_item_5, {"test_global": 12});
+
+        printf("%y job %y config item value: ", JOB_NAME, config_item_7);
+        testConfigItemValue("job", JOB_NAME, config_item_7, (123, 545));
+        printf("%y config item global value: ", config_item_7);
+        testGlobalConfigItemValue(config_item_7, ("asd", "fdasd"));
+
+        printf("%y step %y config item value: ", STEP_NAME, config_item_1);
+        testConfigItemValue("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME,
+            config_item_1, {"test_local": "asdsad", "x": 1234});
+
+        printf("%y workflow %y config item value: ", WORKFLOW_NAME, config_item_1);
+        testConfigItemValue("workflow", WORKFLOW_NAME, config_item_1, {"x": 12345});
+
+        printf("%y config item global value: ", config_item_1);
+        testGlobalConfigItemValue(config_item_1, {"test_key_1": "vbn"});
+
+        printf("%y step %y config item value: ", STEP_NAME, config_item_2);
+        testConfigItemValue("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME, config_item_2, "test_1");
+
+        bool use_number_eq = (ENV.MACHTYPE ?? "").find("alpine") > -1 && ENV.ORACLE_PWD;
+
+        printf("%y step %y config item value: ", STEP_NAME, config_item_3);
+        testConfigItemValue("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME, config_item_3, 2.1231, use_number_eq);
+        printf("%y workflow %y config item value: ", WORKFLOW_NAME, config_item_3);
+        testConfigItemValue("workflow", WORKFLOW_NAME, config_item_3, 3.22, use_number_eq);
+        printf("%y config item global value: ", config_item_3);
+        testGlobalConfigItemValue(config_item_3, 17.12, use_number_eq);
+
+        printf("-----test config item values------\n");
+
+        printf("---------START delete interfaces-----------\n");
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE, True);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+    }
+}

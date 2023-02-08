@@ -1,0 +1,101 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires SqlUtil
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3325" + Qore::DirSep;
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:ISSUE-3325-WORKFLOW:1.0",
+            "step:issue3325step:1.0",
+            "class:issue3325class:1.0",
+            "vmap:issue3325vmap",
+            "mapper:issue3325mapper:1.0",
+            "function:issue3325function:1.0",
+            "constant:issue3325constant:1.0",
+        );
+    }
+
+    constructor(): Test("QorusIssue3325StepLibraryObjects", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private testStep(int stepid) {
+        printf("test step_lib table\n");
+
+        AbstractTable table = new Table(omq, "step_lib").getTable();
+        auto result = table.select({"where": {"stepid": stepid}});
+
+        printf("got result: %y\n", result);
+
+        assertEq(3, elements result.name);
+        assertTrue(result.name.contains("issue3325function"));
+        assertTrue(result.name.contains("issue3325class"));
+        assertTrue(result.name.contains("issue3325constant"));
+
+        printf("OK\n");
+
+        printf("test step_mappers table\n");
+        table = new Table(omq, "step_mappers").getTable();
+        result = table.selectRows({"where": {"stepid": stepid}});
+
+        assertEq(1, elements result);
+
+        table = new Table(omq, "mappers").getTable();
+        result = table.selectRow({"where": {"mapperid": result.first().mapperid}});
+
+        printf("got result: %y\n", result);
+
+        assertEq("issue3325mapper", result.name);
+
+        printf("OK\n");
+
+        printf("test step_vmaps table\n");
+
+        table = new Table(omq, "step_vmaps").getTable();
+        result = table.selectRows({"where": {"stepid": stepid}});
+
+        printf("got result: %y\n", result);
+
+        assertEq(1, elements result);
+
+        table = new Table(omq, "value_maps").getTable();
+        result = table.selectRow({"where": {"id": result.first().id}});
+
+        assertEq("issue3325vmap", result.name);
+
+        printf("OK\n");
+    }
+
+    private oloadTest() {
+        printf("------START oload interfaces-------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload interfaces--------\n");
+
+        printf("----------START test step ---------\n");
+        testStep(qrest.get("steps/issue3325step").stepid);
+        printf("-----------END test step ----------\n");
+
+        printf("---------START delete interfaces-----------\n");
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+    }
+}

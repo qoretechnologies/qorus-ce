@@ -1,0 +1,74 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class DynamicTypesTestService inherits QorusService {
+    string test(bool skip_types = False) {
+        list Types = (
+            "qore/hash",
+            "qore/ftp/event",
+            "qore/sftp/event",
+            "qoretechnologies/qorus-api/workflows/create-order/request",
+            "qoretechnologies/qorus-api/workflows/create-order/response",
+        );
+        if ((ENV.MACHTYPE ?? "").find("alpine") == -1) {
+            push Types, "qore/fsevents/event";
+        }
+
+        # ensure that builtin types are locked
+        map QoreTest::assertTrue(callRestApi("GET", "dataprovider/types/" + $1).locked, $1), Types;
+        map QoreTest::assertTrue(callRestApi("GET", "dataprovider/types/" + $1 + "?action=type").locked, $1), Types;
+        # ensure that builtin types cannot be overwritten
+        map QoreTest::assertEq(403, getResponseCode("POST", "dataprovider/types", {
+            "path": $1,
+            "type": {
+                "name": "string",
+            },
+        })), Types;
+        # ensure that builtin types cannot be deleted
+        map QoreTest::assertEq(403, getResponseCode("DELETE", "dataprovider/types/" + $1), $1), Types;
+
+        QoreTest::assertEq(400, getResponseCode("DELETE", "dataprovider/types/qore"));
+
+        logInfo("%y\n", callRestApi("GET", "system/metadata/types"));
+
+        hash<auto> h;
+        if (!skip_types) {
+            h = callRestApi("GET", "dataprovider/types/test/type-a");
+            QoreTest::assertEq("type-a", h.name);
+            QoreTest::assertEq("/test/type-a", h.path);
+            QoreTest::assertTrue(h.has_type);
+            QoreTest::assertEq(("a",), h.children);
+
+            h = callRestApi("GET", "dataprovider/types/test/type-a/type");
+            QoreTest::assertEq("/test/type-a", h.typename);
+            QoreTest::assertEq("string", h.fields.a.type.name);
+            QoreTest::assertTrue(h.fields.a.type.mandatory);
+            QoreTest::assertFalse(h.can_manage_fields);
+
+            h = callRestApi("GET", "dataprovider/types/test/type-b");
+            QoreTest::assertEq("type-b", h.name);
+            QoreTest::assertEq("/test/type-b", h.path);
+            QoreTest::assertTrue(h.has_type);
+            QoreTest::assertNothing(h.children);
+
+            h = callRestApi("GET", "dataprovider/types/test/type-b/type");
+            QoreTest::assertEq("/test/type-b", h.typename);
+            QoreTest::assertEq("string", h.name);
+            QoreTest::assertFalse(h.or_nothing_type);
+            QoreTest::assertFalse(h.can_manage_fields);
+        }
+
+        return "OK";
+    }
+
+    private int getResponseCode(string meth, string path, *hash<auto> args) {
+        try {
+            callRestApi(meth, path, args);
+            QoreTest::assertTrue(False);
+        } catch (hash<ExceptionInfo> ex) {
+            return ex.arg.ex.arg ?? ex.arg ?? -1;
+        }
+    }
+}

@@ -1,0 +1,9 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3858 inherits QorusJob {
+    run() {
+    }
+}

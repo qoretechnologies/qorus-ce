@@ -1,0 +1,35 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#
+# Qorus Integration Engine
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test workflows and services",
+    },
+    "regression": {
+        "desc": "regression test group",
+    },
+    "issue-3010-group": {
+        "desc": "issue 3010 test group"
+    }
+};
+
+const steps = (
+    {"name":"issue_3010_step:1.0"},
+);
+
+our hash<auto> workflows."ISSUE-3010-WORKFLOW2"."1.0" = {
+    "desc"         : "Simple workflow example",
+    "author"       : "Qore Technologies, s.r.o.",
+    "steps"        : steps,
+    "groups"       : ("test", "regression", "issue-3010-group"),
+    "autostart"    : 1,
+    "sla_threshold": 1800,
+};

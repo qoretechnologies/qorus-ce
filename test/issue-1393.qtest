@@ -1,0 +1,35 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    constructor(): Test("Issue 1393", "1.0") {
+        QorusClient::initFast();
+        addTestCase("main", \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        hash<auto> h = qrest.post("workflows/STATUS-CANCELED/execSynchronous", oh);
+        on_error {
+            printf("result: %y\n", h);
+        }
+        assertEq(OMQ::StatCanceled, h.status);
+
+        hash<auto> h0 = qrest.put("orders/" + h.workflow_instanceid + "/uncancel");
+        assertEq(OMQ::StatError, h0.workflow_status);
+    }
+}
+

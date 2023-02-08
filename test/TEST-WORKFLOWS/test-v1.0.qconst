@@ -1,0 +1,13 @@
+# name: TestConstants1
+# version: 1.0
+# desc: test constants 1
+# author: Qore Technologies, sro
+const t1 = 1;
+# END
+
+# name: TestConstants2
+# version: 1.0
+# desc: test constants 2
+# author: Qore Technologies, sro
+const t2 = 2;
+# END

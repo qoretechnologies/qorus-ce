@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3563RightProcessor inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto _data) {
+        UserApi::logInfo("Right Processor was called, %y", _data);
+        UserApi::updateOutputData({"id": _data}, {"id": "$pstate:data"});
+        enqueue(_data.EUR);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

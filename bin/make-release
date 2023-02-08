@@ -1,0 +1,1162 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# require all variables to be declared before use
+%new-style
+%require-our
+%require-types
+%strict-args
+%exec-class MakeRelease
+%enable-all-warnings
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# Qorus client module
+%try-module QorusClientBase
+%define NoQCC
+%endtry
+
+%requires Util
+%requires FsUtil
+%requires yaml
+
+const Opts = {
+    "pymoddir"   : "a,python-modules=s",
+    "pymoddest"  : "b,python-dest=s",
+    "comp"       : "c,compress",
+    "rcompat"    : "C,refresh-compat",
+    "ref"        : "f,refresh",
+    "full"       : "F,full-release",
+    "help"       : "h,help",
+    "inst"       : "i,install",
+    "load"       : "l,load-file=s",
+    "stage"      : "L,loader-only=s",
+    "mod"        : "m,fix-module-paths",
+    "pref"       : "p,prefix=s",
+    "padd"       : "P,add-prefix=s",
+    "usql"       : "q,user-sql=s@",
+    "rdir"       : "r,release-dir=s",
+    "showr"      : "R,show-release-dir",
+    "sdir"       : "s,system-dir=s",
+    "sys"        : "S,system",
+    "user"       : "u,user=s",
+    "usrc"       : "U,user-src=s",
+    "verbose"    : "v,verbose:i+",
+
+    "keep"       : "keep",
+    "qorusdir"   : "qorusdir=s",
+
+    # oload passthru options
+    "oload"      : "O=s@",
+
+    "ds"         : "datasource=s@",
+    "data_ts"    : "data-ts=s@",
+    "index_ts"   : "index-ts=s@",
+    "noerrupdate": "no-error-update",
+    "override"   : "override",
+    "proxy"      : "proxy-url=s",
+    "redef"      : "allow-redef",
+    "token"      : "token=s",
+    "url"        : "url=s",
+    "validate"   : "validate",
+};
+
+const OloadPassthruOpts = (
+    "redef",
+    "ds",
+    "noerrupdate",
+    "override",
+    "validate",
+    "token",
+    "data_ts",
+    "index_ts",
+    "proxy",
+    "url",
+);
+
+const OloadShortOptions = {
+    "OA": "allow-redef",
+    "OD": "datasource",
+    "OE": "no-error-update",
+    "Ol": "validate",
+    "OO": "override",
+    "Op": "proxy",
+    "Ot": "token",
+    "Ou": "url",
+};
+
+const LoadFileTypes = {
+    "qfd": True,
+    "qsd": True,
+    "java": True,
+    "qclass": True,
+    "qconst": True,
+    "qwf": True,
+    "qjob": True,
+    "qconn": True,
+    "qsm": True,
+    "qmapper": True,
+    "qvmap": True,
+    "qscript": True,
+    "qstep": True,
+    "qmc": True,
+    "yaml": True,
+    "py": True,
+};
+
+# file extensions to be ignored when packaging a release
+const ExtraFileTypes = {
+    "wsdl": True,
+    "xml": True,
+    "xsd": True,
+    "dtd": True,
+    "qm": True,
+    "qlib": True,
+    "jar": True,
+    "class": True,
+    "json": True,
+    "qtest": True,
+    "qc": True,
+    "qhtml": True,
+    "qjs": True,
+    "qjson": True,
+};
+
+const script_hash = {
+    # from Qorus
+    "bin/user-tool": True,
+    "bin/schema-tool": True,
+    "bin/ocmd": True,
+    "bin/ostart": True,
+    "bin/ostop": True,
+    "bin/oview": True,
+    "bin/ojview": True,
+    "bin/ostatus": True,
+    "bin/oload": True,
+    "bin/oprop": True,
+    "bin/qevent": True,
+    "bin/qorus-bash-completion-helper": True,
+    "bin/make-release": True,
+    "bin/swagger2service": True,
+    "bin/qdb": True,
+    "bin/first_time_install.sh": True,
+
+    # from Qore
+    "bin/qrest": True,
+    "bin/sqlutil": True,
+    "bin/qorus-diff": True,
+    "bin/rest": True,
+    "bin/sfrest": True,
+    "bin/saprest": True,
+    "bin/qdp": True,
+    "bin/qget": True,
+    "bin/schema": True,
+    "bin/schema-reverse": True,
+    "bin/qdbg": True,
+    "bin/qdbg-remote": True,
+    "bin/qdbg-server": True,
+    "bin/qjavac": True,
+    "bin/qjava2jar": True,
+
+    # from the openldap module
+    "bin/qldapadd": True,
+    "bin/qldapdelete": True,
+    "bin/qldapmodify": True,
+    "bin/qldappasswd": True,
+    "bin/qldapsearch": True,
+
+    # from the xml module
+    "bin/soaputil": True,
+};
+
+class MakeRelease {
+    private {
+        list<string> slist;
+        list<string> ilist;
+        list<string> ulist;
+        string rdir;
+        string sdir;
+        string rname;
+        string tar;
+        string label;
+        hash<auto> o;
+
+        const YamlServiceResources = (
+            "resource",
+            "text-resource",
+            "bin-resource",
+            "template",
+        );
+    }
+
+    private usage() {
+        string py_dest_dir = getPythonDestDir();
+
+        printf("usage: %s [options] <label> <files>
+usage: %s <options> <files>
+MAKE-RELEASE OPTIONS:
+ -h,--help                show this help text
+ -a,--python-modules=ARG  package the given directory as a Python module dir
+                          to be installed in the target under
+                          $OMQ_DIR/%s
+                          (use -b to override the target dir)
+ -b,--python-dest=ARG     store files packaged with -a in the given directory
+                          under $OMQ_DIR/
+ -c,--compress            make a compressed tar file of the release
+ -C,--refresh-compat      include old commands to refresh objects after
+                          loading
+ -f,--refresh             include commands to refresh objects after loading
+ -F,--full-release        verify release completeness, only with -i
+ -i,--install             exec install.sh after packaging (user rel. only)
+    --keep                do not delete temporary packaging directory
+ -p,--prefix=ARG          sets user prefix directory for relative paths in the
+                          target filesystem (implies -U.; note: makes a flat
+                          release in this dir)
+ -P,--add-prefix=ARG      prepends a prefix dir for relative paths in the
+                          target filesystem (implies -U.)
+ -l,--load-file=ARG       create only the loader file (do not give a label)
+ -L,--loader-only=ARG     stage system release; create only loader files here
+ -m,--fix-module-paths    install Qore modules in user/modules
+ -q,--user-sql=ARG        adds an SQL file to execute in the omquser schema
+ -r,--release-dir=ARG     set release directory (def: %y)
+ -R,--show-release-dir    show the release directory and exit (def: %y)
+ -s,--system-dir=ARG      set system dir (default: %y, also sets -S)
+ -S,--system              make system release
+ -u,--user=ARG            add user code to system release
+ -U,--user-src=ARG        sets the root source directory for release
+                          components; all release componets should be given as
+                          relative paths from this directory
+ -v,--verbose             output more information
+    --qorusdir            set the Qorus src directory
+
+OLOAD PASSTHRU OPTIONS (for use with -i,--install):
+ -OA,--allow-redef        allow dangerous workflow redefinitions (for dev only)
+ -OD,--datasource=ARG     overrides datasource params
+ -OE,--no-error-update    do not update workflow error definitions; only create
+                          new global error definitions
+ -OO,--override           override manually updated entries
+ -Ot,--token=ARG          use the given token with HTTP requests to the Qorus server
+ --data-ts=ARG            set data tablespace name, ARG=<dsname=tsname>
+ --index-ts=ARG           set index tablespace name, ARG=<dsname=tsname>
+ -Op,--proxy-url=ARG      sets the proxy URL (ex: http://proxy_host:port)
+ -Ou,--url=ARG            sets Qorus URL (ex: http://host:port)
+ -Ol,--validate           validate all functions recursively
+
+Examples:
+   %s -U. mylabel services/*.qsd
+       It creates a user-code release with all service files
+       in the default release-dir/mylabel directory.
+   %s -U. -lmylabel services/*.qsd
+       It creates only the load script manifest for service files
+       named mylabel.qrf
+\n",
+               get_script_name(), get_script_name(), py_dest_dir, rdir, rdir, ENV.OMQ_DIR,
+               get_script_name(), get_script_name());
+        exit(1);
+    }
+
+    private static error(string fmt) {
+        vprintf("ERROR: " + fmt + "\n", argv);
+        exit(1);
+    }
+
+    private list<string> makeList(list<auto> file_list, *reference<list<hash<auto>>> resource_list) {
+        # make a hash of the file list for quick lookups
+        *hash<string, bool> file_map = map {$1: True}, file_list;
+
+        list<string> rv = ();
+        foreach string entry in (file_list) {
+            if (entry =~ /~$/) {
+                continue;
+            }
+
+            if (entry =~ /[\*\?]/) {
+                map rv += processFile($1, \file_map, \resource_list), glob(entry);
+            } else {
+                rv += processFile(entry, \file_map, \resource_list);
+            }
+        }
+        return rv;
+    }
+
+    private processResource(string entry, reference<list<hash<auto>>> resource_list, string resource_name) {
+        if (absolute_path(resource_name))
+            MakeRelease::error("service %y references resource %y with an absolute path; resource paths must be "
+                "relative", entry, resource_name);
+        string dir = dirname(entry);
+        string resource_path = dir + DirSep + resource_name;
+
+        if (resource_name !~ /[\*\?]/) {
+            if (!is_readable(resource_path)) {
+                MakeRelease::error("service %y references resource %y that does not exist (%s)", entry, resource_name,
+                    strerror());
+            }
+        } else if (!glob(resource_path)) {
+            MakeRelease::error("service %y references resource glob %y that does not match any files (%s)", entry,
+                resource_name, strerror());
+        }
+        resource_list += {
+            "source": resource_path,
+            "target": resource_name,
+        };
+    }
+
+    private list<string> processFile(string entry, reference<hash<string, bool>> file_map,
+            reference<list<hash<auto>>> resource_list) {
+        list<string> rv = (entry,);
+
+        hash<auto> fh;
+        if (entry =~ /\.yaml$/) {
+            try {
+                # try to parse the YAML and see if it has a code reference that can be added to the release
+                fh = parse_yaml(File::readTextFile(entry));
+                if (exists (*string src = fh."code")) {
+                    src = dirname(entry) + DirSep + src;
+                    if (is_readable(src) && !file_map{src}) {
+                        file_map{src} = True;
+                        rv += src;
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                # ignore exceptions
+            }
+        }
+
+        # add service resources to release
+        if (exists resource_list) {
+            if (entry =~ /\.qsd$/) {
+                list<string> rlist = ();
+                FileLineIterator i(entry);
+                while (i.next()) {
+                    string line = i.getValue();
+                    *string resource_name = (line =~ x/#[[:blank:]]*(resource|template|bin-resource|text-resource)[[:blank:]]*:[[:blank:]]*(.+)/)[1];
+                    if (resource_name) {
+                        trim resource_name;
+                        processResource(entry, \resource_list, resource_name);
+                    }
+                }
+                map resource_list += {"source": $1}, rlist;
+            } else if (entry =~ /\.qsd\.yaml$/) {
+                foreach string resource_type in (YamlServiceResources) {
+                    map processResource(entry, \resource_list, $1), fh{resource_type};
+                }
+
+                # add API management resources
+                if (*string schema = fh."api-manager"."provider-options".schema.value) {
+                    processResource(entry, \resource_list, schema);
+                }
+            }
+        }
+        return rv;
+    }
+
+    static private string fixPrefix(string str) {
+        # substitute repeated '/' with a single '/'
+        str =~ s/\/\/+/\//g;
+        # remove leading '/'
+        str =~ s/^\///;
+        # remove trailing '/'
+        str =~ s/\/$//;
+
+        return str;
+    }
+
+    private commandLine() {
+        # set release dir
+        rdir = ENV.QORUS_RELEASE_DIR ? ENV.QORUS_RELEASE_DIR : ENV.HOME + DirSep + "releases";
+
+        GetOpt getopt(Opts);
+        o = getopt.parse3(\ARGV);
+
+        # set release directory
+        if (exists o.rdir)
+            rdir = o.rdir;
+
+        if (o.help)
+            usage();
+
+        if (o.showr) {
+            printf("%s\n", rdir);
+            exit(1);
+        }
+
+        # set user label
+        if (o.user)
+            o.user = getLabel("qorus-user-", o.user);
+
+        if (o.sys)
+            sdir = ENV.OMQ_DIR;
+
+        # set system source dir
+        if (o.sdir) {
+            o.sys = True;
+            sdir = o.sdir;
+        }
+
+        if (!o.usrc && (o.pref || o.padd))
+            o.usrc = ".";
+
+        # fix prefix
+        if (o.pref)
+            o.pref = MakeRelease::fixPrefix(o.pref);
+
+        if (o.padd)
+            o.padd = MakeRelease::fixPrefix(o.padd);
+
+        # if no user source listed, then set to home directory
+        if (!o.usrc)
+            o.usrc = ".";
+
+        o.usrc = normalize_dir(o.usrc);
+
+        if (o.load && (o.sys || o.stage)) {
+            stderr.printf("-l and -S or -L cannot be specified together, aborting\n");
+            exit(1);
+        }
+
+        if (o.stage) {
+            rdir = o.stage;
+            sdir = o.stage;
+            o.sys = True;
+        }
+
+        if (o.pymoddir) {
+            if (!o.pymoddest) {
+                o.pymoddest = getPythonDestDir();
+            }
+        } else {
+            if (o.pymoddest) {
+                printf(sprintf("python-module-dest can only be used in addition to the python-module option\n"));
+            }
+        }
+    }
+
+    private string getPythonDestDir() {
+        return "user/python/";
+    }
+
+    private string getLabel(string prefix, string label) {
+        # check for file name instead of label
+        if (is_file(label)) {
+            stderr.printf("ERROR: label '%s' is an existing file - check arguments and try again\n", label);
+            exit(1);
+        }
+
+        if (substr(label, 0, strlen(prefix)) == prefix)
+            return label;
+
+        return prefix + label;
+    }
+
+    private checkAbsolutePath(string path) {
+        if (absolute_path(path)) {
+            stderr.printf("ERROR: release file component %y is an absolute path; must be a relative path from %y\n",
+                path, o.usrc);
+            exit(1);
+        }
+    }
+
+    private doFile2(reference<list<string>> file_list, string dir, string path) {
+        checkAbsolutePath(path);
+
+        # skip backup files
+        if (path =~ /~$/)
+            return;
+
+        # skip release files
+        if (o.skiprqrf && path =~ /\.qrf$/) {
+            printf("skipping release file '%s'\n", path);
+            return;
+        }
+
+        if (hstat(dir + DirSep + path).type == "DIRECTORY") {
+            # skip files in "old" directories
+            if (path =~ /old$/)
+                return;
+            foreach string path1 in (glob(dir + DirSep + path + DirSep + "*"))
+                doFile2(\file_list, dir, path + DirSep + basename(path1));
+            return;
+        }
+
+        file_list += path;
+    }
+
+    private doFile(string path) {
+        checkAbsolutePath(path);
+
+        string dir;
+
+        # skip backup files
+        if (path =~ /~$/)
+            return;
+
+        if (o.sys && path =~ /^((bin)|(lib))/) {
+            dir = sdir;
+            if (hstat(dir + DirSep + path).type == "DIRECTORY") {
+                foreach string path1 in (glob(dir + DirSep + path + DirSep + "*"))
+                    doFile(path + DirSep + basename(path1));
+                return;
+            }
+
+            # check for scripts
+            if (path =~ /\.q$/ || script_hash{path} || path =~ /\.(class|jar)$/)
+                ilist += path;
+            else
+                slist += path;
+        } else if (o.sys) {
+            dir = sdir;
+            doFile2(\ilist, sdir, path);
+        } else {
+            dir = o.usrc;
+            doFile2(\ulist, o.usrc, path);
+        }
+        string new_path = dir + DirSep + path;
+        if (!is_readable(new_path)) {
+            printf("ERROR: cannot find file '%s'\n", new_path);
+            exit(1);
+        }
+    }
+
+    private checkFiles() {
+        # make file lists
+        slist = ilist = ulist = ();
+
+        # and check to see if all files exist
+        foreach string path in (ARGV) {
+            if (path =~ /[\*\?]/) {
+                *list<string> paths;
+                {
+                    string cwd = getcwd();
+                    on_exit chdir(cwd);
+                    chdir(o.usrc);
+                    paths = glob(path);
+                }
+                if (!paths) {
+                    stderr.printf("ERROR: path %y does not match any files\n", path);
+                    exit(1);
+                }
+                map doFile($1), paths;
+                continue;
+            }
+            doFile(path);
+        }
+    }
+
+    private static string getUniqueDirname() {
+        return sprintf("make-release-%s-%s-pid-%d", gethostname(), getusername(), getpid());
+    }
+
+    private doCmd(string fmt) {
+        string cmd = vsprintf(fmt, argv);
+        if (o.verbose) {
+            printf("exec: %s\n", cmd);
+        }
+        int rc = system(cmd);
+        if (rc) {
+            throw "SYSTEM-ERROR", sprintf("command: %y returned error code %d", cmd, rc);
+        }
+    }
+
+    private delTree(string targ) {
+%ifdef Windows
+        if (hstat(targ).type != "DIRECTORY") {
+            unlink(targ);
+            return;
+        }
+        map delTree($1), glob(targ + DirSep + "*"), $1 != "." && $1 != "..";
+%else
+        doCmd("rm -rf" + " " + targ);
+%endif
+    }
+
+    doCreateTar(string opt, string tarfile, list<string> files) {
+        string file_list_str = foldl $1 + " " + $2, map sprintf("%y", $1), files;
+        doCreateTar(opt, tarfile, file_list_str);
+    }
+
+    doCreateTar(string opt, string tarfile, string targ) {
+%ifdef Windows
+        string cmd = replace(sprintf("tar c%svf %s --force-local %s", opt, tarfile, targ), DirSep, "/");
+%else
+        string cmd = sprintf("tar c%svf %s -h %s", opt, tarfile, targ);
+%endif
+        doCmd(cmd);
+    }
+
+    doExtractTar(string opt, string tarfile, *string topt) {
+%ifdef Windows
+        string cmd = sprintf("tar x%svf %s --force-local%s", opt, tarfile, exists topt ? " " + topt : "");
+%else
+        string cmd = sprintf("tar x%svf %s%s", opt, tarfile, exists topt ? " " + topt : "");
+%endif
+        doCmd(cmd);
+    }
+
+    private copyFiles(string source, string target) {
+        #logDebug("copyFiles source: %y targ: %y", source, target);
+        copy_file(source, target, False, True);
+    }
+
+    constructor() {
+        commandLine();
+
+        # use gnutar on Darwin to avoid including unneeded file resources
+        if (get_qore_library_info().PlatformOS == "Darwin" && ((`uname -a` =~ x/([0-9]+)\.[0-9\.]+ Darwin/[0]) < 13))
+            tar = "gnutar";
+        else {
+            tar = "tar";
+%ifdef Windows
+            tar += " --force-local";
+%endif
+        }
+
+        if (!o.load) {
+            *string label = shift ARGV;
+
+            if (!label) {
+                printf("ERROR: no release label given on the command line\n");
+                usage();
+            }
+            self.label = label;
+        }
+
+        if (!ARGV && !o.pymoddir) {
+            printf("ERROR: no files given on the command line\n");
+            usage();
+        }
+
+        checkFiles();
+
+        if (o.load) {
+            if (o.load !~ /.qrf$/)
+                o.load += ".qrf";
+            createUserReleaseFile(o.load);
+            exit();
+        }
+
+        bool sys = ilist || slist;
+
+        if (sys && ulist && !o.user) {
+            stderr.printf("both user and system files given, but no user label supplied\n");
+            exit(3);
+        }
+
+        if (ulist && o.stage) {
+            stderr.printf("-L is not compatible with user files, aborting\n");
+            exit(3);
+        }
+
+        if (sys)
+            label = getLabel("qorus-", label);
+        else
+            label = getLabel("qorus-user-", label);
+
+        # check release directory
+        if (!is_dir(rdir))
+            MakeRelease::mkdir(rdir, "root release directory");
+
+        if (o.stage)
+            rname = rdir;
+        else
+            rname = rdir + DirSep + label;
+        rname = normalize_dir(rname);
+
+        auto ulabel;
+        if (!sys)
+            ulabel = label;
+        else
+            ulabel = o.user;
+
+        if (!is_dir(rname))
+            MakeRelease::mkdir(rname, "release directory");
+
+        if (!o.stage && !is_file(rname + DirSep + "install.sh")) {
+            string pathname;
+            if (o.sys) {
+                pathname = sdir + DirSep + "templates" + DirSep + "install.sh-system";
+            } else {
+                pathname = sprintf("%s" + DirSep + "templates" + DirSep + "install.sh", ENV.OMQ_DIR);
+            }
+
+            # copy install.sh to new directory
+            copyFiles(pathname, rname + DirSep + "install.sh");
+            printf("copied %s to %s" + DirSep + "install.sh\n", pathname, rname);
+        }
+
+        if (!is_dir(rname + DirSep + "releases")) {
+            # create releases subdirectory
+            if (Qore::mkdir(rname + DirSep + "releases"))
+                MakeRelease::error("mkdir(%s) failed: %s", rname + DirSep + "releases", strerror());
+        }
+
+        if (ulist || o.pymoddir) {
+            string tar_file_name = sprintf("%s.tar.gz", ulabel);
+
+            list<string> user_file_list = ulist;
+            if (o.usql)
+                user_file_list += o.usql;
+            # path -> info
+            list<hash<auto>> resource_list = ();
+            chdir(o.usrc);
+            list<string> file_list = makeList(user_file_list, \resource_list);
+
+            # get base dir for files
+            string base_dir = dirname(user_file_list[0]);
+
+            if (!o.pref && !o.padd && resource_list)
+                o.padd = "user";
+
+            # list for load commands
+            list<string> load_list;
+
+            # create release in prefix directory
+            bool tar_created;
+            if (o.pref) {
+                string pdir = o.pref;
+
+                # get list of paths
+%ifdef Windows
+                pdir = regex_subst(pdir, "/", "\\", RE_Global);
+%endif
+                list<string> path_component_list = split(DirSep, pdir);
+
+                # get unique directory prefix name
+                string unique_dir = MakeRelease::getUniqueDirname();
+
+                string dir_name = sprintf(tmp_location() + DirSep + "%s" + DirSep + "%s", unique_dir, pdir);
+
+                # create install directory
+                Dir dir();
+                dir.chdir(dir_name);
+                dir.create();
+
+                on_exit {
+                    if (!o.keep)
+                        delTree(tmp_location() + DirSep + unique_dir);
+                }
+
+                chdir(o.usrc);
+                # copy files to temporary release directory
+                foreach string fn in (file_list) {
+                    string file_base_dir = dirname(fn);
+                    string targ_dir = dir_name;
+                    if (base_dir != file_base_dir && file_base_dir.equalPartialPath(base_dir)) {
+                        targ_dir = dir_name + DirSep + file_base_dir[base_dir.size() + 1..] + DirSep;
+                        Qore::mkdir(targ_dir, 0777, True);
+                    }
+                    copyFiles(fn, targ_dir);
+                }
+                load_list = map basename($1), user_file_list;
+                doResources(resource_list, dir_name);
+
+                # create tar file
+                chdir(tmp_location() + DirSep + unique_dir);
+                doCreateTar("z", rname + DirSep + tar_file_name, path_component_list[0]);
+                tar_created = True;
+            } else if (o.padd) {
+                string pdir = o.padd;
+
+                # get unique directory prefix name
+                string unique_dir = MakeRelease::getUniqueDirname();
+
+%ifdef Windows
+                pdir = replace(pdir, "/", "\\");
+%endif
+                # get list of path components
+                list<string> path_component_list = split(DirSep, pdir);
+
+                string dir_name = sprintf(tmp_location() + DirSep + "%s" + DirSep + "%s", unique_dir, pdir);
+
+                # create install directory
+                Dir dir();
+                dir.chdir(dir_name);
+                dir.create();
+
+                logDebug("creating install dir: %y", dir_name);
+
+                on_exit {
+                    if (!o.keep)
+                        delTree(tmp_location() + DirSep + unique_dir);
+                }
+
+                chdir(o.usrc);
+                load_list = map o.padd + "/" + basename($1), user_file_list;
+                doResources(resource_list, dir_name);
+
+                # copy files to temporary release directory
+                # create temporary tar file
+                string tmp_tar = tmp_location() + DirSep + unique_dir + DirSep + "tqr.tar.gz";
+                doCreateTar("z", tmp_tar, file_list);
+
+                # unpack release in new position
+                chdir(dir_name);
+                doExtractTar("z", tmp_tar);
+                unlink(tmp_tar);
+
+                # move module files to new location
+                if (o.mod) {
+                    hash<string, bool> done;
+                    string target_dir;
+                    foreach string fn in (ulist) {
+                        if (fn =~ /\.qm$/) {
+                            # do not move module files in a directory with the same name
+                            string bn = basename(fn);
+                            if ((basename(dirname(fn)) + ".qm") == bn) {
+                                continue;
+                            }
+                            if (done{fn}) {
+                                continue;
+                            }
+                            if (!target_dir) {
+                                target_dir = tmp_location() + DirSep + unique_dir + DirSep + "user/modules";
+                                Qore::mkdir(target_dir, 0755, True);
+                            }
+                            # move module file to target
+                            string targ = sprintf(target_dir + DirSep + basename(fn));
+                            rename(fn, targ);
+                            done{fn} = True;
+                        }
+                    }
+                }
+
+                # create tar file
+                chdir(tmp_location() + DirSep + unique_dir);
+                doCreateTar("z", rname + DirSep + tar_file_name, path_component_list[0]);
+                tar_created = True;
+            } else if (file_list) {
+                chdir(o.usrc);
+                doCreateTar("z", rname + DirSep + tar_file_name, file_list);
+                load_list = user_file_list;
+                tar_created = True;
+            }
+
+            if (tar_created) {
+                printf("created user tar file %s/%s\n", rname, tar_file_name);
+            }
+
+            if (o.pymoddir) {
+                string cwd = getcwd();
+                chdir(rname);
+                string temp = MakeRelease::getUniqueDirname();
+                doCmd("mkdir -p %s", temp);
+                if (tar_created) {
+                    doExtractTar("z", tar_file_name + " -C " + temp);
+                }
+                string dest = rname + DirSep + temp + DirSep + o.pymoddest;
+                doCmd("mkdir -p %s", dest);
+                doCmd("cp -r %s/%s %s", cwd, o.pymoddir, dest);
+                chdir(temp);
+                doCreateTar("z", rname + DirSep + tar_file_name, "*");
+                delTree(rname + DirSep + temp);
+                printf("Adding python module(s) to destination: %s\n", o.pymoddest);
+            }
+
+            # create release file
+            string release_file_namef = sprintf("%s/releases/%s.qrf", rname, ulabel);
+            createUserReleaseFile(release_file_namef, load_list);
+
+            if (o.comp && !o.sys) {
+                # save current working directory
+                #logDebug("rname: %y ut: %y\n", rname, tar_file_name);
+                chdir(dirname(rname));
+                # make compressed release tar.bz2; exclude backup files
+                string tar = label + ".tar.bz2";
+                doCreateTar("j", tar, "--exclude=\"*~\" " + label);
+                printf("create release archive: %s/%s\n", getcwd(), tar);
+            }
+
+            if (o.inst) {
+                doInstall(rname);
+            }
+        }
+
+        if (o.sys)
+            doSystem();
+
+        printf("done!\n");
+    }
+
+    private chdir(string name) {
+        logDebug("changing to CWD: %y", name);
+        if (Qore::chdir(name)) {
+            throw "CHDIR-ERROR", sprintf("%y: %s", name, strerror());
+        }
+    }
+
+    private doInstall(string rname) {
+        chdir(rname);
+
+        string opts;
+
+        if (o.verbose) {
+            opts += " -v";
+        }
+        if (o.full) {
+            opts += " -F";
+        }
+
+        # pass through oload opts, if any
+        foreach hash<auto> i in (o{OloadPassthruOpts}.pairIterator()) {
+            *string opt = (Opts{i.key} =~ x/^([a-z]),/i)[0];
+            if (exists opt) {
+                opt = " -" + opt;
+            } else {
+                opt = Opts{i.key};
+                opt =~ s/=.*//;
+                opt = " --" + opt;
+            }
+
+            if (exists i.value) {
+                map opts += sprintf("%s=%s", opt, $1), i.value;
+            } else {
+                opts += opt;
+            }
+        }
+
+        # process short values
+        foreach string v in (o.oload) {
+            (string opt, *string value) = (v =~ x/^([^=]+)(?:=(.*))?$/);
+            opt = " -" + opt;
+            if (exists value) {
+                opts += map sprintf("%s=%s", opt, $1), value;
+            } else {
+                opts += opt;
+            }
+        }
+
+        doCmd("sh ./install.sh" + opts);
+    }
+
+    private logDebug(string fmt) {
+        if (o.verbose > 1) {
+            vprintf(fmt + "\n", argv);
+        }
+    }
+
+    private doResources(list<hash<auto>> resource_list, string dir_name) {
+        hash<string, bool> dh;
+        foreach hash<auto> rh in (resource_list) {
+            string dir = dirname(rh.source);
+            string fn = basename(rh.source);
+
+            string trdir = dirname(rh.target);
+            string tdir = normalize_dir(trdir == "." ? dir_name : dir_name + DirSep + trdir);
+            if (!dh{tdir}) {
+                if (!is_dir(tdir)) {
+                    doCmd("mkdir -p %s", tdir);
+                }
+                dh{tdir} = True;
+            }
+
+            # include all files in the subdirectory matching the pattern
+            if (fn =~ /[\*\?]/) {
+                string dc = dirname(fn);
+                if (dc != ".") {
+                    fn = basename(fn);
+                    dir += DirSep + dc;
+                }
+                doGlob(dir, fn, tdir);
+            } else {
+                tdir += DirSep;
+                copyFiles(rh.source, tdir);
+            }
+        }
+    }
+
+    private doGlob(string dir, string fn, string tdir) {
+        foreach string fstr in (glob(dir + DirSep + fn)) {
+            # skip files ending in "~" as backup files
+            if (fstr =~ /~$/)
+                continue;
+            string type = hstat(fstr).type;
+            if (type == "DIRECTORY") {
+                doGlob(dir, fstr.substr(dir.size() + 1) + DirSep + basename(fn), tdir);
+                continue;
+            }
+            # skip special files, sockets, device files, etc
+            if (type != "REGULAR") {
+                continue;
+            }
+
+            string targ = tdir + DirSep;
+            *string dir_name = dirname(fn);
+            if (dir_name != ".") {
+                targ += dir_name + DirSep;
+                if (!is_dir(targ)) {
+                    doCmd("mkdir -p %s", targ);
+                }
+            }
+
+            copyFiles(fstr, targ);
+        }
+    }
+
+    private static releaseHeader(File f) {
+        f.printf("# automatically generated by %s on %y (%s@%s)\n", get_script_name(), now(), ENV.USER,
+            gethostname());
+    }
+
+    private createUserReleaseFile(string path, *list<string> load_list) {
+        # create release file
+        File f();
+        f.open2(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        MakeRelease::releaseHeader(f);
+
+        string root_dir = dirname(path);
+        if (root_dir == ".")
+            root_dir = "";
+
+        foreach string fn in (load_list ?? ulist) {
+            # check for known file extensions
+            *string ext = MakeRelease::getExt(fn);
+            if (!ext) {
+                # see if it's an executable
+%ifdef HAVE_IS_EXECUTABLE
+                if (!is_executable(fn))
+                    printf("warning: no extension in file '%s'...\n", fn);
+%endif
+            } else if (LoadFileTypes{ext}) {
+                f.printf("load %s\n", getLoadPath(fn, root_dir));
+            } else if (!ExtraFileTypes{ext}) {
+                printf("warning: unknown extension '%s' in file '%s'...\n", ext, fn);
+            }
+        }
+
+        # now add user sql files
+        foreach string fn in (o.usql) {
+            # check for known file extensions
+            *string ext = MakeRelease::getExt(fn);
+
+            if (ext !~ /sql$/i) {
+                printf("warning: user SQL file extension is not 'sql': %s\n", fn);
+            }
+
+            f.printf("omquser-exec-sql %s\n", getLoadPath(fn, root_dir));
+        }
+
+        if (o.ref) {
+            f.printf("refresh-recursive\n");
+        } else if (o.rcompat) {
+            f.printf("refresh-all\n");
+        }
+
+        f.close();
+
+        printf("created user release file %s\n", path);
+    }
+
+    string getLoadPath(string fn, string root_dir) {
+        if (fn.equalPartialPath(root_dir))
+            fn = fn.substr(root_dir.size());
+        if (o.pref)
+            return o.pref + DirSep + fn;
+        if (o.padd)
+            return o.padd + DirSep + fn;
+        return fn;
+    }
+
+    static *string getExt(string fn) {
+        return (fn =~ x/.*\.(.*)$/)[0];
+    }
+
+    *string getLoadDatamodel(string qorusSrcDir) {
+        # trim(`cat ../lib/qorus-version.ql|grep "const load_datamodel"|cut -f2 -d\"`);
+        ReadOnlyFile f(qorusSrcDir + "/lib/qorus-version.ql", "UTF-8");
+        *string line = f.readLine(False);
+        while (line != NOTHING || line == "") {
+            if (line.find("const load_datamodel") != -1) {
+                int start = line.find("\"") + 1;
+                int end = line.find("\"", start);
+                return line.substr(start, end-start);
+            }
+            line = f.readLine(False);
+        }
+    }
+
+    private doSystem() {
+        chdir(sdir);
+
+        #printf("ilist: %y\n", ilist);
+        if (ilist) {
+            if (!o.stage) {
+                string noarch_tar = sprintf("%s-noarch.tar.gz", label);
+
+                doCreateTar("z", rname + DirSep + noarch_tar, makeList(ilist));
+                printf("created arch-independent tar file %s/%s\n", rname, noarch_tar);
+            }
+
+            File f;
+            foreach string fn in (ilist) {
+                if (fn =~ /^system\//) {
+                    if (!f) {
+                        # create release file
+                        string rf = sprintf("%s/releases/%s.qrf", rname, label);
+                        f = new File();
+                        f.open(rf, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+                        MakeRelease::releaseHeader(f);
+%ifndef NoQCC
+                        f.printf("verify-load-schema %s\n", OMQ::load_datamodel);
+%else
+                        if (o.qorusdir) {
+                            f.printf("verify-load-schema %s\n", getLoadDatamodel(o.qorusdir));
+                        }
+                        else {
+                            printf("ERROR: no way to find out loadDatamodel, use the --qorusdir option\n");
+                            exit(1);
+                        }
+%endif
+                        printf("created system service release file %s\n", rf);
+                    }
+                    f.printf("load %s\n", fn);
+                }
+            }
+        }
+
+        if (!o.stage && slist) {
+            string bin = getBinaryName();
+            string bin_tar = sprintf("%s-%s-binary.tar.gz", label, bin);
+            doCreateTar("z", rname + DirSep + bin_tar, makeList(slist));
+            printf("created arch-dependent tar file %s/%s\n", rname, bin_tar);
+        }
+    }
+
+    private string getBinaryName() {
+        hash<auto> info = get_qore_library_info();
+        string str;
+        if (info.PlatformOS === "Linux")
+            str = "Linux";
+        else if (info.PlatformOS == "SunOS") {
+            if (info.BuildHost =~ /5\.10/)
+                str = "Solaris10";
+            else if (info.BuildHost =~ /5\.8/)
+                str = "Solaris8";
+        } else if (info.PlatformOS == "Darwin")
+            str = "Darwin";
+
+        if (!str)
+            throw "PLATFORM-ERROR", sprintf("don't know how to build release for platform: %s buildhost: %s",
+                info.PlatformOS, info.BuildHost);
+
+        return str + "-" + info.PlatformCPU;
+    }
+
+    private static mkdir(string dir, string msg) {
+        if (mkdir(dir))
+            MakeRelease::error("mkdir(%s) failed: %s", dir, strerror(errno()));
+        printf("created %s '%s'\n", msg, dir);
+    }
+}

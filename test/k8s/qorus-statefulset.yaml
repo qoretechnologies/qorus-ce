@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: qorus
+  labels:
+    app: qorus
+    qorus: master
+spec:
+  serviceName: "qorus"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qorus
+      qorus: master
+  template:
+    metadata:
+      labels:
+        app: qorus
+        qorus: master
+    spec:
+      containers:
+        - name: qorus
+          image: __IMAGE_TAG__
+          imagePullPolicy: IfNotPresent
+          resources:
+            limits:
+              cpu: "16000m"
+              memory: 16Gi
+            requests:
+              cpu: "100m"
+              memory: 200Mi
+          env:
+            - name: QORUS_TZ
+              value: "Europe/Prague"
+            - name: QORUS_NO_INIT
+              value: "1"
+            - name: QORUS_INDEPENDENT_MODE
+              value: "1"
+            - name: QORUS_DUMB_INIT
+              value: "0"
+          volumeMounts:
+            - name: qorus-test
+              mountPath: /opt/qorus/user
+              subPath: user
+            - name: qorus-test
+              mountPath: /opt/qorus/etc
+              subPath: etc
+            - name: qorus-test
+              mountPath: /opt/qorus/log
+              subPath: log
+            - name: qorus-test
+              mountPath: /opt/qorus/init
+              subPath: init
+      initContainers:
+        - name: qorus-init
+          image: __IMAGE_TAG__
+          resources:
+            limits:
+              cpu: "1000m"
+              memory: 1Gi
+            requests:
+              cpu: "200m"
+              memory: 512Mi
+          env:
+            - name: QORUS_TZ
+              value: "Europe/Prague"
+            - name: OMQ_DB_NAME
+              value: __DB_NAME__
+            - name: OMQ_DB_TYPE
+              value: __DB_TYPE__
+            - name: OMQ_DB_HOST
+              value: __DB_HOST__
+            - name: OMQ_DB_USER
+              value: __DB_USER__
+            - name: OMQ_DB_PASS
+              value: __DB_PASS__
+            - name: QORUS_INIT_ONLY
+              value: "1"
+          volumeMounts:
+            - name: qorus-test
+              mountPath: /opt/qorus/user
+              subPath: user
+            - name: qorus-test
+              mountPath: /opt/qorus/etc
+              subPath: etc
+            - name: qorus-test
+              mountPath: /opt/qorus/init
+              subPath: init
+      volumes:
+        - name: qorus-test
+          hostPath:
+            path: "/opt/qorus"
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"

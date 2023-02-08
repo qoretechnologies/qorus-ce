@@ -1,0 +1,45 @@
+# This is a generated file, don't edit!
+type: pipeline
+name: pipeline6
+desc: pipeline 6
+children:
+  - type: processor
+    name: Issue3485Processor1
+    pid: id1
+    config-items:
+      - name: pfx
+        value:
+            "prefix1"
+        parent:
+            interface-name: Issue3485Processor1
+            interface-type: class
+            interface-version: "1.0"
+      - name: crec
+        parent:
+            interface-name: Issue3485Processor1
+            interface-type: class
+            interface-version: "1.0"
+      - name: raise_error
+        parent:
+            interface-name: Issue3485Processor1
+            interface-type: class
+            interface-version: "1.0"
+    children:
+      - type: processor
+        name: Issue3485Processor2
+        pid: id2
+        children:
+          - type: processor
+            name: Issue3485Processor3
+            pid: id3
+groups:
+  - regression
+  - test
+input-provider:
+    name: omquser
+    path: /pipe_table_1
+    type: datasource
+input-provider-options:
+    input_provider_search:
+        type: hash
+        value: 'col_1: 2'

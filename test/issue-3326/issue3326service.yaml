@@ -1,0 +1,23 @@
+type: service
+name: issue3326service
+version: "1.0"
+desc: Test service written using YAML format
+author:
+  - Qore Technologies, s.r.o.
+remote: true
+autostart: true
+base-class-name: QorusService
+class-name: issue3326service
+methods:
+  - name: init
+    desc: init method
+code: issue3326service.qsd
+config-items:
+  - name: issue-3326-test-config-item-5
+    type: "*hash"
+    default_value:
+      test_key_1: test_1
+      test_key_2: test_2
+    description: test config item of type *hash
+    config_group: Test Group
+    value: null

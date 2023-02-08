@@ -1,0 +1,139 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+%requires Schema
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    public {
+        const MyOpts = Opts + {
+            "keep": "k,keep-objects",
+        };
+
+        # option column
+        const OptionColumn = 27;
+    }
+
+    constructor(): Test("Issue 3967", "1.0", \ARGV, MyOpts) {
+        QorusClient::initFast();
+        addTestCase("main", \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        if (!checkDatasource()) {
+            testSkip("missing omquser datasource");
+        }
+
+        TestSchema schema(omqclient.getDatasource("omquser"));
+        schema.align(False, m_options.verbose - 3);
+        on_exit if (!m_options.keep) {
+            schema.drop(False, m_options.verbose - 3);
+        }
+
+        Table t(omquser, "test_table_1");
+
+        hash<auto> h = qrest.put("jobs/issue-3967-create/run");
+        assertEq(OMQ::StatComplete, h.status);
+        h = qrest.get("jobresults/" + h.job_instanceid);
+        assertEq(({
+                "col_1": 4,
+                "col_2": "number 4",
+            }, {
+                "col_1": 5,
+                "col_2": "number 5",
+            }
+        ), h.info."*");
+
+        assertEq((
+            {
+                "col_1": 1,
+                "col_2": "number 1",
+            }, {
+                "col_1": 2,
+                "col_2": "number 2",
+            }, {
+                "col_1": 4,
+                "col_2": "number 4",
+            }, {
+                "col_1": 5,
+                "col_2": "number 5",
+            },
+        ), t.selectRows({"orderby": "col_1"}));
+    }
+
+    private usageIntern() {
+        TestReporter::usageIntern(OptionColumn);
+        printOption("-k,--keep-objects", "keep DB objects created instead of deleting", OptionColumn);
+    }
+
+    private bool checkDatasource() {
+        # load schema and add test if the omquser datasource exists
+        try {
+            qrest.get("remote/datasources/omquser/up");
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REST-CLASS-ERROR" && ex.err != "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                rethrow;
+            }
+            printf("no omquser datasource; skipping tests\n");
+        }
+        return False;
+    }
+}
+
+class TestSchema inherits AbstractSchema {
+    public {
+        const SchemaName = "TestSchema";
+        const SchemaVersion = "1.0";
+
+        const T_Test_Table_1 = {
+            "columns": {
+                "col_1": c_number(15, True, "PK column"),
+                "col_2": c_varchar(15, True, "string column"),
+            },
+            "primary_key": {"name": "pk_pipe_table_1", "columns": "col_1"},
+        };
+
+        const Tables = {
+            "test_table_1": T_Test_Table_1,
+        };
+
+        const SRD_Test_Table_1 = (
+            ("col_1", "col_2"),
+            (1, "number 1"),
+            (2, "number 2"),
+        );
+
+        const StrictReferenceData = {
+            "test_table_1": SRD_Test_Table_1,
+        };
+    }
+
+    constructor(AbstractDatasource ds, *string dts, *string its) : AbstractSchema(ds, dts, its) {
+    }
+
+    private string getNameImpl() {
+        return SchemaName;
+    }
+
+    private string getVersionImpl() {
+        return SchemaVersion;
+    }
+
+    private *hash<auto> getTablesImpl() {
+        return Tables;
+    }
+
+    private hash<auto> getStrictReferenceDataHashImpl() {
+        return StrictReferenceData;
+    }
+}

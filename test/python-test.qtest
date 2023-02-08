@@ -1,0 +1,242 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+%requires WebSocketClient
+
+%exec-class PythonTest
+
+class PythonTest inherits Test {
+    public {
+        const WF_NAME = "PYTHON-SIMPLE-TEST";
+        const SVC_NAME = "python-simple-test";
+        const JOB_NAME = "python-simple-test";
+
+        const RestValues = (
+            "OK",
+            1,
+            2.0,
+            {"a": 1, "b": "two"},
+            (1, "two", 3.0, True),
+        );
+
+        const TestFtpUser = "ftp-" + get_random_string();
+        const TestFtpPass = get_random_string(50);
+    }
+
+    constructor(): Test("PythonTest", "1.0", \ARGV, Opts) {
+        QorusClient::init2();
+
+        addTestCase("pythonJavaTest", \pythonJavaTest());
+        addTestCase("ftpTest", \ftpTest());
+        addTestCase("restTest", \restTest());
+        addTestCase("webSocketTest", \webSocketTest());
+        addTestCase("wfTest", \wfTest());
+        addTestCase("svcTest", \svcTest());
+        addTestCase("jobTest", \jobTest());
+        set_return_value(main());
+    }
+
+    private pythonJavaTest() {
+        on_exit {
+            qrest.put("services/python-java-test/unload");
+            qrest.put("services/java-python-test/unload");
+            qrest.put("services/python-qore-test/unload");
+            qrest.put("services/java-qore-test/unload");
+            qrest.put("services/qore-python-test/unload");
+            qrest.put("services/qore-java-test/unload");
+        }
+        assertEq("java-test", qrest.put("services/python-java-test/test/call"));
+        assertEq("python-test", qrest.put("services/java-python-test/test/call"));
+        assertEq("qore-test", qrest.put("services/python-qore-test/test/call"));
+        assertEq("qore-test", qrest.put("services/java-qore-test/test/call"));
+        assertEq("python-test", qrest.put("services/qore-python-test/test/call"));
+        assertEq("java-test", qrest.put("services/qore-java-test/test/call"));
+    }
+
+    private ftpTest() {
+        hash<auto> info = qrest.get("services/python-ftp-test");
+        if (info.remote) {
+            qrest.put("services/python-ftp-test/setRemote", {"remote": False});
+        }
+        doFtpTest();
+        qrest.put("services/python-ftp-test/setRemote", {"remote": True});
+        on_exit {
+            qrest.put("services/python-ftp-test/setRemote", {"remote": False});
+        }
+        doFtpTest();
+    }
+
+    private doFtpTest() {
+        qrest.put("services/python-ftp-test/load");
+        int port = qrest.put("services/python-ftp-test/port/call");
+        string url = sprintf("ftp://%s:%s@localhost:%d", TestFtpUser, TestFtpPass, port);
+        if (m_options.verbose > 2) {
+            printf("using FTP URL: %y\n", url);
+        }
+        FtpClient fc();
+        fc.setURL(url);
+        fc.connect();
+
+        string dir = get_random_string();
+        fc.mkdir(dir);
+        fc.cwd(dir);
+        string rand = get_random_string(256);
+        string fn = get_random_string() + ".txt";
+        fc.put(new StringInputStream(rand), fn);
+        StringOutputStream os();
+        fc.get(fn + ".tmp", os);
+        assertEq(rand, os.getData());
+    }
+
+    private wfTest() {
+        hash<auto> info = qrest.get("workflows/" + WF_NAME);
+        if (!info.enabled) {
+            qrest.put("workflows/" + WF_NAME + "/enable");
+        }
+        if (info.remote) {
+            qrest.put("workflows/" + WF_NAME + "/setRemote", {"remote": False});
+        }
+        doWfTest();
+        qrest.put("workflows/" + WF_NAME + "/setRemote", {"remote": True});
+        on_exit {
+            qrest.put("workflows/" + WF_NAME + "/setRemote", {"remote": False});
+        }
+        doWfTest();
+    }
+
+    private svcTest() {
+        hash<auto> info = qrest.get("services/" + SVC_NAME);
+        if (!info.enabled) {
+            qrest.put("services/" + SVC_NAME + "/enable");
+        }
+        if (info.remote) {
+            qrest.put("services/" + SVC_NAME + "/setRemote", {"remote": False});
+        }
+        doSvcTest();
+        qrest.put("services/" + SVC_NAME + "/setRemote", {"remote": True});
+        on_exit {
+            qrest.put("services/" + SVC_NAME + "/setRemote", {"remote": False});
+        }
+        doSvcTest();
+    }
+
+    private jobTest() {
+        hash<auto> info = qrest.get("jobs/" + JOB_NAME);
+        if (!info.enabled) {
+            qrest.put("jobs/" + JOB_NAME + "/enable");
+        }
+        if (info.remote) {
+            qrest.put("jobs/" + JOB_NAME + "/setRemote", {"remote": False});
+        }
+        doJobTest();
+        qrest.put("jobs/" + JOB_NAME + "/setRemote", {"remote": True});
+        on_exit {
+            qrest.put("jobs/" + JOB_NAME + "/setRemote", {"remote": False});
+        }
+        doJobTest();
+    }
+
+    private doWfTest() {
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        hash<auto> h = qrest.post("workflows/" + WF_NAME + "/execSynchronous", oh);
+        #printf("h: %y\n", h);
+        assertEq(OMQ::StatComplete, h.status);
+    }
+
+    private doSvcTest() {
+        string str = get_random_string();
+        auto v = qrest.put("services/" + SVC_NAME + "/test/call", {"args": str});
+        assertEq(str, v);
+    }
+
+    private doJobTest() {
+        hash<auto> info = qrest.put("jobs/" + JOB_NAME + "/run");
+        assertEq(OMQ::StatComplete, info.status);
+        info = qrest.put("jobs/python-object-cache-test/run");
+        assertEq(OMQ::StatComplete, info.status);
+    }
+
+    private restTest() {
+        hash<auto> info = qrest.get("services/python-rest-test");
+        if (info.remote) {
+            qrest.put("services/python-rest-test/setRemote", {"remote": False});
+        }
+        doRestTest();
+        qrest.put("services/python-rest-test/setRemote", {"remote": True});
+        on_exit {
+            qrest.put("services/python-rest-test/setRemote", {"remote": False});
+        }
+        DataStreamClient rest({
+            "url": UserApi::qorusGetLocalUrl(),
+        });
+        assertEq("echo", rest.get("/python-rest-test/subclass", {"echo": "echo"}).body);
+    }
+
+    private webSocketTest() {
+        # test websocket server
+        qrest.put("services/python-websocket-test/setRemote", {"remote": False});
+        qrest.put("services/python-websocket-test/load");
+        on_exit qrest.put("services/python-websocket-test/unload");
+        doWebSocketTest();
+        qrest.put("services/python-websocket-test/unload");
+        qrest.put("services/python-websocket-test/setRemote", {"remote": True});
+        qrest.put("services/python-websocket-test/load");
+        doWebSocketTest();
+    }
+
+    private doRestTest() {
+        qrest.put("services/python-rest-test/load");
+        DataStreamClient rest({
+            "url": UserApi::qorusGetLocalUrl(),
+        });
+        map assertEq($1, rest.put("python-rest-test", {"arg": $1}).body.arg, sprintf("%y", $1)), RestValues;
+    }
+
+    private doWebSocketTest() {
+        # wait for WS server to be in place
+        date start = now_us();
+        while (True) {
+            hash<auto> info = qrest.get("services/python-websocket-test");
+            if (info.resources) {
+                if (m_options.verbose > 2) {
+                    printf("WebSocket resource in place: %y\n", info.resources);
+                }
+                break;
+            }
+            date now = now_us();
+            date delta = now - start;
+            if (delta > 10s) {
+                printf("timeout waiting for web socket resource on service: %y\n", delta);
+            }
+            if (delta > 600s) {
+                throw "ERROR", sprintf("timeout waiting for web socket resource on service: %y", delta);
+            }
+        }
+
+        string url = UserApi::qorusGetLocalUrl() + "/my-websocket";
+        url =~ s/^http/ws/;
+
+        Counter cnt(1);
+        WebSocketClient ws(sub (data msg) {
+            if (m_options.verbose > 2) {
+                printf("ws msg: %y\n", msg);
+            }
+            if (cnt.getCount()) {
+                cnt.dec();
+            }
+        }, {
+            "url": url,
+        });
+        ws.connect();
+        assertEq(0, cnt.waitForZero(20s));
+    }
+}

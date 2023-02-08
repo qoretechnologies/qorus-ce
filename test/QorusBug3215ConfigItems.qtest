@@ -1,0 +1,98 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3215" + Qore::DirSep;
+        string originalInterfacesDir = srcDir + Qore::DirSep + "original_interfaces";
+        string changedInterfacesDir = srcDir + Qore::DirSep + "changed_interfaces";
+
+        const WorkflowName = "ISSUE-3215-WORKFLOW";
+        const StepName = "Issue3215Step";
+        const ServiceName = "issue-3215-service";
+        const JobName = "issue-3215-job";
+        const InterfacesToDelete = (
+            "workflow:" + WorkflowName + ":1.0",
+            "class:" + StepName + ":1.0",
+            "service:" + ServiceName + ":1.0",
+            "job:" + JobName + ":1.0",
+        );
+    }
+
+    constructor(): Test("QorusBug3215ConfigItems", OMQ::version) {
+        QorusClient::init2();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private setValue(auto set_value, string interface_type, string interface_name, string item_name, bool use_number_eq = False) {
+        hash value = {"value": set_value};
+        auto rest_response = qrest.put(interface_type + "s/" + interface_name + "/config/" + item_name, value).value;
+        if (use_number_eq) {
+            assertNumberEq(value.value, rest_response);
+        } else {
+            assertEq(value.value, rest_response);
+        }
+    }
+
+    private mainTest() {
+        printf("------START oload original interfaces------\n");
+        hash result = OloadTestHelper::oloadFiles(originalInterfacesDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload original interfaces-------\n");
+
+        printf("------START oload changed interfaces-------\n");
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir);
+        assertEq(0, result.exit_code);
+        printf("-------END oload changed interfaces--------\n");
+
+        printf("---------START delete interfaces-----------\n");
+        result = OloadTestHelper::deleteInterfaces(InterfacesToDelete, True);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+
+        printf("------START oload original interfaces------\n");
+        result = OloadTestHelper::oloadFiles(originalInterfacesDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload original interfaces-------\n");
+
+        setValue(NOTHING, "job", JobName, "issue-3215-job-config-5");
+        setValue("A", "job", JobName, "issue-3215-job-config-6");
+        setValue(3, "service", ServiceName, "issue-3215-service-config-6");
+        bool use_number_eq = (ENV.MACHTYPE ?? "").find("alpine") > -1 && ENV.ORACLE_PWD;
+        setValue(2.2, "workflow", WorkflowName + "/stepinfo/" + StepName, "issue-3215-step-config-6", use_number_eq);
+
+        printf("------START oload changed interfaces-------\n");
+        # Should not be updated (interfaces with defined values of config items)
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir, False, ".*.qjob");
+        assertEq(1, result.exit_code);
+
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir, False, ".*.qsd");
+        assertEq(1, result.exit_code);
+
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir, False, "(.*.qclass|.*.qwf)");
+        assertEq(1, result.exit_code);
+
+        # Shoud work with -A flag
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload changed interfaces--------\n");
+
+        printf("---------START delete interfaces-----------\n");
+        result = OloadTestHelper::deleteInterfaces(InterfacesToDelete, True);
+        assertEq(0, result.exit_code);
+        printf("----------END delete interfaces------------\n");
+    }
+}

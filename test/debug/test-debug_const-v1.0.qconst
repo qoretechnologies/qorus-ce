@@ -1,0 +1,15 @@
+# -*- mode: qore; indent-tabs-mode nil -*-
+
+# name: test-debug_const
+# version: 1.0
+# desc: defines constants
+namespace TEST {
+    const HELLO_WORLD = 'Hello world';
+}
+
+namespace ERROR {
+    const PROPERTY_ERROR = "PROPERTY-ERROR";
+    const BUSINESS_ERROR = "BUSINESS-ERROR";
+    const FILE_OPEN_ERROR = "FILE-OPEN-ERROR";
+}
+# END

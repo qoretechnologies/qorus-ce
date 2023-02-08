@@ -1,0 +1,193 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#! Qore QorusApiDataProvider module definition
+
+/*  QorusApiDataProvider.qm Copyright 2019 - 2023 Qore Technologies, s.r.o.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+# minimum required Qore version
+%requires qore >= 1.0
+# assume local scope for variables, do not use "$" signs
+%new-style
+# require type definitions everywhere
+%require-types
+# strict argument handling
+%strict-args
+# enable all warnings
+%enable-all-warnings
+
+%requires(reexport) DataProvider
+%requires(reexport) SqlUtil
+%requires(reexport) MapperUtil
+%ifndef HasQorusLocalRestHelper
+%requires QorusClientBase
+%endif
+%requires reflection
+
+module QorusApiDataProvider {
+    version = "1.2";
+    desc = "user module providing a data provider API for the Qorus API";
+    author = "David Nichols <david.nichols@qoretechnologies.com>";
+    url = "http://qore.org";
+    license = "MIT";
+    init = sub () {
+        # register the data provider factory
+        DataProvider::registerFactory(new QorusApiDataProviderFactory());
+
+        # register types
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/block-order/request",
+            new QorusApiBlockOrderRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/block-order/response",
+            new QorusApiBlockOrderResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/cancel-order/request",
+            new QorusApiCancelOrderRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/cancel-order/response",
+            new QorusApiCancelOrderResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/create-order/request",
+            new QorusApiCreateOrderDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/create-order/response",
+            new QorusApiCreateOrderResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/get-order-info/request",
+            new QorusApiGetOrderInfoRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/get-order-info/response",
+            new QorusApiGetOrderInfoResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/retry-order/request",
+            new QorusApiRetryOrderRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/retry-order/response",
+            new QorusApiRetryOrderResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/unblock-order/request",
+            new QorusApiUnblockOrderRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/unblock-order/response",
+            new QorusApiUnblockOrderResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/uncancel-order/request",
+            new QorusApiUncancelOrderRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/uncancel-order/response",
+            new QorusApiUncancelOrderResponseDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/disable/request",
+            new QorusApiEnableWorkflowRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/disable/response",
+            new QorusApiEnableWorkflowResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/enable/request",
+            new QorusApiEnableWorkflowRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/enable/response",
+            new QorusApiEnableWorkflowResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/reset/request",
+            new QorusApiResetWorkflowRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/reset/response",
+            new QorusApiResetWorkflowResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/set-autostart/request",
+            new QorusApiSetWorkflowAutostartRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/set-autostart/response",
+            new QorusApiSetWorkflowAutostartResponseDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/implicit-set-autostart/request",
+            new QorusApiSetImplicitWorkflowAutostartRequestDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/services/disable/request",
+            new QorusApiEnableServiceRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/disable/response",
+            new QorusApiEnableServiceResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/enable/request",
+            new QorusApiEnableServiceRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/enable/response",
+            new QorusApiEnableServiceResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/load/request",
+            new QorusApiLoadServiceRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/load/response",
+            new QorusApiLoadServiceResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/reset/request",
+            new QorusApiResetServiceRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/reset/response",
+            new QorusApiResetServiceResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/set-autostart/request",
+            new QorusApiSetServiceAutostartRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/set-autostart/response",
+            new QorusApiSetServiceAutostartResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/unload/request",
+            new QorusApiUnloadServiceRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/unload/response",
+            new QorusApiUnloadServiceResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/call-method/request",
+            new QorusApiCallServiceMethodRequestDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/services/implicit-set-autostart/request",
+            new QorusApiSetImplicitServiceAutostartRequestDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/disable/request",
+            new QorusApiEnableJobRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/disable/response",
+            new QorusApiEnableJobResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/enable/request",
+            new QorusApiEnableJobRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/enable/response",
+            new QorusApiEnableJobResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/reset/request",
+            new QorusApiResetJobRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/reset/response",
+            new QorusApiResetJobResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/set-active/request",
+            new QorusApiSetJobActiveRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/set-active/response",
+            new QorusApiSetJobActiveResponseDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/set-inactive/request",
+            new QorusApiSetJobInactiveRequestDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/set-inactive/response",
+            new QorusApiSetJobInactiveResponseDataType());
+
+        DataProvider::registerType("qoretechnologies/qorus-api/workflows/context",
+            new QorusWorkflowContextDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/services/context",
+            new QorusServiceContextDataType());
+        DataProvider::registerType("qoretechnologies/qorus-api/jobs/context", new QorusJobContextDataType());
+
+        # initialize the client if running in the client
+%ifndef HasQorusLocalRestHelper
+        UserApi::clientInit();
+%endif
+    };
+}
+
+/** @page qorusapidataproviderintro_module QorusApiDataProvider Module
+
+    @tableofcontents
+
+    @section qorusapidataproviderintro Introduction to the QorusApiDataProvider Module
+
+    The %QorusApiDataProvider module provides a data provider API for the Qorus API
+
+    The following classes are provided by this module:
+    - @ref QorusApiDataProvider::QorusApiDataProvider "QorusApiDataProvider"
+    - @ref QorusApiDataProvider::QorusApiDataProviderFactory "QorusApiDataProviderFactory"
+    - @ref QorusApiDataProvider::QorusApiCreateOrderDataType "QorusApiCreateOrderDataType"
+    - @ref QorusApiDataProvider::QorusApiCreateOrderResponseDataType "QorusApiCreateOrderResponseDataType"
+
+    @section qorusapidataprovider_relnotes Release Notes
+
+    @subsection qorusapidataprovider_v1_2 QorusApiDataProvider v1.2
+    - added the \c util API group and updated all APIs to use \c UserApi calls
+
+    @subsection qorusapidataprovider_v1_1 QorusApiDataProvider v1.1
+    - initial release of the module
+*/
+
+#! contains all public definitions in the QorusApiDataProvider module
+public namespace QorusApiDataProvider {
+}

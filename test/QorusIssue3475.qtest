@@ -1,0 +1,196 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%requires SoapClient
+
+%exec-class Issue3475
+
+class Issue3475 inherits QorusServiceTest {
+    private {
+        const SoapServiceName = "simple";
+        const RestServiceName = "rest-test";
+    }
+
+    constructor() : QorusServiceTest(SoapServiceName, "1.0", \ARGV, Opts) {
+        addTestCase("soapTest", \soapTest());
+        addTestCase("restTest", \restTest());
+        set_return_value(main());
+    }
+
+    private soapTest() {
+        hash<auto> info = qrest.get("services/" + SoapServiceName);
+        if (!info.remote) {
+            qrest.put("services/" + SoapServiceName + "/setRemote", {"remote": True});
+        }
+        if (!info.enabled) {
+            qrest.put("services/" + SoapServiceName + "/enable");
+        }
+        if (!info.autostart) {
+            qrest.put("services/" + SoapServiceName + "/setAutostart", {"autostart": True});
+        }
+        on_exit {
+            qrest.put("services/" + SoapServiceName + "/setAutostart", {"autostart": False});
+        }
+        if (!info.status == "loaded") {
+            qrest.put("services/" + SoapServiceName + "/load");
+        }
+        on_exit {
+            qrest.put("services/" + RestServiceName + "/unload");
+        }
+
+        # get current service info
+        waitForServiceNotPid(-1, "simple");
+
+        # get new process info
+        info = qrest.get("services/" + SoapServiceName);
+        on_exit {
+            qrest.put("services/" + SoapServiceName + "/setAutostart", {"autostart": False});
+            qrest.put("services/" + SoapServiceName + "/setRemote", {"remote": False});
+            qrest.put("services/" + SoapServiceName + "/unload");
+        }
+
+        string url = UserApi::qorusGetLocalUrl();
+        string wsdl = url + "/SOAP/simple_test?wsdl";
+
+        # create the SoapClient object
+        SoapClient sc({
+            "wsdl": wsdl,
+            "url": url + "/SOAP/simple_test",
+        });
+        assertEq(99.9, sc.call("getCompanyInfo", {"body": {"tickerSymbol": "QORE"}}).body.result);
+
+        system("qctl kill " + info.processes[0].id);
+
+        #printf("info: %N\n", info);
+        # wait for service to be restarted
+        waitForServiceNotPid(info.processes[0].pid, "simple");
+
+        date max_time = now_us() + 10s;
+        while (True) {
+            try {
+                assertEq(99.9, sc.call("getCompanyInfo", {"body": {"tickerSymbol": "QORE"}}).body.result);
+                break;
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "DESERIALIZATION-ERROR"
+                    || ex.err == "CLIENT-DEAD" || ex.err == "CLIENT-TERMINATED" || ex.err == "CLIENT-ABORTED") {
+                    if (now_us() >= max_time) {
+                        rethrow;
+                    }
+                    usleep(250ms);
+                    continue;
+                }
+            }
+        }
+    }
+
+    private restTest() {
+        hash<auto> info = qrest.get("services/" + RestServiceName);
+        if (!info.remote) {
+            qrest.put("services/" + RestServiceName + "/setRemote", {"remote": True});
+        }
+        if (!info.enabled) {
+            qrest.put("services/" + RestServiceName + "/enable");
+        }
+        if (!info.autostart) {
+            qrest.put("services/" + RestServiceName + "/setAutostart", {"autostart": True});
+        }
+        on_exit {
+            qrest.put("services/" + RestServiceName + "/setAutostart", {"autostart": False});
+        }
+        if (!info.status == "loaded") {
+            qrest.put("services/" + RestServiceName + "/load");
+        }
+        on_exit {
+            qrest.put("services/" + RestServiceName + "/unload");
+        }
+
+        # get current service info
+        waitForServiceNotPid(-1, "rest-test");
+
+        # get new process info
+        info = qrest.get("services/" + RestServiceName);
+        on_exit {
+            qrest.put("services/" + RestServiceName + "/setAutostart", {"autostart": False});
+            qrest.put("services/" + RestServiceName + "/setRemote", {"remote": False});
+            qrest.put("services/" + RestServiceName + "/unload");
+        }
+
+        DataStreamClient rest({
+            "url": UserApi::qorusGetLocalUrl(),
+        });
+        assertEq("OK", rest.get("rest-test/test").body.info);
+
+        system("qctl kill " + info.processes[0].id);
+
+        #printf("info: %N\n", info);
+        # wait for service to be restarted
+        waitForServiceNotPid(info.processes[0].pid, "rest-test", "http-global-1");
+
+        date max_time = now_us() + 10s;
+        while (True) {
+            try {
+                assertEq("OK", rest.get("rest-test/test").body.info);
+                break;
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "DESERIALIZATION-ERROR" || ex.err == "SOCKET-HTTP-ERROR"
+                    || ex.err == "CLIENT-DEAD" || ex.err == "CLIENT-TERMINATED" || ex.err == "CLIENT-ABORTED") {
+                    if (now_us() >= max_time) {
+                        rethrow;
+                    }
+                    usleep(250ms);
+                    continue;
+                }
+                # if we have a timeout in the REST request, it will cause the test to fail
+                printf("ERROR: %s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                system("qctl threads qorus-core");
+                system("qrest system/debug/services");
+                rethrow;
+            }
+        }
+    }
+
+    private string waitForServiceNotPid(int pid, string service, *string resource, timeout max_wait = 10s) {
+        date start = now_us();
+        date timeout = now_us() + max_wait;
+        while (True) {
+            *hash<auto> sh;
+            *hash<auto> info;
+            try {
+                sh = qrest.get("services/" + service, NOTHING, \info).body;
+            } catch (hash<ExceptionInfo> ex) {
+                # 404 Not Found = no process; ignore
+                if (info."response-headers".status_code != 404) {
+                    rethrow;
+                }
+            }
+            *hash<auto> proc_info = sh.processes[0];
+            if (proc_info && proc_info.pid != pid) {
+                bool ok = True;
+                if (!sh.resources.size()) {
+                    ok = False;
+                }
+                if (ok) {
+                    if (m_options.verbose > 2) {
+                        printf("service %y restarted with PID %d; continuing; elapsed time: %y / max: %y\n", service,
+                            proc_info.pid, now_us() - start, milliseconds(max_wait));
+                    }
+                    return sh.resources.firstKey();
+                }
+            }
+            if (now_us() > timeout) {
+                throw "PROCESS-TIMEOUT-ERROR", sprintf("service %y did not get a new PID (current %y) in the timeout "
+                    "period (info: %y); elapsed time: %y / max: %y", service, proc_info.pid, proc_info,
+                    now_us() - start, milliseconds(max_wait));
+            }
+            # sleep for 1/4 of a second and check again
+            usleep(250ms);
+        }
+    }
+}

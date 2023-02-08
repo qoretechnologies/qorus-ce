@@ -1,0 +1,12 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3735Step inherits QorusNormalStep {
+    primary() {
+        hash<auto> sd = getStaticData();
+        updateDynamicOrderData(sd.wfiid, sd.dd);
+        updateDynamicOrderDataPath(sd.wfiid, sd.path, sd.value);
+    }
+}

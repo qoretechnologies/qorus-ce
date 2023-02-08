@@ -1,0 +1,8 @@
+type: class
+name: MapperProviderTest
+version: "1.0"
+desc: Qore mapper / provider test class
+author:
+  - Qore Technologies, s.r.o.
+code: MapperProviderTest-v1.0.qclass
+class-name: MapperProviderTest

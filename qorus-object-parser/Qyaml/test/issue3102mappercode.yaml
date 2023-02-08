@@ -1,0 +1,15 @@
+type: mapper-code
+version: "1.0"
+desc: mapper code
+name: issue3102mappercode
+class-name: issue3102mappercode
+author:
+  - Qore Technologies, s.r.o.
+code: issue3102mappercode.qfd
+methods:
+  - name: getMapperField
+    desc: test method 1
+  - name: getOutput4
+    desc: test method 2
+  - name: getValue
+    desc: test method 3

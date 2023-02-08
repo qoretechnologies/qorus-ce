@@ -1,0 +1,11 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+hashdecl Issue3537 {
+    int code = 0;
+}
+
+class Issue3537Shared {
+}

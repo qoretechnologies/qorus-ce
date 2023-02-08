@@ -1,0 +1,57 @@
+type: mapper
+mappertype: Mapper
+name: issue3102mapper
+version: "1.0"
+desc: mapper api test
+author:
+  - Qore Technologies, s.r.o.
+parse-options:
+  - PO_NEW_STYLE
+  - PO_REQUIRE_TYPES
+  - PO_STRICT_ARGS
+groups:
+  - issue3102group
+mapper-code:
+  - issue3102mappercode
+
+options:
+  input:
+    input-1:
+      desc: input 1
+    input-2: input 2
+    input-3: input 3
+  output:
+    output-1: output 1
+    output-2: output 2
+    output-3: output 3
+    output-4:
+      desc: output 4
+      maxlen: 43
+      type: string
+      mand: true
+    output-5:
+      desc: output 5
+    output-6:
+      desc: output 6
+    output-7: output 7
+  datasource: omq
+  table: test
+  select:
+    where:
+      name: asd
+    columns:
+      - input-1
+      - input-2
+
+fields:
+  output-1:
+    code: issue3102mappercode::getMapperField
+  output-2:
+    name: input-2
+  output-3: input-1
+  output-4:
+    sequence: test_seq
+  output-5:
+    constant: 123
+  output-6: input-1
+  output-7: input-3

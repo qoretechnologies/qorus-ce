@@ -1,0 +1,20 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# name: TestServiceClass
+# version: 1.0
+# desc: class-based test service
+# author: Qore Technologies, s.r.o.
+# lang: qore
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class TestServiceClass {
+    # name: base
+    # desc: base method provided in the TestServiceClass class
+    string base() {
+        return "base";
+    }
+}
+# END

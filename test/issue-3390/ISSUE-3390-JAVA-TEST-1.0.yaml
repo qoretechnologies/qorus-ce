@@ -1,0 +1,16 @@
+# This is a generated file, don't edit!
+type: workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+desc: "Issue 3390 Java test"
+groups:
+  - regression
+  - test
+name: ISSUE-3390-JAVA-TEST
+sla_threshold: 2
+steps:
+    [
+        "Issue3390TestStep:1.0"
+    ]
+version: "1.0"

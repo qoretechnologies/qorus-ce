@@ -1,0 +1,17 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - errors
+  name:
+    type: string
+    max-length: 160
+  desc:
+    type: string
+    max-length: 4000
+  errors:
+    type: list
+    element-type: error
+
+include-definitions:
+  - error_definition.yaml

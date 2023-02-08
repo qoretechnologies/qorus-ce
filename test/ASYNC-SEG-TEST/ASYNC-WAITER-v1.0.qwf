@@ -1,0 +1,23 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+$groups.regression.desc = "regression test group";
+
+const dummy_1 = (
+    "name": "waiter_dummy_1:1.0",
+    );
+
+$steps = (dummy_1);
+
+$workflows."ASYNC-WAITER"."1.0" = (
+    "desc"         : "asynchronous segment test workflow",
+    "author"       : "Qore Technologies, sro",
+    "steps"        : $steps,
+    "groups"       : ("test", "regression"),
+    "keylist"      : ("test"),
+    );

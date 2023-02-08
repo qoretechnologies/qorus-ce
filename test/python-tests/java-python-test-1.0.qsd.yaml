@@ -1,0 +1,25 @@
+# This is a generated file, don't edit!
+type: service
+name: java-python-test
+desc: test a Java service using a Python connector
+lang: java
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: JavaPythonTest
+classes:
+  - PythonConnectorTest
+groups:
+  - regression
+  - test
+version: '1.0'
+servicetype: USER
+code: java_python_test_1_0_service/JavaPythonTest.java
+class-connections:
+    Connection_1:
+      - class: PythonConnectorTest
+        connector: test
+        trigger: test
+methods:
+  - name: test
+    desc: test method

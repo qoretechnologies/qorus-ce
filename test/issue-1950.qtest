@@ -1,0 +1,302 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue1950
+
+class QorusIssue1950 inherits Test {
+    constructor() : Test("Issue1950Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        hash<auto> oh = {
+            "staticdata": {"a": "a"},
+            "scheduled": now() + 1D,
+        };
+
+        # in case we have an empty DB, we need to create the order first
+        if (!qrest.get("workflows/REGRESSION-TEST/orders?keyname=test;keyvalue=test1")) {
+            softint wfiid = UserApi::createOrder("REGRESSION-TEST", NOTHING, oh + {"orderkeys": {"test": "test1"}});
+            UserApi::cancelOrder(wfiid);
+            if (m_options.verbose > 2) {
+                printf("created and canceled wfiid %d with test key value\n", wfiid);
+            }
+        }
+
+        # test global unique keys
+        try {
+            # also test #3258
+            UserApi::createOrder("REGRESSION-TEST", NOTHING, oh + ("global_unique_key": ("test": "test1")));
+            assertEq(True, False);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "DUPLICATE-ORDER-KEY") {
+                printf("%s\n", get_exception_string(ex));
+            }
+            assertEq("DUPLICATE-ORDER-KEY", ex.err);
+            assertEq(Type::Int, ex.arg.workflow_instance_ids[0].type());
+        }
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(),
+            ("REGRESSION-TEST", NOTHING, oh + ("global_unique_key": ("test": "test1"))));
+        # test workflow (name) unique keys
+        try {
+            # also test #3258
+            UserApi::createOrder("REGRESSION-TEST", NOTHING, oh + {
+                "workflow_unique_key": {
+                    "test": "test1",
+                },
+            });
+            assertEq(True, False);
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("DUPLICATE-ORDER-KEY", ex.err);
+            assertEq(Type::Int, ex.arg.workflow_instance_ids[0].type());
+        }
+        # test workflow-specific unique keys
+        try {
+            # also test #3258
+            UserApi::createOrder("REGRESSION-TEST", NOTHING, oh + {
+                "workflow_specific_unique_key": {
+                    "test": "test1",
+                },
+            });
+            assertEq(True, False);
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("DUPLICATE-ORDER-KEY", ex.err);
+            assertEq(Type::Int, ex.arg.workflow_instance_ids[0].type());
+        }
+        # issue #2920: check that multiple keys can be handled
+        try {
+            # also test #3258
+            UserApi::createOrder("REGRESSION-TEST", NOTHING, oh + {
+                "workflow_specific_unique_key": {
+                    "test": "test1",
+                    "test-2299": "dummy-ignored",
+                },
+            });
+            assertEq(True, False);
+        } catch (hash<ExceptionInfo> ex) {
+            assertEq("DUPLICATE-ORDER-KEY", ex.err);
+            assertEq(Type::Int, ex.arg.workflow_instance_ids[0].type());
+        }
+
+        # get a random key value
+        string key1 = get_random_string(50);
+        softint wfiid = UserApi::createOrder("SIMPLETEST", NOTHING, oh + ("global_unique_key": ("key1": key1)));
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        hash kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key1, kh.key1);
+
+        string key2 = get_random_string(50);
+        wfiid = UserApi::createOrder("SIMPLETEST", NOTHING, oh + ("workflow_unique_key": ("key1": key2)));
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key2, kh.key1);
+
+        string key3 = get_random_string(50);
+        wfiid = UserApi::createOrder("SIMPLETEST", NOTHING, oh + ("workflow_specific_unique_key": ("key1": key3)));
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key3, kh.key1);
+
+        # test global unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key3))));
+        # test workflow (name) unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key3))));
+        # test workflow-specific unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createOrder(), ("SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key3))));
+
+        # test UserApi::createRemoteOrder() also if possible
+        # find a loopback remote connection
+        *string remote = getLoopback();
+        if (!remote) {
+            testSkip("no loopback connections for ping tests; skipping");
+            return;
+        }
+        if (m_options.verbose > 2) {
+            printf("using remote loopback connection %y\n", remote);
+        }
+
+        # test global unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", NOTHING,
+            oh + ("global_unique_key": ("test": "test1"))));
+        # test workflow (name) unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", NOTHING,
+            oh + ("workflow_unique_key": ("test": "test1"))));
+        # test workflow-specific unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("test": "test1"))));
+
+        # get a random key value
+        key1 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", NOTHING, oh + {
+            "global_unique_key": {
+                "key1": key1,
+            },
+        });
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key1, kh.key1);
+
+        key2 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", NOTHING, oh + {
+            "workflow_unique_key": {
+                "key1": key2,
+            }
+        });
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key2, kh.key1);
+
+        key3 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key3)));
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key3, kh.key1);
+
+        # test global unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("global_unique_key": ("key1": key3))));
+        # test workflow (name) unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_unique_key": ("key1": key3))));
+        # test workflow-specific unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", NOTHING,
+            oh + ("workflow_specific_unique_key": ("key1": key3))));
+
+        # test again with a specific workflow version
+        string version = qrest.get("workflows/REGRESSION-TEST/version");
+
+        # make sure we fail with the wrong version; here we should get a 404 Not Found error response
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", \UserApi::createRemoteOrder(),
+            (remote, "REGRESSION-TEST", "BAD-VERSION", oh));
+
+        # test global unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", version,
+            oh + ("global_unique_key": ("test": "test1"))));
+        # test workflow (name) unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", version,
+            oh + ("workflow_unique_key": ("test": "test1"))));
+        # test workflow-specific unique keys
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "REGRESSION-TEST", version,
+            oh + ("workflow_specific_unique_key": ("test": "test1"))));
+
+        # now get SIMPLETEST version
+        version = qrest.get("workflows/SIMPLETEST/version");
+
+        # get a random key value
+        key1 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", version, oh + ("global_unique_key": ("key1": key1)));
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key1, kh.key1);
+
+        key2 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", version, oh + {
+            "workflow_unique_key": {
+                "key1": key2,
+            },
+        });
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key2, kh.key1);
+
+        key3 = get_random_string(50);
+        wfiid = UserApi::createRemoteOrder(remote, "SIMPLETEST", version, oh + {
+            "workflow_specific_unique_key": {
+                "key1": key3,
+            },
+        });
+        # cancel the order
+        qrest.put("orders/" + wfiid + "/cancel");
+        # make sure key value is there
+        kh = qrest.get("orders/" + wfiid + "/keys");
+        assertEq(key3, kh.key1);
+
+        # test global unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("global_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("global_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("global_unique_key": ("key1": key3))));
+        # test workflow (name) unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_unique_key": ("key1": key3))));
+        # test workflow-specific unique keys for the order just created
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_specific_unique_key": ("key1": key1))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_specific_unique_key": ("key1": key2))));
+        assertThrows("DUPLICATE-ORDER-KEY", \UserApi::createRemoteOrder(), (remote, "SIMPLETEST", version,
+            oh + ("workflow_specific_unique_key": ("key1": key3))));
+    }
+
+    *string getLoopback() {
+        foreach hash<auto> rh in (qrest.get("remote/qorus")) {
+            if (rh.loopback) {
+                return rh.name;
+            }
+        }
+    }
+}

@@ -1,0 +1,34 @@
+#! /usr/bin/env qore
+
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test file: fs_service
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusServiceTest {
+    private {
+        const SERVICE_NAME = "fs";
+
+        const OPTIONS = Opts + {
+            "test": "t,test=s",
+        };
+    }
+
+    constructor() : QorusServiceTest(SERVICE_NAME, "system", \ARGV, OPTIONS) {
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        printf("%N\n", m_options);
+        exec(new CallService(SERVICE_NAME + ".ls", "/")).getResult();
+    }
+}

@@ -1,0 +1,23 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3274WorkflowClass inherits QorusWorkflow {
+    oneTimeInitImpl() {
+        logInfo("Issue3274WorkflowClass::oneTimeInitImpl is called");
+    }
+
+    errorHandlerImpl(string errcode, *hash<auto> errinfo, auto opt) {
+        logInfo("Issue3274WorkflowClass::errorHandlerImpl is called");
+    }
+
+    detachImpl(string status, *string external_order_instanceid) {
+        logInfo("Issue3274WorkflowClass::detachImpl is called");
+    }
+
+    attachImpl() {
+        logInfo("Issue3274WorkflowClass::attachImpl is called");
+    }
+}
+# END

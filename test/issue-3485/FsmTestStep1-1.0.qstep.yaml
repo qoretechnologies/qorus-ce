@@ -1,0 +1,16 @@
+# This is a generated file, don't edit!
+type: step
+name: FsmTestStep1
+desc: FSM step test 1
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusNormalStep
+class-name: FsmTestStep1
+fsm:
+  - name: fsm-dep-test
+    triggers:
+    - method: primary
+lang: qore
+version: "1.0"
+steptype: NORMAL
+code: FsmTestStep1-1.0.qstep

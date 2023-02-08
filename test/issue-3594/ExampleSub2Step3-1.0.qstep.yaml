@@ -1,0 +1,10 @@
+# This is a generated file, don't edit!
+type: step
+name: ExampleSub2Step3
+desc: Example sub 2 step 3
+lang: qore
+base-class-name: QorusNormalStep
+class-name: ExampleSub2Step3
+version: "1.0"
+steptype: NORMAL
+code: ExampleSub2Step3-1.0.qstep

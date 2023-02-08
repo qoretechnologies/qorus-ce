@@ -1,0 +1,92 @@
+# type: STEP
+# version: 1.0
+# desc: issue 2495 test step 1
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_2495_step1() {
+    auto pwfiid = WorkflowApi::parentWfiid();
+    if (!pwfiid) {
+        throw "ISSUE-2495-ERROR", "parent_workflow_instanceid is not set";
+    }
+    UserApi::logInfo("OK: parent_workflow_instanceid: %y", pwfiid);
+    WorkflowApi::skipSubworkflow();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: issue 2495 test step 2
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_2495_step2() {
+    auto pwfiid = WorkflowApi::parentWfiid();
+    if (!pwfiid) {
+        throw "ISSUE-2495-ERROR", "parent_workflow_instanceid is not set";
+    }
+    UserApi::logInfo("OK: parent_workflow_instanceid: %y", pwfiid);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: issue 2495 test step 3
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_2495_step3() {
+    auto pwfiid = WorkflowApi::parentWfiid();
+    if (!pwfiid) {
+        throw "ISSUE-2495-ERROR", "parent_workflow_instanceid is not set";
+    }
+    UserApi::logInfo("OK: parent_workflow_instanceid: %y", pwfiid);
+    WorkflowApi::skipAsyncStep();
+}
+# END
+
+# type: ASYNC-END
+# version: 1.0
+# desc: issue 2495 test async end function
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_2495_step3_end(auto data) {
+    auto pwfiid = WorkflowApi::parentWfiid();
+    if (!pwfiid) {
+        throw "ISSUE-2495-ERROR", "parent_workflow_instanceid is not set";
+    }
+    UserApi::logInfo("OK: parent_workflow_instanceid: %y", pwfiid);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: issue 2495 test step 4
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_2495_step4() {
+    auto pwfiid = WorkflowApi::parentWfiid();
+    if (!pwfiid) {
+        throw "ISSUE-2495-ERROR", "parent_workflow_instanceid is not set";
+    }
+    UserApi::logInfo("OK: parent_workflow_instanceid: %y", pwfiid);
+    WorkflowApi::skipEvent();
+}
+# END

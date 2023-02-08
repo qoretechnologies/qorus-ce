@@ -1,0 +1,92 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3166" + Qore::DirSep;
+
+        const JOB_NAME = "issue-3166-job";
+        const SERVICE_NAME = "issue-3166-service";
+        const STEP_NAME = "Issue3166Step";
+        const WORKFLOW_NAME = "ISSUE-3166-WORKFLOW";
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:" + WORKFLOW_NAME + ":1.0",
+            "class:" + STEP_NAME + ":1.0",
+            "service:" + SERVICE_NAME + ":1.0",
+            "job:" + JOB_NAME + ":1.0",
+        );
+    }
+
+    constructor(): Test("QorusIssue3166ConfigItemsEnums", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("mainTest", \mainTest());
+        addTestCase("negativeTests", \negativeTests());
+        set_return_value(main());
+    }
+
+    private testConfigItem(auto set_value, string interface_type, string interface_name, string item_name) {
+        hash value = {"value": "INVALID_VALUE"};
+
+        printf("set invalid value for %s (%s)\n", interface_name, interface_type);
+
+        assertThrows("CONFIG-ITEM-ERROR", "the value is not allowed", \qrest.put(),
+            (interface_type + "s/" + interface_name + "/config/" + item_name, value));
+
+        value.value = set_value;
+
+        printf("set value %y for %s (%s)\n", set_value, interface_name, interface_type);
+
+        auto rest_response = qrest.put(interface_type + "s/" + interface_name + "/config/" + item_name, value).value;
+        assertEq(value.value, rest_response);
+    }
+
+    private testConfigItems(string interface_type, string interface_name) {
+        auto configs = qrest.get(interface_type + "s/" + interface_name + "/config");
+        foreach auto config in (configs) {
+            auto allowed_values = qrest.get(interface_type + "s/" + interface_name + "/config/" + config.name +
+                                            "/allowed_values");
+            testConfigItem(allowed_values.first(), interface_type, interface_name, config.name);
+        }
+    }
+
+    private mainTest() {
+        printf("------START oload interfaces------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload interfaces-------\n");
+
+        printf("START------TEST CONFIG ITEMS------\n");
+        testConfigItems("job", JOB_NAME);
+        testConfigItems("service", SERVICE_NAME);
+        testConfigItems("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME + "/");
+        printf("END--------TEST CONFIG ITEMS------\n");
+
+        printf("------START delete interfaces------\n");
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE, True);
+        assertEq(0, result.exit_code);
+        printf("-------END delete interfaces-------\n");
+    }
+
+    private negativeTests() {
+        printf("------START negative tests------\n");
+        list<hash> results = OloadTestHelper::oloadFileByFile(srcDir + "negative_tests" + Qore::DirSep, True);
+        foreach hash<auto> result in (results) {
+            assertEq(1, result.exit_code);
+        }
+        printf("-------END negative tests-------\n");
+    }
+}

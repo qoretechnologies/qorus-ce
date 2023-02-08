@@ -1,0 +1,11 @@
+type: step
+steptype: NORMAL
+arraytype: SERIES
+name: issue3406step
+version: "1.0"
+desc: issue3406 array test step
+author:
+  - Qore Technologies, s.r.o.
+mappers:
+  - issue3406mapper:1.0
+code: issue3406step.qstep

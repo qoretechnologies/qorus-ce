@@ -1,0 +1,20 @@
+# This is a generated file, don't edit!
+type: service
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3390JavaTest
+classes:
+  - JavaTest
+desc: "issue 3390 Java test"
+groups:
+  - regression
+  - test
+lang: java
+name: Issue3390JavaTest
+version: "1.0"
+servicetype: USER
+code: Issue3390JavaTest-1.0.qsd.java
+methods:
+  - name: test
+    desc: issue #3390 test

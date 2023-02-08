@@ -1,0 +1,16 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: Issue3247Base
+# version: 1.0
+# desc: test class
+# author: Qore Technologies, s.r.o.
+class Issue3247Base inherits QorusService {
+    # name: getValue
+    # desc: initializes the service
+    int getValue() {
+        return getValueImpl();
+    }
+
+    private abstract int getValueImpl();
+}
+# END

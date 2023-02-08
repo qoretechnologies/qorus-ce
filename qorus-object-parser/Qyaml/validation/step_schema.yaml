@@ -1,0 +1,91 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - step
+  steptype:
+    type: string
+    allowed-values:
+      - NORMAL
+      - ASYNC
+      - SUBWORKFLOW
+      - EVENT
+    default: NORMAL
+  arraytype:
+    type: string
+    allowed-values:
+      - NONE
+      - SERIES
+    default: NONE
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  code:
+    type: string
+
+optional:
+  desc:
+    type: string
+    max-length: 4000
+  author:
+    type: list
+    element-type: string
+  config-items:
+    type: list
+    element-type: config-item
+  queue:
+    type: string
+    # required-if: steptype == ASYNC
+  event:
+    type: string
+    # required-if: steptype == EVENT
+  user-interaction:
+    type: bool
+    default: false
+  class-name:
+    type: string
+    max-length: 160
+  base-class-name: # used only in the IDE
+    type: string
+    max-length: 160
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  classes:
+    type: list
+    element-type: string
+  class-prefixes: # used only in the IDE
+    type: list
+  class-connections: # used only in the IDE
+    type: hash
+  constants:
+    type: list
+    element-type: string
+  functions:
+    type: list
+    element-type: string
+  mappers:
+    type: list
+    element-type: string
+  vmaps:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+  fsm:
+    type: list
+    element-type: fsm
+  user-metadata:
+    type: hash
+
+include-definitions:
+  - config-item_definition.yaml
+  - fsm_definition.yaml

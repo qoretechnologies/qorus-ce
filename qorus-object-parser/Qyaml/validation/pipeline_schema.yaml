@@ -1,0 +1,75 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - pipeline
+  name:
+    type: string
+    max-length: 160
+  desc:
+    type: string
+    max-length: 4000
+  children:
+    type: list
+    element-type: processor|queue|mapper
+
+optional:
+  input-provider:
+    type: hash
+  input-provider-options:
+    type: hash
+  groups:
+    type: list
+    element-type: string
+
+definitions:
+  processor:
+    required:
+      type:
+        type: string
+        allowed-values:
+          - processor
+      pid:
+        type: string
+      name:
+        type: string
+    optional:
+      # if the "child" of this element is a queue, then it can be a list
+      # otherwise only one child is permitted, which is the following element in the queue
+      # if a child is a queue, then a list of queues is permitted
+      children:
+        type: list
+        element-type: processor|queue|mapper
+      config-items:
+        type: list
+        element-type: config-item
+
+  mapper:
+    required:
+      type:
+        type: string
+        allowed-values:
+          - mapper
+      name:
+        type: string
+        regex: ^[^:]+:.+$ # name:version
+    optional:
+      # if the "child" of this element is a queue, then it can be a list
+      # otherwise only one child is permitted, which is the following element in the queue
+      # if a child is a queue, then a list of queues is permitted
+      children:
+        type: list
+        element-type: processor|queue|mapper
+
+  queue:
+    required:
+      type:
+        type: string
+        allowed-values:
+          - queue
+      children:
+        type: list
+        element-type: processor|queue|mapper
+
+include-definitions:
+  - config-item_definition.yaml

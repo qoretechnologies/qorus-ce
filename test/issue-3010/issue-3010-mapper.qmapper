@@ -1,0 +1,21 @@
+# -*- mode: text; indent-tabs-mode: nil -*-
+
+# name: issue-3010-mapper
+# version: 1.0
+# desc: issue 3010 mapper
+# type: InboundTableMapper
+# author: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# define-group: issue-3010-group: issue 3010 test group
+# groups: test, regression, issue-3010-group
+
+OPTION: datasource: "omquser"
+OPTION: table:      "test"
+OPTION: input:      {
+    "test": "test input",
+}
+
+FIELD: test: {"name": "test"}
+# END

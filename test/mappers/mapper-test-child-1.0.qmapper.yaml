@@ -1,0 +1,169 @@
+# This is a generated file, don't edit!
+type: mapper
+name: mapper-test-child
+desc: 'issue #3501 mapper test: child mapper'
+author:
+  - Qore Technologies, s.r.o.
+fields:
+    child_name:
+        name: name
+    parent_id:
+        name: parent
+options:
+    mapper-input:
+        can_manage_fields: true
+        custom-fields:
+            name:
+                canBeNull: false
+                desc: child name
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: name
+                parentPath: false
+                path: name
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: string
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+            parent:
+                canBeNull: false
+                desc: parent ID
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: parent
+                parentPath: false
+                path: parent
+                type:
+                    base_type: int
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: int
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: int
+                    types_accepted:
+                        - int
+                        - integer
+                    types_returned:
+                        - int
+                        - integer
+        name: qore
+        path: /hash
+        type: type
+    mapper-output:
+        can_manage_fields: true
+        custom-fields:
+            child_name:
+                canBeNull: false
+                desc: child name
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: child_name
+                parentPath: false
+                path: child_name
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softstring
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+            parent_id:
+                canBeNull: false
+                desc: parent ID
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: parent_id
+                parentPath: false
+                path: parent_id
+                type:
+                    base_type: int
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softint
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: int
+                    types_accepted:
+                        - int
+                        - integer
+                        - float
+                        - string
+                        - date
+                        - bool
+                        - number
+                    types_returned:
+                        - int
+                        - integer
+        name: qore
+        path: /hash
+        type: type
+mappertype: Mapper
+version: "1.0"

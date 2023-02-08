@@ -1,0 +1,11 @@
+# This is a generated file, don't edit!
+type: step
+name: ExampleSub1Step2
+desc: Example sub 1 step 2
+lang: qore
+base-class-name: QorusAsyncStep
+class-name: ExampleSub1Step2
+queue: example-step-1
+version: '1.0'
+steptype: ASYNC
+code: ExampleSub1Step2-1.0.qstep

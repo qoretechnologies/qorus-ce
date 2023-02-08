@@ -1,0 +1,33 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: MultiInterfaceTest
+# serviceversion: 1.0
+# servicedesc: class-based test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-based: true
+# service-modules: MultiInterface
+# lang: qore
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# classes: TestServiceClass
+# ENDSERVICE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class MultiInterfaceTest inherits TestServiceClass, MultiTestService {
+    # name: other
+    # desc: example test
+    int other() {
+        return 1;
+    }
+
+    # name: str
+    # desc: string test
+    string str() {
+        return "str";
+    }
+}

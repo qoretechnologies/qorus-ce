@@ -1,0 +1,4 @@
+#!/bin/sh
+
+tools/qccp qlib-qorus/QorusClientCore.qm $OMQ_DIR/qlib
+cp qlib-qorus/QorusSchema.qm $OMQ_DIR/qlib

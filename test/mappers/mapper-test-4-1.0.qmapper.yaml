@@ -1,0 +1,154 @@
+# This is a generated file, don't edit!
+type: mapper
+name: mapper-test-4
+desc: mapper test
+author:
+  - Qore Technologies, s.r.o.
+fields:
+    date1:
+        context: '$timestamp:{YYYY-MM-DD HH:mm:SS.xx}'
+    date2:
+        context: '$timestamp:{YYYY-MM-DD HH:mm:SS.xx}'
+        template: true
+    qexp:
+        context: >-
+            $qore-expr:{("$info:type" + "." + "$info:name" + " v" +
+            "$info:version")}
+options:
+    mapper-input:
+        can_manage_fields: true
+        custom-fields: {}
+        name: qore
+        path: /hash
+        type: type
+    mapper-output:
+        can_manage_fields: true
+        custom-fields:
+            date1:
+                canBeNull: false
+                desc: date test
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: date1
+                parentPath: false
+                path: date1
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softstring
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+            date2:
+                canBeNull: false
+                desc: date test
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: date2
+                parentPath: false
+                path: date2
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softstring
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+            qexp:
+                canBeNull: false
+                desc: qore expression template test
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: qexp
+                parentPath: false
+                path: qexp
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: softstring
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+        name: qore
+        path: /hash
+        type: type
+mappertype: Mapper
+version: "1.0"

@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: workflow
+name: STATIC-DATA-TEST
+desc: Workflow static data test
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - regression
+  - test
+remote: false
+sla_threshold: 10
+staticdata-type:
+    type: type
+    name: qoretechnologies
+    can_manage_fields: false
+    descriptions:
+        - type entry group
+        - type entry group
+        - type entry group
+        - Qore data type "hash<auto>"
+    path: /qorus/regression/issue-3446-hash
+version: '1.0'
+steps:
+    [
+        "WfStaticDataTestStep:1.0"
+    ]

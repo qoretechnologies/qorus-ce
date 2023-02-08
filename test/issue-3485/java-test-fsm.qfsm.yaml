@@ -1,0 +1,45 @@
+# This is a generated file, don't edit!
+type: fsm
+name: java-test-fsm
+desc: Java test FSM
+groups:
+  - regression
+  - test
+states:
+    '1':
+        name: state0
+        action:
+            type: pipeline
+            value: pipeline4
+        id: state0
+        initial: true
+        execution_order: 1
+        position:
+            x: 156.125
+            'y': 46.17578125
+        transitions:
+            -
+                state: '2'
+        type: state
+    '2':
+        name: state2
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state2
+        position:
+            x: 156.125
+            'y': 180.17578125
+        config-items:
+          -
+            name: fsm-connector-test-write-value
+            parent:
+              interface-name: FsmDepTest
+              interface-type: class
+              interface-version: '1.0'
+            value:
+              '$pstate:{state.java-test-fsm\.state2}': true
+              '$pstate:{fsm.java-test-fsm}': true
+        type: state

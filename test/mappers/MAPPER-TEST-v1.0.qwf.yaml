@@ -1,0 +1,20 @@
+type: workflow
+name: MAPPER-TEST
+version: "1.0"
+desc: mapper test workflow
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - test
+  - regression
+remote: false
+autostart: 0
+classes:
+  - "MapperProviderTest"
+mappers:
+  - "mapper-test-1:1.0"
+  - "mapper-test-2:1.0"
+sla_threshold: 60
+steps:
+  - "MapperTest1:1.0"
+  - "MapperTest2:1.0"

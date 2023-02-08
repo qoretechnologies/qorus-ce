@@ -1,0 +1,14 @@
+type: global-config-item-values
+global-config-item-values:
+  - name: issue-3326-test-config-item-1
+    value:
+      test_key_1: vbn
+  - name: issue-3326-test-config-item-3
+    value: 17.12
+  - name: issue-3326-test-config-item-5
+    value:
+      test_global: 12
+  - name: issue-3326-test-config-item-7
+    value:
+      - asd
+      - fdasd

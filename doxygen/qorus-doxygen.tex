@@ -1,0 +1,75 @@
+% Customized 1st page for Qorus docs
+% some font, colors etc. are redefined here for global doc too
+%
+% macpors: texlive-latex-extra
+%
+\documentclass[a4paper]{book}
+
+\usepackage{a4wide}
+\usepackage{makeidx}
+\usepackage{graphicx}
+\usepackage{multicol}
+\usepackage{float}
+\usepackage{listings}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{textcomp}
+\usepackage{alltt}
+\usepackage{times}
+\usepackage{ifpdf}
+\usepackage{sectsty}
+
+
+\ifpdf
+\usepackage[pdftex,
+            pagebackref=true,
+            colorlinks=true,
+            linkcolor=YellowGreen,
+            unicode
+           ]{hyperref}
+\else
+\usepackage[ps2pdf,
+            pagebackref=true,
+            colorlinks=true,
+            linkcolor=YellowGreen,
+            unicode
+           ]{hyperref}
+\usepackage{pspicture}
+\fi
+
+\usepackage[utf8]{inputenc}
+
+\usepackage{doxygen}
+\lstset{language=C++,inputencoding=utf8,basicstyle=\footnotesize,breaklines=true,breakatwhitespace=true,tabsize=8,numbers=left }
+
+\makeindex
+
+\setcounter{tocdepth}{3}
+\renewcommand{\footrulewidth}{0.4pt}
+
+
+\renewcommand{\chaptername}{}
+\allsectionsfont{\sffamily}
+
+
+\begin{document}
+\hypersetup{pageanchor=false}
+
+\begin{titlepage}
+\vspace*{3cm}
+\begin{center}
+{\includegraphics{../../qorus-logo.png}} \\
+\vspace*{2cm}
+{\Large \sffamily $projectnumber \\[1ex]\large $projectname}\\
+\vspace*{1cm}
+{\small \sffamily Qore Technologies}\\
+\vspace*{0.5cm}
+{\small \sffamily $datetime}\\
+\end{center}
+\end{titlepage}
+
+\clearemptydoublepage
+\pagenumbering{roman}
+\tableofcontents
+\clearemptydoublepage
+\pagenumbering{arabic}
+\hypersetup{pageanchor=true}

@@ -1,0 +1,150 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires Util
+%requires RestClient
+
+%exec-class Issue3320Test
+
+class Issue3320Test inherits QorusServiceTest {
+    constructor() : QorusServiceTest("Issue 3320 test", "1.0", \ARGV) {
+        addTestCase("issue-3320 test", \issue_test());
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+    }
+
+    globalTearDown() {
+    }
+
+    issue_test() {
+        string url = UserApi::qorusGetLocalUrl();
+        if (url =~ /:[0-9]{3,5}/) {
+            hash h = parse_url(url);
+            url = h.host;
+        }
+
+        # set config options
+        getSetRandomPort();
+        setAddListenerSharing(True);
+        setSoapListenerSharing(True);
+
+        # load the service
+        qrest.put("services/issue-3320-a/reset");
+        qrest.put("services/issue-3320-a/load");
+        on_exit qrest.put("services/issue-3320-a/unload");
+
+        # get the listener name
+        list listeners = qrest.get("system/listeners?list=true");
+        *string lname;
+        foreach string l in (listeners) {
+            if (l =~ /svc-issue-3320-a/) {
+                lname = l;
+                break;
+            }
+        }
+        assertTrue(lname != NOTHING);
+
+        # unload the service
+        qrest.put("services/issue-3320-a/unload");
+
+        # check that the listener's not there anymore
+        listeners = qrest.get("system/listeners?list=true");
+        delete lname;
+        foreach string l in (listeners) {
+            if (l =~ /svc-issue-3320-a/) {
+                lname = l;
+                break;
+            }
+        }
+        assertEq(NOTHING, lname);
+
+        # shouldn't fail
+        qrest.put("services/issue-3320-a/load");
+        qrest.put("services/issue-3320-a/unload");
+
+        # start additional listener before the soap listener, listener sharing should work
+        qrest.put("services/issue-3320-b/load");
+
+        # shouldn't fail
+        qrest.put("services/issue-3320-a/load");
+        qrest.put("services/issue-3320-a/unload");
+
+        qrest.put("services/issue-3320-b/unload");
+
+        # disable sharing of the additional listener
+        setAddListenerSharing(False);
+        qrest.put("services/issue-3320-b/load");
+        assertThrows(
+            "SERVICE-INIT-ERROR",
+            "error starting listener.*LISTENER-SHARING-ERROR",
+            sub() { qrest.put("services/issue-3320-a/load"); }
+        );
+        listeners = qrest.get("system/listeners?list=true");
+        delete lname;
+        foreach string l in (listeners) {
+            if (l =~ /svc-issue-3320-a/) {
+                lname = l;
+                break;
+            }
+        }
+        assertEq(NOTHING, lname);
+        qrest.put("services/issue-3320-a/unload");
+        qrest.put("services/issue-3320-b/unload");
+
+        # disable sharing of the soap listener
+        setAddListenerSharing(True);
+        setSoapListenerSharing(False);
+        qrest.put("services/issue-3320-b/load");
+        assertThrows(
+            "SERVICE-INIT-ERROR",
+            "error starting listener.*LISTENER-SHARING-ERROR",
+            sub() { qrest.put("services/issue-3320-a/load"); }
+        );
+        listeners = qrest.get("system/listeners?list=true");
+        delete lname;
+        foreach string l in (listeners) {
+            if (l =~ /svc-issue-3320-a/) {
+                lname = l;
+                break;
+            }
+        }
+        assertEq(NOTHING, lname);
+        qrest.put("services/issue-3320-a/unload");
+        qrest.put("services/issue-3320-b/unload");
+    }
+
+    int getSetRandomPort() {
+        Socket s();
+        s.bind(0);
+        int port = s.getSocketInfo().port;
+        delete s;
+
+        # set port number for services
+        qrest.put("system/config/issue-3320-port", {"value": port});
+        return port;
+    }
+
+    setAddHttpListener(bool add) {
+        qrest.put("system/config/issue-3320-add-http-listener", {"value": add});
+    }
+
+    setAddListenerSharing(bool allow) {
+        qrest.put("system/config/issue-3320-add-listener-allow-sharing", {"value": allow});
+    }
+
+    setSoapListenerSharing(bool allow) {
+        qrest.put("system/config/issue-3320-soap-listener-allow-sharing", {"value": allow});
+    }
+}

@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3583
+desc: option API tests
+lang: qore
+base-class-name: QorusJob
+class-name: Issue3583
+schedule:
+    minutes: "1"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+active: false
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - regression
+  - test
+code: issue-3583-1.0.qjob
+config-items:
+  - name: option
+    description: Option name
+    config_group: Issue 3583
+    strictly_local: true

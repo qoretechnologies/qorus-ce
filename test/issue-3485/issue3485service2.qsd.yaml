@@ -1,0 +1,20 @@
+# This is a generated file, don't edit!
+type: service
+name: issue3485service2
+desc: issue-3485-service
+base-class-name: QorusService
+class-name: issue3485service2
+classes:
+  - Issue3485Conditional
+fsm:
+  - name: fsm4
+    triggers:
+    - method: test
+lang: qore
+autostart: false
+version: "1.0"
+servicetype: USER
+code: issue3485service2.qsd
+methods:
+  - name: test
+    desc: test

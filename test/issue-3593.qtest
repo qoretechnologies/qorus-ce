@@ -1,0 +1,79 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusPassiveWorkflowTest {
+    private {
+        const WorkflowName = "ISSUE-3593-INVALID";
+    }
+
+    constructor() : QorusPassiveWorkflowTest(WorkflowName, "1.0", \ARGV, Opts) {
+        addTestCase(WorkflowName, \syncTest());
+        addTestCase(WorkflowName, \standardTest());
+
+        set_return_value(main());
+    }
+
+    syncTest() {
+        # ensure workflows are enabled
+        hash<auto> pwf = qrest.get("workflows/" + WorkflowName);
+
+        if (!pwf.enabled) {
+            qrest.put("workflows/" + WorkflowName + "/enable");
+        }
+        if (pwf.autostart) {
+            qrest.put("workflows/" + WorkflowName + "/setAutostart", {"autostart": 0});
+        }
+
+        # set remote = true
+        if (pwf.remote) {
+            qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": True});
+        }
+        doWorkflowTest();
+
+        qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": False});
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        ExecSynchronousOrder action({
+            "name": WorkflowName,
+            "staticdata": {},
+        });
+        int wfiid;
+        try {
+            exec(action);
+            assertTrue(False);
+        } catch (hash<ExceptionInfo> ex) {
+            #printf("%s\n", get_exception_string(ex));
+            wfiid = ex.arg.workflow_instanceid;
+        }
+        assertEq(0, qrest.get("orders/" + wfiid + "/status_sessionid"));
+    }
+
+    standardTest() {
+        qrest.put("workflows/" + WorkflowName + "/setAutostart", {"autostart": 1});
+        qrest.put("workflows/" + WorkflowName + "/setAutostart", {"autostart": 0});
+
+        # wait for orders to be marked
+        int wfid = qrest.get("workflows/" + WorkflowName + "/workflowid");
+        AbstractTable workflow_instance = new Table(omqclient.getSQLIF().omqp, "workflow_instance").getTable();
+        int count = workflow_instance.selectRow({
+            "columns": (
+                cop_as(cop_count(), "count"),
+            ),
+            "where": {
+                "workflowid": wfid,
+                "status_sessionid": op_ne(0),
+            },
+        }).count;
+        assertEq(0, count);
+    }
+}

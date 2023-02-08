@@ -1,0 +1,9 @@
+type: step
+steptype: NORMAL
+name: Issue3411Step
+class-name: Issue3411Step
+version: "1.0"
+desc: issue3411 array test step
+author:
+  - Qore Technologies, s.r.o.
+code: Issue3411Step.qstep

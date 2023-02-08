@@ -1,0 +1,21 @@
+# This is a generated file, don't edit!
+type: type
+path: qoretechnologies/qorus/regression/issue-3445-string
+typeinfo:
+  base_type: string
+  can_manage_fields: false
+  mandatory: true
+  name: string
+  options:
+      qore.no_null: true
+  supported_options:
+      qore.no_null:
+          desc: >-
+              if True then NULL is not supported on input if
+              NOTHING is also not accepted
+          type: bool
+  typename: string
+  types_accepted:
+      - string
+  types_returned:
+      - string

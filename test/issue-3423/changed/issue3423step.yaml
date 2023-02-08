@@ -1,0 +1,59 @@
+type: step
+name: issue3423step
+version: "1.0"
+desc: test step
+author:
+  - Qore Technologies, s.r.o.
+lang: qore
+code: issue3423step.qstep
+config-items:
+  - name: issue-3423-test-config-item-1
+    type: "*int"
+    description: test config item of type *hash
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3423-test-config-item-2
+    type: "*string"
+    default_value: test_2
+    allowed_values:
+      - test_1
+      - test_2
+      - test_3
+      - null
+    description: test config item of type string
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3423-test-config-item-3
+    type: "*string"
+    default_value: null
+    allowed_values:
+      - test_1
+      - null
+    description: test config item of type *string
+    config_group: Test Group
+  - name: issue-3423-test-config-item-4
+    type: "*string"
+    default_value: null
+    allowed_values:
+      - test_1
+      - null
+    description: test config item of type *string
+    config_group: Test Group
+  - name: issue-3423-test-config-item-5
+    type: "*string"
+    default_value: null
+    strictly_local: true
+    allowed_values:
+      - test_1
+      - null
+    description: test config item of type *string
+    config_group: Test Group
+  - name: issue-3423-test-config-item-6
+    type: "*string"
+    default_value: null
+    strictly_local: false
+    allowed_values:
+      - test_1
+      - null
+    description: test config item of type *string
+    config_group: Test Group

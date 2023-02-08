@@ -1,0 +1,94 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+    QC_TimedSyncCache.qpp
+ */
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include "QC_TimedSyncCache.h"
+
+#include <string.h>
+
+//! The TimedSyncCache class implements a timed cache for sync instance ID values
+/**
+ */
+qclass TimedSyncCache [arg=TimedSyncCache* tsc; ns=OMQ];
+
+//! Creates a new TimedSyncCache object
+/**
+ */
+TimedSyncCache::constructor(object qorus_options, string delay) {
+   self->setPrivate(CID_TIMEDSYNCCACHE, new TimedSyncCache(qorus_options, delay->c_str()));
+}
+
+//! shuts down and destroys the cache
+/**
+ */
+TimedSyncCache::destructor() {
+   tsc->destructor();
+   tsc->deref(xsink);
+}
+
+//! throws an exception
+/**
+ */
+TimedSyncCache::copy() {
+   xsink->raiseException("COPY-ERROR", "TimedSyncCache objects may not be copied");
+}
+
+//!
+/**
+ */
+TimedSyncCache::terminate() {
+   tsc->terminate();
+}
+
+//!
+/**
+ */
+TimedSyncCache::requeue() {
+   tsc->requeue();
+}
+
+//! sets a value
+/** @return False = cached, True = cache full
+ */
+bool TimedSyncCache::set(string keyvalue, softint event_type_id) {
+   return (bool)tsc->set(keyvalue->c_str(), event_type_id);
+}
+
+//!
+/**
+ */
+TimedSyncCache::deleteKey(string keyvalue, softint event_type_id) {
+   tsc->deleteKey(keyvalue->c_str(), event_type_id);
+}
+
+//!
+/**
+ */
+*hash TimedSyncCache::getEvent() {
+   return tsc->getEvent();
+}
+
+//!
+/**
+ */
+string TimedSyncCache::toString() [flags=RET_VALUE_ONLY] {
+   return tsc->toString();
+}
+
+//!
+/**
+ */
+string TimedSyncCache::getSummary() [flags=RET_VALUE_ONLY] {
+   return tsc->getSummary();
+}

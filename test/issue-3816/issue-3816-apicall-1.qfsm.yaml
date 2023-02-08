@@ -1,0 +1,89 @@
+# This is a generated file, don't edit!
+type: fsm
+name: issue-3816-apicall-1
+desc: 'issue #3816 apicall test'
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 117
+            'y': 70
+        initial: true
+        name: API Call Test
+        desc: ''
+        type: state
+        id: 6nKRHsVqG
+        action:
+            type: apicall
+            value:
+              type: factory
+              name: qorus-api
+              can_manage_fields: false
+              path: /workflows/get-order-info
+              custom-fields: {}
+        execution_order: 1
+        transitions:
+            -
+                state: '2'
+                language: qore
+            -
+                state: '3'
+                language: qore
+    '2':
+        position:
+            x: 386
+            'y': 70
+        initial: false
+        name: Log Output
+        desc: ''
+        type: state
+        id: 5x7J5cdAw
+        action:
+            type: connector
+            value:
+                class: LogMessageTest
+                connector: logMessage
+        config-items:
+          - name: test-log-message-level
+            parent:
+                interface-type: class
+                interface-name: LogMessageTest
+                interface-version: '1.0'
+          - name: test-log-message-string
+            value:
+                "output: %y"
+            parent:
+                interface-type: class
+                interface-name: LogMessageTest
+                interface-version: '1.0'
+          - name: test-log-message-args
+            value:
+                "$local:*"
+            parent:
+                interface-type: class
+                interface-name: LogMessageTest
+                interface-version: '1.0'
+    '3':
+        position:
+            x: 386
+            'y': 140
+        initial: false
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: 5x7J5cdAz
+        name: Save Output
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$jinfo:order': '$local:*'
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+

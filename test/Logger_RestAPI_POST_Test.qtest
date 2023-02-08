@@ -1,0 +1,414 @@
+#!/usr/bin/env qore
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%include Logger/AbstractLoggerRestApiTest.qc
+
+%exec-class LoggerRestApiPostTest
+
+class LoggerRestApiPostTest inherits AbstractLoggerRestApiTest {
+    constructor() : AbstractLoggerRestApiTest("LoggerRestApiPostTest") {
+
+        addTestCase("createLoggerNegativeTest", \createLoggerNegativeTest());
+        addTestCase("createLoggerTest", \createLoggerTest());
+        # addTestCase("createDefaultLoggerTest", \createDefaultLoggerTest());
+
+        # addTestCase("createAppenderNegativeTest", \createAppenderNegativeTest());
+        # addTestCase("createDeleteAppendersTest", \createDeleteAppendersTest());
+        # addTestCase("cloneDefaultLogger", \cloneDefaultLogger());
+
+        # addTestCase("createSystemLoggerNegativeTest", \createSystemLoggerNegativeTest());
+        # addTestCase("createDeleteSystemAppenderTest", \createDeleteSystemAppenderTest());
+        # addTestCase("createDefaultSystemLoggerTest", \createDefaultSystemLoggerTest());
+
+        set_return_value(main());
+    }
+
+    createLoggerTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            hash<auto> params = {
+                "level": Logger::LoggerLevel::INFO,
+                "name": "TestInterfaceLogger",
+                "additivity": False
+            };
+            createAndDeleteLogger(interfaceUrl, params);
+            params{"level"} = "INFO";
+            createAndDeleteLogger(interfaceUrl, params);
+        }
+    }
+
+    createDefaultLoggerTest() {
+        foreach string interfaceUrl in (INTERFACES_URLS) {
+            hash<auto> params = {
+                "level": Logger::LoggerLevel::INFO,
+                "name": "TestInterfaceLogger",
+                "additivity": False
+            };
+            string url = interfaceUrl + "?action=defaultLogger";
+            auto response = qrest.del(url);
+            assertEq("OK", response);
+
+            int loggerId = qrest.post(url, params);
+            assertNeq(0, loggerId);
+
+            params{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+            auto loggerInfo = qrest.get(url);
+            assertEq(params, loggerInfo{"params"});
+        }
+    }
+
+    createDefaultSystemLoggerTest() {
+        hash<auto> params = {
+            "level": Logger::LoggerLevel::INFO,
+            "name": "DefaultSystemLogger",
+            "additivity": False
+        };
+        string url = SYSTEM_URL + "?action=defaultLogger";
+        auto response = qrest.del(url);
+        assertEq("OK", response);
+
+        int loggerId = qrest.post(url, params);
+        assertNeq(0, loggerId);
+
+        params{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+        auto loggerInfo = qrest.get(url);
+        assertEq(params, loggerInfo{"params"});
+    }
+
+    createAndDeleteLogger(string interfaceUrl, hash<auto> params) {
+        # create logger
+        int loggerId = qrest.post(interfaceUrl, params);
+        assertNeq(0, loggerId);
+
+        params{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+        # get created logger
+        *hash<auto> loggerInfo = qrest.get(interfaceUrl);
+        assertEq(params, loggerInfo{"params"});
+
+        # delete created logger
+        auto response = qrest.del(interfaceUrl);
+        assertEq("OK", response);
+
+        loggerInfo = qrest.get(interfaceUrl);
+        assertEq(defParams{interfaceUrl}, loggerInfo{"params"});
+    }
+
+    createLoggerNegativeTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # test bad parameters passed
+            # no params
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.post(), interfaceUrl + "/?lvl=20000,name=AAA");
+            # bad logger level
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.post(), (interfaceUrl, {"level": 1,
+                                                        "name": "LoggerName"}));
+            # logger name in bad format
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.post(), (interfaceUrl, {"loggerName": "LoggerName"}));
+            # no logger level
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.post(), (interfaceUrl, {"name": "LoggerName",
+                                                        "additivity": True}));
+        }
+    }
+
+    createAppenderNegativeTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # bad appenderType passed
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.post(), (interfaceUrl + "/appenders", {
+                             "name": "name",
+                             "appenderType": "BadAppenderType"
+                         }));
+            # missing filename parameter for LoggerAppenderFile
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), (interfaceUrl + "/appenders", {
+                            "name": "name",
+                            "appenderType": "LoggerAppenderFile",
+                        }));
+            # bad rotationCount parameters for LoggerAppenderFileRotate
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), (interfaceUrl + "/appenders", {
+                            "name": "name",
+                            "appenderType": "LoggerAppenderFileRotate",
+                            "filename": "asd",
+                            "rotationCount": "1"
+                        }));
+            # try to add appender if default logger is used
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), (interfaceUrl + "/appenders", defAppParams{interfaceUrl}));
+        }
+    }
+
+    createDeleteAppendersTest() {
+        hash<auto> stdOutParams = { "appenderType": "LoggerAppenderStdOut",
+                                    "name": "name",
+        };
+        hash<auto> fileParams = { "appenderType": "LoggerAppenderFile",
+                                  "filename": "/tmp/TestFilename.log",
+                                  "name": "name",
+                                  "layoutPattern": "%r [%t] %p %c - %m%n",
+                                  "encoding": get_default_encoding(),
+        };
+        hash<auto> fileRotParams = { "appenderType": "LoggerAppenderFileRotate",
+                                     "filename": "/tmp/TestFilename.log",
+                                     "name": "name",
+                                     "layoutPattern": "%r [%t] %p %c - %m%n",
+                                     "encoding": get_default_encoding(),
+                                     "archivePattern": "%p%f.%i",
+                                     "rotationCount": 10,
+        };
+        hash<auto> fileRotParamsWithRot = { "appenderType": "LoggerAppenderFileRotate",
+                                            "filename": "/tmp/TestFilename.log",
+                                            "rotationCount": 10,
+                                            "name": "name",
+                                            "layoutPattern": "%r [%t] %p %c - %m%n",
+                                            "encoding": get_default_encoding(),
+                                            "archivePattern": "%p%f.%i",
+
+        };
+
+        # interface can only modify its own logger, so create it
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # create logger
+            int loggerId = qrest.post(interfaceUrl, {"level": Logger::LoggerLevel::INFO, "name": "FTA"});
+            assertNeq(0, loggerId);
+        }
+
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            hash<auto> params = defAppParams{interfaceUrl};
+            params += { "appenderType": "LoggerAppenderFileRotate",
+                        "filename": "/tmp/TestFilename.log",
+                        "encoding": "UTF-8",
+            };
+
+            interfaceUrl += "/appenders";
+            list<int> createdAppenderIds();
+
+            int appenderId = qrest.post(interfaceUrl, stdOutParams);
+            assertNeq(0, appenderId);
+            *list<hash<auto>> appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(stdOutParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileParams);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileRotParams);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileRotParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileRotParamsWithRot);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileRotParamsWithRot, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, params);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(params, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            assertEq(5, createdAppenderIds.size());
+            foreach int aid in (createdAppenderIds) {
+                auto response = qrest.del(interfaceUrl, {"id": aid});
+                assertEq("OK", response);
+            }
+        }
+
+        # interface can only modify its own logger, so create it
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # delete temporary created loggers
+            auto response = qrest.del(interfaceUrl);
+            assertEq("OK", response);
+        }
+    }
+
+    cloneDefaultLogger() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # create logger
+            int loggerId = qrest.post(interfaceUrl, {"cloneDefault":True});
+            assertNeq(0, loggerId);
+
+            # get created logger
+            *hash<auto> loggerInfo = qrest.get(interfaceUrl);
+            hash<auto> tmpParams = defParams{interfaceUrl};
+            tmpParams{"name"} = "CloneOf" + tmpParams{"name"};
+            assertEq(tmpParams, loggerInfo{"params"});
+
+            # delete created logger
+            auto response = qrest.del(interfaceUrl);
+            assertEq("OK", response);
+        }
+    }
+
+    createSystemLoggerNegativeTest() {
+        foreach string type in (CONFIGURABLE_SYSTEM_TYPES) {
+            # test bad parameters passed
+            # no params
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), SYSTEM_URL + type + "/logger?lvl=20000,name=AAA");
+            # bad logger level
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                        \qrest.post(), (SYSTEM_URL+ type + "/logger", {"level": 1,
+                                                                       "name": "LoggerName"}));
+            # logger name in bad format
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), (SYSTEM_URL + type + "/logger", {"loggerName": "LoggerName"}));
+            # no logger level
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 400 received",
+                        \qrest.post(), (SYSTEM_URL + type + "/logger", {"name": "LoggerName",
+                                                                        "additivity": True}));
+            # try to create second system logger
+            assertThrows("DBI:PGSQL:ERROR",
+                        "server \"qdsp-omq\" threw the following exception",
+                        \qrest.post(), (SYSTEM_URL + "?action=defaultLogger", {"name": "LoggerName",
+                                                                               "level": "ALL",
+                                                                               "additivity": True}));
+        }
+    }
+
+    createDeleteSystemAppenderTest() {
+        hash<auto> stdOutParams = { "appenderType": "LoggerAppenderStdOut",
+                                    "name": "name",
+        };
+        hash<auto> fileParams = { "appenderType": "LoggerAppenderFile",
+                                  "filename": "/tmp/TestFilename.log",
+                                  "name": "name",
+                                  "layoutPattern": "%r [%t] %p %c - %m%n",
+                                  "encoding": get_default_encoding(),
+        };
+        hash<auto> fileRotParams = { "appenderType": "LoggerAppenderFileRotate",
+                                     "filename": "/tmp/TestFilename.log",
+                                     "name": "name",
+                                     "layoutPattern": "%r [%t] %p %c - %m%n",
+                                     "encoding": get_default_encoding(),
+                                     "archivePattern": "%p%f.%i",
+                                     "rotationCount": 10,
+        };
+        hash<auto> fileRotParamsWithRot = { "appenderType": "LoggerAppenderFileRotate",
+                                            "filename": "/tmp/TestFilename.log",
+                                            "rotationCount": 10,
+                                            "name": "name",
+                                            "layoutPattern": "%r [%t] %p %c - %m%n",
+                                            "encoding": get_default_encoding(),
+                                            "archivePattern": "%p%f.%i",
+
+        };
+        hash<auto> params = defAppParams{SYSTEM_URL};
+        params += { "appenderType": "LoggerAppenderFileRotate",
+                    "filename": "/tmp/TestFilename.log",
+                    "encoding": "UTF-8",
+        };
+        hash<auto> expectedParams = params + {
+            "layoutPattern": "%m%n",
+            "archivePattern": "%p%f.%i",
+        };
+
+        foreach string type in (CONFIGURABLE_SYSTEM_TYPES) {
+            string interfaceUrl = SYSTEM_URL + type + "/logger/appenders";
+            list<int> createdAppenderIds();
+
+            int tmpLoggerId = qrest.post(SYSTEM_URL + type + "/logger", {"level": Logger::LoggerLevel::INFO, "name": "FTA"});
+            int appenderId = qrest.post(interfaceUrl, stdOutParams);
+            assertNeq(0, appenderId);
+            *list<hash<auto>> appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(stdOutParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileParams);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileRotParams);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileRotParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, fileRotParamsWithRot);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(fileRotParamsWithRot, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            appenderId = qrest.post(interfaceUrl, params);
+            assertNeq(0, appenderId);
+            appenders = qrest.get(interfaceUrl, {"id": appenderId});
+            assertEq(expectedParams, appenders.first(){"params"});
+            push createdAppenderIds, appenderId;
+
+            assertEq(5, createdAppenderIds.size());
+            foreach int aid in (createdAppenderIds) {
+                auto response = qrest.del(interfaceUrl, {"id": aid});
+                assertEq("OK", response);
+            }
+            qrest.del(SYSTEM_URL + type + "/logger", {"id": tmpLoggerId});
+        }
+    }
+
+    createDeleteSystemLoggerTest() {
+        foreach string type in (CONFIGURABLE_SYSTEM_TYPES) {
+
+            hash<auto> params = {
+                "level": Logger::LoggerLevel::INFO,
+                "name": "TestInterfaceLogger",
+                "additivity": False
+            };
+            string loggerUrl = SYSTEM_URL + type +"/logger";
+            *hash<auto> appenderInfo = qrest.get(loggerUrl + "/appenders").first(){"params"};
+
+            # delete existed logger
+            auto response = qrest.del(SYSTEM_URL);
+            assertEq("OK", response);
+            *hash<auto> loggerInfo = qrest.get(SYSTEM_URL);
+            assertEq(NOTHING, loggerInfo{"params"});
+
+            # create logger
+            int loggerId = qrest.post(SYSTEM_URL, params);
+            assertNeq(0, loggerId);
+
+            params{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+            # get created logger
+            loggerInfo = qrest.get(SYSTEM_URL);
+            assertEq(params, loggerInfo{"params"});
+
+            # delete existed logger
+            response = qrest.del(SYSTEM_URL);
+            assertEq("OK", response);
+
+            # restore default logger with appender
+            defParams{SYSTEM_URL}{"level"} = "INFO";
+            loggerId = qrest.post(SYSTEM_URL, defParams{SYSTEM_URL});
+            assertNeq(0, loggerId);
+            qrest.post(SYSTEM_URL + "/appenders", appenderInfo);
+
+            defParams{SYSTEM_URL}{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+            loggerInfo = qrest.get(SYSTEM_URL);
+            assertEq(defParams{SYSTEM_URL}, loggerInfo{"params"});
+        }
+    }
+}

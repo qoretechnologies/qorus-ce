@@ -1,0 +1,29 @@
+# This is a generated file, don't edit!
+type: mapper
+name: mapper-test-1
+desc: mapper test mapper
+author:
+  - Qore Technologies, s.r.o.
+fields:
+    output_1:
+        name: input_1
+    output_2:
+        name: input_2
+    output_3:
+        constant: 123
+options:
+    mapper-input:
+        custom-fields: {}
+        name: omquser
+        path: /table_1
+        type: datasource
+    mapper-output:
+        custom-fields: {}
+        name: omquser
+        path: /table_2
+        type: datasource
+    output_provider_bulk:
+        type: bool
+        value: true
+mappertype: Mapper
+version: "1.0"

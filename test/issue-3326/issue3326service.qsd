@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3326service inherits QorusService {
+    init() {
+        logInfo("init() method called");
+    }
+}

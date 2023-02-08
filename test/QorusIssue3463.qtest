@@ -1,0 +1,37 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3463
+
+class Issue3463 inherits Test {
+    private {
+        const Val = get_random_string();
+    }
+
+    constructor(): Test("Issue3463", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        # set config item
+        qrest.put("jobs/issue-3463/config/test-item", {"value": Val});
+        assertEq(Val, qrest.get("jobs/issue-3463/config/test-item/value"));
+        # oload base class
+        system("oload -lvR " + get_script_dir() + "/issue-3463/Issue3463Base-1.0.qclass.yaml");
+        # ensure that the value has not changed
+        assertEq(Val, qrest.get("jobs/issue-3463/config/test-item/value"));
+        system("oload -lvRO " + get_script_dir() + "/issue-3463/Issue3463Base-1.0.qclass.yaml");
+        # ensure that the value has changed
+        assertEq("job", qrest.get("jobs/issue-3463/config/test-item/value"));
+    }
+}

@@ -1,0 +1,35 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: svc-thread-test
+# serviceversion: 1.0
+# servicedesc: service thread test service
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the svc-thread-test service
+%new-style
+sub block_forever() {
+    # sleep for 1 year on every loop :)
+    while (True)
+        UserApi::sleep(1Y);
+}
+
+sub init() {
+}
+# END
+
+# desc: starts n threads
+%new-style
+sub start_test(softint n) {
+    for (int i = 0; i < n; ++i)
+        ServiceApi::startThread(\block_forever());
+}
+# END
+
+# desc: stops the service
+sub stop() {
+    # oh no, we aren't really stopping the service...
+}
+# END

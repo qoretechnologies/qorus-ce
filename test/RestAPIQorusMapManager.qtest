@@ -1,0 +1,599 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires QUnit
+%requires Util
+%requires SqlUtil
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        AbstractDatasource m_omq;
+
+        hash m_tables = hash();
+    }
+
+    constructor() : QUnit::Test("QorusMapManager REST API test", "1.0") {
+        QorusClient::init2();
+
+        m_omq = omqclient.getSQLIF().omqp;
+
+        addTestCase("qorus internals", \testQorusInternals());
+        addTestCase("reload test", \testReload());
+        addTestCase("get system services list test", \testSystemServices());
+        addTestCase("maps test", \testMaps());
+        addTestCase("lookups test", \testLookups());
+
+        set_return_value(main());
+    }
+
+    private AbstractTable getTable(string table_name) {
+        if (!m_tables.hasKey(table_name)) {
+            m_tables{table_name} = new Table(m_omq, table_name).getTable();
+        }
+        return m_tables{table_name};
+    }
+
+    # test changes related to system.omqmap -> rest API
+    private testQorusInternals() {
+        hash sh = {
+            "columns": "workflowid",
+            "limit": 1,
+        };
+
+        # ErrorManager
+        softint wfid = getTable("workflows").selectRow(sh).workflowid;
+        auto ret = ErrorManager::getWorkflowInfo(wfid);
+        assertEq(True, exists ret);
+
+        # oview
+        int rc;
+        # no version here - we have to test an access without it
+        string out = backquote("oview constant:TestConstants1", \rc);
+        assertEq(0, rc);
+        assertEq(True, out.size()>0);
+
+        # no version here - we have to test an access without it
+        out = backquote("oview function:retry_test", \rc);
+        assertEq(0, rc);
+        assertEq(True, out.size()>0);
+
+        # no version here - we have to test an access without it
+        out = backquote("oview class:TestClass1", \rc);
+        assertEq(0, rc);
+        assertEq(True, out.size()>0);
+    }
+
+    private testReload() {
+        # keep in sync with MetadataRestClass
+        # table name -> PK column name
+        hash reload = (
+            "functions": {"table": "function_instance", "pk": "function_instanceid"},
+            "classes": {"table": "classes", "pk": "classid"},
+            "constants": {"table": "constants", "pk": "constantid"},
+            "queues": {"table": "queues", "pk": "queueid"},
+            "events": {"table": "workflow_event_types", "pk": "workflow_event_typeid"},
+            "mappers": {"table": "mappers", "pk": "mapperid"},
+            "vmaps": {"table": "value_maps", "pk": "id", "return_key": "value maps"},
+            "steps": {"table": "steps", "pk": "stepid"},
+            "workflows": {"table": "workflows", "pk": "workflowid"},
+            "services": {"table": "services", "pk": "serviceid"},
+            "jobs": {"table": "jobs", "pk": "jobid"},
+            "slas": {"table": "sla", "pk": "slaid"},
+        );
+
+        # test system/metadata/reload?<objecttype>=<id list>
+        HashIterator it(reload);
+        while (it.next()) {
+            if (m_options.verbose > 2) {
+                printf("Reload of: %s\n", it.getKey());
+            }
+            string api = it.getKey();
+            string tname = it.getValue().table;
+            string pk = it.getValue().pk;
+            string return_key = it.getValue().return_key ?? api;
+
+            AbstractTable t = getTable(tname);
+            hash sh = {
+                "columns": pk,
+                "limit": 1,
+            };
+
+            auto id = t.selectRow(sh).firstValue();
+            if (!exists id || id === 0) {
+                printf("WARNING: testReload: no %s for test found in OMQ db\n", api);
+                continue;
+            }
+
+            hash args = {
+                api: id,
+            };
+
+            auto ret = qrest.put("system/metadata/reload", args);
+            if (m_options.verbose > 2) {
+                printf("args: %y ret: %y\n", args, ret);
+            }
+            assertEq(1, ret{return_key});
+        }
+
+        # test system/metadata/reload/<objecttype>
+        foreach string i in (keys reload) {
+            string api = sprintf("system/metadata/reload/%s", i);
+            hash<auto> info;
+            on_error printf("URL: %y API: %y info: %N\n", qrest.getURL(), api, info);
+            auto ret = qrest.put(api, NOTHING, NOTHING, \info);
+            assertEq(True, exists ret, api);
+        }
+
+        # test system/metadata/reload/all
+        {
+            hash<auto> info;
+            on_error printf("URL: %y info: %N\n", qrest.getURL(), info);
+            auto ret = qrest.put("system/metadata/reload/all", NOTHING, NOTHING, \info);
+            assertEq(True, exists ret, "reload all");
+        }
+    } # testReload
+
+    private testSystemServices() {
+        AbstractTable t = getTable("services");
+        hash sh = {
+            "columns": "serviceid",
+            "where": {"service_type": "SYSTEM"},
+        };
+        list ref_ids = t.select(sh).serviceid;
+        auto ret = qrest.get("system/metadata/systemserviceids");
+        assertEq(ref_ids.size(), ret.size());
+    }
+
+    private testMaps() {
+        # get maplist
+        auto maps = qrest.get("system/metadata/maplist");
+        assertEq(True, maps.size() > 0);
+
+        foreach string i in (maps) {
+            string api = sprintf("system/metadata/%s", i);
+            if (m_options.verbose > 2) {
+                printf("dumpMap: %s\n", api);
+            }
+            hash<auto> info;
+            on_error printf("info: %N\n", info);
+            auto ret = qrest.get(api, NOTHING, NOTHING, \info);
+            assertEq(True, ret.val() || i =~ /^logger_/ || i =~ /^pipelines$/ || i =~ /^fsm$/);
+        }
+    }
+
+    private testLookups() {
+        string api_base = "system/metadata/";
+
+        auto ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupstep");
+        ret = qrest.get(api_base + "rlookupstep/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupstep/feedback_parent");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupstep/feedback_parent/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupstep/feedback_parent/1.1");
+        assertEq(True, exists ret);
+
+        int stepid = ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupstep");
+        ret = qrest.get(api_base + "lookupstep/" + "aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupstep/" + stepid);
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "lookupstep/" + stepid + "/1");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "lookupstep/" + stepid + "/true");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "lookupstep/" + stepid + "/0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupsteps");
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupsteps?aaa=1");
+        ret = qrest.get(api_base + "lookupsteps?ids=a");
+        assertEq(hash(), ret);
+        ret = qrest.get(api_base + "lookupsteps?ids=0,"+stepid);
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "lookupsteps?ids=0,"+stepid+"&verbose=1");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "stepid");
+        assertThrows("STEP-ERROR",
+                     \qrest.get(),
+                     api_base + "stepid/aaa");
+        ret = qrest.get(api_base + "stepid/feedback_parent");
+        assertEq(True, exists ret);
+        assertThrows("STEP-ERROR",
+                     \qrest.get(),
+                     api_base + "stepid/feedback_parent/1.0");
+        ret = qrest.get(api_base + "stepid/feedback_parent/1.1");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupfunc");
+        ret = qrest.get(api_base + "rlookupfunc/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupfunc/feedback_array/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupfunc/feedback_array");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupfunc/feedback_array/1.0");
+        assertEq(True, exists ret);
+
+        int funcid = ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupfunc");
+        assertThrows("OMQMAP-LOOKUPFUNC-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupfunc/aaa");
+        ret = qrest.get(api_base + "lookupfunc/" + funcid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "functionid");
+        assertThrows("FUNCTION-ERROR",
+                     \qrest.get(),
+                     api_base + "functionid/aaa");
+        ret = qrest.get(api_base + "functionid/feedback_array");
+        assertEq(True, exists ret);
+        assertThrows("FUNCTION-ERROR",
+                     \qrest.get(),
+                     api_base + "functionid/feedback_array/aaa");
+        ret = qrest.get(api_base + "functionid/feedback_array/1.0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupqueue");
+        ret = qrest.get(api_base + "rlookupqueue/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupqueue/async-test");
+        assertEq(True, exists ret);
+
+        int queueid = ret.queueid;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupqueue");
+        ret = qrest.get(api_base + "lookupqueue/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupqueue/0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupqueue/" + queueid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupsla");
+        ret = qrest.get(api_base + "rlookupsla/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupsla/TODO"); # TODO/FIXME: some existing SLA name?
+        assertEq(NOTHING, ret);
+
+        auto slaid = 0; # TODO/FIXME
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupsla");
+        ret = qrest.get(api_base + "lookupsla/0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupsla/" + slaid);
+        assertEq(NOTHING, ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupworkflow");
+        ret = qrest.get(api_base + "rlookupworkflow/0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupworkflow/DUMMY-TEST");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupworkflow/DUMMY-TEST/1.0");
+        assertEq(True, exists ret);
+
+        int wfid = ret.workflowid;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupworkflow");
+        ret = qrest.get(api_base + "lookupworkflow/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupworkflow/" + wfid);
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "lookupworkflow/" + wfid + "/1");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "workflowid");
+        assertThrows("WORKFLOW-ERROR",
+                     \qrest.get(),
+                     api_base + "workflowid/aaa");
+        ret = qrest.get(api_base + "workflowid/DUMMY-TEST");
+        assertEq(True, exists ret);
+        assertThrows("WORKFLOW-ERROR",
+                     \qrest.get(),
+                     api_base + "workflowid/DUMMY-TEST/0.0");
+        ret = qrest.get(api_base + "workflowid/DUMMY-TEST/1.0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupconstant");
+        ret = qrest.get(api_base + "rlookupconstant/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupconstant/TestConstants1");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupconstant/TestConstants1/0.0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupconstant/TestConstants1/1.0");
+        assertEq(True, exists ret);
+
+        int constantid = ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupconstant");
+        ret = qrest.get(api_base + "lookupconstant/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupconstant/" + constantid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "constantid");
+        assertThrows("CONSTANT-ERROR",
+                     \qrest.get(),
+                     api_base + "constantid/aaa");
+        ret = qrest.get(api_base + "constantid/TestConstants1");
+        assertEq(True, exists ret);
+        assertThrows("CONSTANT-ERROR",
+                     \qrest.get(),
+                     api_base + "constantid/TestConstants1/0.0");
+        ret = qrest.get(api_base + "constantid/TestConstants1/1.0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupclass");
+        ret = qrest.get(api_base + "rlookupclass/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupclass/TestClass1");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupclass/TestClass1/0.0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupclass/TestClass1/1.0");
+        assertEq(True, exists ret);
+
+        int classid = ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupclass");
+        ret = qrest.get(api_base + "lookupclass/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupclass/" + classid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "constantid");
+        assertThrows("CLASS-ERROR",
+                     \qrest.get(),
+                     api_base + "classid/aaa");
+        ret = qrest.get(api_base + "classid/TestClass1");
+        assertEq(True, exists ret);
+        assertThrows("CLASS-ERROR",
+                     \qrest.get(),
+                     api_base + "classid/TestClass1/0.0");
+        ret = qrest.get(api_base + "classid/TestClass1/1.0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupevent");
+        ret = qrest.get(api_base + "rlookupevent/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupevent/event-test");
+        assertEq(True, exists ret);
+
+        int eventid = ret.workflow_event_typeid;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupevent");
+        ret = qrest.get(api_base + "lookupevent/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupevent/" + eventid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupservice");
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupservice/aaa");
+        ret = qrest.get(api_base + "rlookupservice/system/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupservice/system/fs/1.0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupservice/system/fs");
+        assertEq(True, exists ret);
+
+        int serviceid = ret.serviceid;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupservice");
+        ret = qrest.get(api_base + "lookupservice/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupservice/" + serviceid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupserviceinfo");
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupserviceinfo/aaa");
+        ret = qrest.get(api_base + "lookupserviceinfo/system/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupserviceinfo/system/fs");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "serviceid");
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "serviceid/aaa");
+        assertThrows("SERVICE-ERROR",
+                     \qrest.get(),
+                     api_base + "serviceid/system/aaa");
+        assertThrows("SERVICE-ERROR",
+                     \qrest.get(),
+                     api_base + "serviceid/system/fs/0.0");
+        ret = qrest.get(api_base + "serviceid/system/fs");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupjob");
+        ret = qrest.get(api_base + "rlookupjob/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupjob/qorus-archiver");
+        assertEq(True, exists ret);
+
+        int jobid = ret.jobid;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupjob");
+        ret = qrest.get(api_base + "lookupjob/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupjob/" + jobid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "jobid");
+        assertThrows("JOB-ERROR",
+                     \qrest.get(),
+                     api_base + "jobid/aaa");
+        ret = qrest.get(api_base + "jobid/qorus-archiver");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "jobname");
+        assertThrows("JOB-ERROR",
+                     \qrest.get(),
+                     api_base + "jobname/aaa");
+        ret = qrest.get(api_base + "jobname/" + jobid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupmapper");
+        ret = qrest.get(api_base + "rlookupmapper/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupmapper/mapper-sort-test");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "rlookupmapper/mapper-sort-test/0.0");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupmapper/mapper-sort-test/1.0");
+        assertEq(True, exists ret);
+
+        int mapperid = ret;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupmapper");
+        ret = qrest.get(api_base + "lookupmapper/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupmapper/" + mapperid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "mapperid");
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "mapperid/aaa");
+        assertThrows("MAPPER-ERROR",
+                     \qrest.get(),
+                     api_base + "mapperid/mapper-sort-test/0.0");
+        ret = qrest.get(api_base + "mapperid/mapper-sort-test/1.0");
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "rlookupvmap");
+        ret = qrest.get(api_base + "rlookupvmap/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "rlookupvmap/regression1");
+        assertEq(True, exists ret);
+
+        int vmapid = ret.id;
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "lookupvmap");
+        ret = qrest.get(api_base + "lookupvmap/aaa");
+        assertEq(NOTHING, ret);
+        ret = qrest.get(api_base + "lookupvmap/" + vmapid);
+        assertEq(True, exists ret);
+
+        assertThrows("SYSTEM-METADATA-API-ERROR",
+                     \qrest.get(),
+                     api_base + "vmapid");
+        assertThrows("VALUE-MAP-ERROR",
+                     \qrest.get(),
+                     api_base + "vmapid/aaa");
+        ret = qrest.get(api_base + "vmapid/regression1");
+        assertEq(True, exists ret);
+
+        ret = qrest.get(api_base + "workflowlist");
+        assertEq(True, ret.typeCode() == NT_LIST && ret.size() > 0);
+
+        ret = qrest.get(api_base + "servicelist");
+        assertEq(True, ret.typeCode() == NT_LIST && ret.size() > 0);
+
+        ret = qrest.get(api_base + "joblist");
+        assertEq(True, ret.typeCode() == NT_LIST && ret.size() > 0);
+
+        ret = qrest.get(api_base + "getworkflowlist");
+        assertEq(True, exists ret);
+        ret = qrest.get(api_base + "getworkflowlist/1");
+        assertEq(True, exists ret);
+    } # testLookups
+
+} # class Main

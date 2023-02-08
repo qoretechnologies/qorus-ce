@@ -1,0 +1,133 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue1701JobTest
+
+class Issue1701JobTest inherits QorusJobTest {
+    public {}
+
+    constructor() : QorusJobTest("ClassTest", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        RunJobResult job(OMQ::StatComplete);
+        exec(job);
+
+        # test killing a qjob process while running
+        if (!qrest.get("jobs/test-longrun/remote")) {
+            qrest.put("jobs/test-longrun/setRemote", {"remote": True});
+        }
+
+        # get proc ID to kill job while running
+        string proc_id = sprintf("qjob-test-longrun-v1.0-%d", qrest.get("jobs/test-longrun/jobid"));
+
+        # start job execution in the background
+        system("qrest put jobs/test-longrun/run&");
+
+        # wait for job to run
+        waitFor2195();
+
+        # kill the job
+        system("qctl kill " + proc_id);
+    }
+
+    int waitFor2195() {
+        int x = 0;
+        int tid1;
+
+        # check if the job is running remotely or locally
+        if (qrest.get("jobs/test-longrun/remote")) {
+            # get the process ID
+            string proc_id;
+            while (True) {
+                try {
+                    proc_id = qrest.get("jobs/test-longrun/process/id");
+                    break;
+                } catch (hash<ExceptionInfo> ex) {
+                    #UserApi::logDebug("wait_for_2195() ex: %s", get_exception_string(ex));
+                    if (ex.err == "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                        if (++x == 40) {
+                            throw "ERROR";
+                        }
+                        # sleep for 1/4 of a second and check again
+                        usleep(250ms);
+                        if (m_options.verbose > 2) {
+                            printf("checking again %d/40\n", x);
+                        }
+                        continue;
+                    }
+                    rethrow;
+                }
+            }
+            x = 0;
+            bool found;
+            while (True) {
+                string str = backquote("qctl threads " + proc_id);
+                DataLineIterator i(str);
+                while (i.next()) {
+                    string line = i.getValue();
+                    *string tidstr = (line =~ x/TID ([0-9]+)$/)[0];
+                    if (tidstr) {
+                        tid1 = tidstr.toInt();
+                        continue;
+                    }
+                    if (line =~ /job_sleep/) {
+                        if (!tid1) {
+                            throw "ERROR", sprintf("cannot find TID for sleep call in %y", str);
+                        }
+                        found = True;
+                        break;
+                    }
+                }
+                if (found) {
+                    break;
+                }
+                if (++x == 40) {
+                    throw "ERROR";
+                }
+                # sleep for 1/4 of a second and check again
+                usleep(250ms);
+                if (m_options.verbose > 2) {
+                    printf("checking again %d/40\n", x);
+                }
+            }
+        } else {
+            while (True) {
+                hash<auto> h = qrest.get("/debug/threads");
+                foreach hash<auto> qth in (h.pairIterator()) {
+                    if (qth.value[2].function == "job_sleep" && qth.value[2].file =~ /test-longrun/) {
+                        tid1 = qth.key.toInt();
+                        break;
+                    }
+                }
+                if (tid1) {
+                    break;
+                }
+
+                #UserApi::logDebug("tl: %y; sleeping", tl);
+                if (++x == 40) {
+                    throw "ERROR";
+                }
+                # sleep for 1/4 of a second and check again
+                usleep(250ms);
+                if (m_options.verbose > 2) {
+                    printf("checking again %d/40\n", x);
+                }
+            }
+        }
+        return tid1;
+    }
+}

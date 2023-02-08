@@ -1,0 +1,24 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class MapperTest1 inherits QorusNormalStep, MapperProviderTest {
+    primary() {
+        # skip step if there is no omquser datasource
+        try {
+            callRestApi("GET", "remote/datasources/omquser/up");
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REST-CLASS-ERROR" && ex.err != "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                rethrow;
+            }
+            UserApi::logInfo("no omquser datasource; skipping tests");
+            return;
+        }
+
+        UserApi::logInfo("MapperTest1 called");
+        Mapper mapper = getMapper("mapper-test-1");
+        deleteOutput(mapper);
+        testMapper(mapper);
+    }
+}

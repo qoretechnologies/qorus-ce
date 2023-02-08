@@ -1,0 +1,32 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3485-python-test
+desc: Python pipeline test job
+lang: python
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3485PythonTest
+fsm:
+    [
+        {
+            "name": "python-test-fsm",
+            "triggers": [
+                {
+                    "method": "run"
+                }
+            ]
+        }
+    ]
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+
+tags:
+    TEST: issue-3485
+code: issue-3485-python-test-1.0.qjob.py

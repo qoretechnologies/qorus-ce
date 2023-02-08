@@ -1,0 +1,54 @@
+# service: test-debug_service_cb
+# class-name: TestDebugService
+# serviceversion: 1.0
+# servicetype: USER
+# servicedesc: Test debug class based service
+# class-based: true
+# lang: qore
+# functions: test-debug_func
+# constants: test-debug_const
+# classes: test-debug_class
+# ENDSERVICE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+
+class TestDebugService inherits QorusService {
+
+    # lock: none
+    # name: init
+    # desc: initializes the service
+    init() {
+        UserApi::logDebug("Init service");
+    }
+
+    # name: about
+    # desc: About
+    string about() {
+        return "test service";
+    }
+
+    # name: hello
+    # desc: Hello
+    hello() {
+        UserApi::logInfo("%s", getHello());
+    }
+
+    # name: getClass
+    # desc: Get class
+    TestDebugClass getClass() {
+        return new TestDebugClass();
+    }
+
+    # name: createWorkflowOrder
+    # desc: Create workflow order
+    const WF = "TEST-DEBUG_WORKFLOW_CB";
+
+    any createWorkflowOrder() {
+        string uuid = UUID::get();
+        return UserApi::createOrder(WF, NOTHING, ( "staticdata": ( "test": "TEST" ), "orderkeys": ("id": uuid)));
+    }
+}

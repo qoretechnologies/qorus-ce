@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class FsmRetryTestStep inherits QorusNormalStep {
+    primary() {
+        *hash<auto> dd = getDynamicData();
+        if (!dd.run) {
+            updateDynamicData({"run": True});
+            stepError("RETRY-ERROR", "retry", 1ms);
+            return;
+        }
+        logInfo("error already thrown");
+    }
+}

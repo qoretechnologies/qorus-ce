@@ -1,0 +1,50 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# desc: ref-test workflow test function
+# author: Qore Technologies, sro
+sub ref_test_1() {
+    # do nothing here
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: ref-test workflow array function
+# author: Qore Technologies, sro
+sub ref_test_array() {
+    # return NOTHING for array step
+    if (WorkflowApi::getStepInfo().name == "ref_test_async")
+    	return;
+
+    return True;
+}
+# END
+
+# type: ARRAY
+# version: 1.0
+# desc: ref-test workflow array function
+# author: Qore Technologies, sro
+sub ref_test_end() {
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: re-test workflow async test function
+# author: Qore Technologies, sro
+sub ref_test_async($element) {
+    UserApi::skipAsyncStep();
+}
+# END
+
+# type: SUBWORKFLOW
+# version: 1.0
+# desc: ref-test workflow subworkflow function
+# author: Qore Technologies, sro
+sub ref_test_swf() {
+    UserApi::bindSubworkflow(("name":"SWF-TEST","version":"1.0"), ("staticdata":("a":"b")));
+}
+# END

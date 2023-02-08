@@ -1,0 +1,23 @@
+
+# name: TestClass1
+# version: 1.0
+# desc: test class
+# author: Qore Technologies, sro
+class TestClass1 {
+    constructor() {
+	printf("TestClass1::constructor()\n");
+    }
+}
+# END
+
+# name: TestClass2
+# version: 1.0
+# desc: test class
+# author: Qore Technologies, sro
+class TestClass2 {
+    constructor() {
+	printf("TestClass2::constructor()\n");
+    }
+}
+# END
+

@@ -1,0 +1,11 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class QoreConnectorTest {
+    string test(auto input) {
+        UserApi::logInfo("got input: %y", input);
+        return "qore-test";
+    }
+}

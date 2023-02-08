@@ -1,0 +1,38 @@
+# type: GENERIC
+# version: 1.0
+# desc: Qore regression test main step class
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub regression_test_onetimeinit() {
+    UserApi::getRunningWorkflowList();
+    test_value(True, True, "UserApi::getRunningWorkflowList");
+
+    UserApi::setOption(("test-opt": True));
+    UserApi::logInfo("option set");
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: Qore regression test main step class
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub regression_test_attach() {
+    hash<auto> h = WorkflowApi::getWorkflowInstanceData();
+    if (h.instancemode == "NORMAL") {
+        UserApi::logInfo("skipping initstatus test for non-synchronous execution");
+        return;
+    }
+    test_value(h.initstatus, OMQ::StatInProgress, "attach-1");
+}
+# END

@@ -1,0 +1,17 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - connection
+  name:
+    type: string
+    max-length: 160
+  desc:
+    type: string
+    max-length: 4000
+  url:
+    type: string
+
+optional:
+  options:
+    type: hash

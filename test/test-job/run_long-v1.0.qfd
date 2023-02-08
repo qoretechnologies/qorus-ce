@@ -1,0 +1,17 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# desc: running long job
+# author: Qore Technologies, sro
+%new-style
+sub runlongjob() {
+    #UserApi::logInfo("workflow metadata=%n", getWorkflowMetadata());
+    QorusSystemRestHelper qrest();
+    UserApi::logInfo("5s job starting");
+    hash h = qrest.put("jobs/test-longrun/run");
+    UserApi::logInfo("5s job finished: %y", h);
+}
+# END
+

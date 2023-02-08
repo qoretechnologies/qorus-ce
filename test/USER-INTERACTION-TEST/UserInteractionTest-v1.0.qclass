@@ -1,0 +1,66 @@
+# name: UserInteractionTest
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class UserInteractionTest inherits QorusAsyncStep, QoreTest {
+    public {
+        const DefaultMetadata = {
+            "test": 3,
+        };
+
+        const DefaultData = {
+            "test": 1,
+        };
+
+        const NewData = {
+            "test2": 2,
+        };
+
+        const AllData = DefaultData + NewData;
+    }
+
+    primary() {
+        hash<auto> h = getStepInfo();
+        #logInfo("h: %y", h);
+        assertTrue(h.user_interaction);
+
+        # test step metadata
+        assertEq(DefaultMetadata, UserApi::callRestApi("GET", "steps/user-interaction-test-1/userdata"));
+
+        hash<auto> stepdata = getStepData();
+        assertEq(DefaultData, stepdata);
+        # ensure that the REST order response has the step data when the order is cached
+        assertEq(DefaultData, UserApi::callRestApi("GET", "orders/" + getWfiid() + "/stepdata")[0].data[0]);
+
+        updateStepData(NewData);
+        stepdata = getStepData();
+        assertEq(AllData, stepdata);
+        assertEq(AllData, UserApi::callRestApi("GET", "orders/" + getWfiid() + "/stepdata/")[0].data[0]);
+
+        StepDataHelper sdh();
+        assertEq(AllData, sdh.get());
+        assertThrows("LOCK-ERROR", sub () { new StepDataHelper(); });
+
+        string key = generateUniqueKey();
+        logInfo("using key %y", key);
+        submitAsyncKey(key);
+    }
+
+    end(auto end_data) {
+    }
+
+    *hash<auto> getDefaultStepData() {
+        return DefaultData;
+    }
+
+    *hash<auto> getStepMetadata() {
+        return DefaultMetadata;
+    }
+}
+# END

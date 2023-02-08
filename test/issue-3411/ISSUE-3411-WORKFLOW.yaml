@@ -1,0 +1,8 @@
+type: workflow
+name: ISSUE-3411-WORKFLOW
+version: "1.0"
+desc: ISSUE-3411-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+steps: ["Issue3411Step:1.0"]

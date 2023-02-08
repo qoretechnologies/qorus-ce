@@ -1,0 +1,38 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - config-item-values
+  config-item-values:
+    type: list
+    element-type: config-item-value
+
+definitions:
+  config-item-value:
+    required:
+      name:
+        type: string
+      value:
+        type: any
+      is_value_templated_string:
+        type: bool
+        default: false
+      interface-type:
+        type: string
+        allowed-values:
+          # require name and version
+          - step
+          - workflow
+          - job
+          - service
+          # doesn't require name and version
+          - global
+    optional:
+      interface-name:
+        type: string
+      interface-version:
+        type: string
+      prefix:
+        type: string
+      value_true_type:  # only used in the IDE
+        type: string

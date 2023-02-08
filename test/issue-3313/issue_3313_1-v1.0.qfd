@@ -1,0 +1,56 @@
+# type: STEP
+# name: issue_3313_1
+# version: 1.0
+# desc: Qore test step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+%requires Schema
+
+const T_Issue_3313 = {
+    "columns": {
+        "id": c_int(True, "PK ID field"),
+    },
+};
+
+const TestSchema = (
+    "tables": (
+        "issue_3313_1": T_Issue_3313,
+        "issue_3313_2": T_Issue_3313,
+    ),
+);
+
+const SchemaOptions = {
+    "replace": True,
+};
+
+sub issue_3313_1() {
+    if (!UserApi::callRestApi("GET", "remote/datasources/omquser/up")) {
+        UserApi::logInfo("no omquser, skipping");
+        return;
+    }
+
+    # ensure start with always the same schema status
+    UserApi::callRestApi("PUT", "services/sqlutil/drop_schema?action=call", ("args": ("omquser", TestSchema)));
+    # create test schema from scratch
+    omqservice.system.sqlutil.align_schema("omquser", TestSchema, SchemaOptions);
+    UserApi::logInfo("created issue 3313 test schema");
+
+    InboundTableMapper m1 = UserApi::getMapper("issue-3313-1");
+
+    UserApi::logInfo("about to reset datasource");
+    # reset omquser datasource
+    UserApi::callRestApi("PUT", "remote/datasources/omquser?action=reset");
+    UserApi::logInfo("datasource reset");
+
+    InboundTableMapper m2 = UserApi::getMapper("issue-3313-2");
+    AbstractDatasource d1 = m1.getDatasource();
+    AbstractDatasource d2 = m2.getDatasource();
+    if (d1 != d2) {
+        throw "ERR", sprintf("d1: %s != d2: %s", d1.uniqueHash(), d2.uniqueHash());
+    }
+}
+# END

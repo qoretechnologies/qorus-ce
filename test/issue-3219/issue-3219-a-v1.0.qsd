@@ -1,0 +1,56 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3219-a
+# serviceversion: 1.0
+# class-name: Issue3219
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# serviceauthor: Qore Technologies, s.r.o.
+# servicedesc: test service
+# autostart: false
+# remote: false
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class ARestClass inherits AbstractRestClass {
+    constructor() : AbstractRestClass() {}
+
+    string name() {
+        return "a";
+    }
+
+    hash<auto> get(hash<auto> cx, *hash<auto> ah) {
+        UserApi::logInfo("A: cx: %N\nah: %N", cx, ah);
+        return RestHandler::makeResponse(200, "issue-3219-a");
+    }
+}
+
+class Issue3219ARestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("/issue-3219-a", False, new PermissiveAuthenticator()) {
+        addClass(new ARestClass());
+        addListener(ServiceApi::getConfigItemValue("issue-3219-port"));
+    }
+
+    removeRootPath(reference<string> path) {
+        path =~ s/^\/*issue-3219-a//;
+    }
+}
+
+class Issue3219 inherits QorusService {
+    # desc: init
+    # name: init
+    init() {
+        Issue3219ARestHandler rh();
+        bindHttp(rh, <HttpBindOptionInfo>{"allow_listener_sharing": True});
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3219-port": <ConfigItemInfo>{
+                "type": "int",
+                "description": "port # to use",
+            },
+        };
+    }
+}

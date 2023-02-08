@@ -1,0 +1,24 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+$groups.regression.desc = "regression test group";
+
+const Sla1 = {
+    "name": "sla1:1.0",
+};
+
+const Steps = (
+    Sla1,
+);
+
+$workflows."SLA-TEST"."1.0" = {
+    "author": "Qore Technologies, s.r.o.",
+    "desc": "SLA test workflow",
+    "steps": Steps,
+    "sla_threshold": 1,
+    "remote": True,
+    "autostart": 0,
+    "groups": ("test", "regression"),
+};

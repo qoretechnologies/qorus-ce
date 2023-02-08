@@ -1,0 +1,13 @@
+type: workflow
+name: ISSUE-3326-WORKFLOW
+version: "1.0"
+desc: ISSUE-3326-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+steps: ["issue3326step:1.0"]
+config-item-values:
+  - name: issue-3326-test-config-item-1
+    value:
+      x: 12345
+  - name: issue-3326-test-config-item-3
+    value: 3.22

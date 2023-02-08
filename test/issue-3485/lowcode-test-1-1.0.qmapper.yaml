@@ -1,0 +1,256 @@
+# This is a generated file, don't edit!
+type: mapper
+name: lowcode-test-1
+desc: low code mapper test 1
+author:
+  - Qore Technologies, s.r.o.
+options:
+    mapper-input:
+        type: type
+        name: qore
+        path: /hash
+        can_manage_fields: true
+        custom-fields:
+            a:
+                name: a
+                desc: a
+                type:
+                    typename: string
+                    name: string
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: a
+                parentPath: false
+            b:
+                name: b
+                desc: b
+                type:
+                    typename: string
+                    name: string
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: b
+                parentPath: false
+            c:
+                name: c
+                desc: c
+                type:
+                    typename: string
+                    name: string
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: c
+                parentPath: false
+    mapper-output:
+        type: type
+        name: qore
+        path: /hash
+        can_manage_fields: true
+        custom-fields:
+            d:
+                name: d
+                desc: d
+                type:
+                    typename: string
+                    name: softstring
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: d
+                parentPath: false
+            e:
+                name: e
+                desc: e
+                type:
+                    typename: string
+                    name: softstring
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: e
+                parentPath: false
+            f:
+                name: f
+                desc: f
+                type:
+                    typename: string
+                    name: softstring
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: f
+                parentPath: false
+mappertype: Mapper
+version: '1.0'
+fields:
+    d:
+        name: a
+    e:
+        name: b
+    f:
+        name: c

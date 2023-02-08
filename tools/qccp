@@ -1,0 +1,739 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+
+%exec-class Qccp
+
+const ApiSourceFiles = (
+    "lib/qorus-common-server-api.ql",
+    "lib/qorus-common-master-core-client.ql",
+    "lib/misc.ql",
+);
+
+#! a map of sources for the fake API modules
+/** common declarations must be loaded privately, as they are loaded only once into the target program
+
+    unique interface API classes are loaded publicly
+
+    @note The files listed here must be added as manual dependencies of the qccp command
+*/
+const IxSources = {
+    "CommonApi": (
+        {
+            "file": "lib/qorus.ql",
+            "public": True,
+        },
+        {
+            "file": "Classes/CommonInterfaceBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/ThreadLocalData.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusSystemRestHelperBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusSystemAPIHelperBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusMethodGateHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusServiceHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusRemoteServiceHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/UserApi.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusConfigurationItemProvider.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/Streams.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/Mappers.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/ObserverPattern.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/Pipeline/QorusPipelineFactory.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusRestartableTransaction.qc",
+            "public": True,
+        },
+    ),
+    "WorkflowApi": (
+        {
+            "file": "Classes/WorkflowApi.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusWorkflow.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/DynamicDataHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/StepDataHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/TempDataHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/SensitiveDataHelper.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusStepBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusAsyncStepBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusEventStepBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusSubworkflowStepBase.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusAsyncArrayStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusAsyncStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusEventArrayStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusEventStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusNormalArrayStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusNormalStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusSubworkflowArrayStep.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusSubworkflowStep.qc",
+            "public": True,
+        },
+    ),
+    "ServiceApi": (
+        {
+            "file": "Classes/ServiceApi.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusService.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/AbstractServiceHttpHandler.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/AbstractFtpHandler.qc",
+            "public": True,
+        },
+    ),
+    "JobApi": (
+        {
+            "file": "Classes/JobApi.qc",
+            "public": True,
+        },
+        {
+            "file": "Classes/QorusJob.qc",
+            "public": True,
+        },
+    ),
+    "MapperApi": (
+        {
+            "file": "Classes/MapperApi.qc",
+            "public": True,
+        },
+    ),
+};
+
+const ApiArgs = (
+);
+
+const Mods = {
+    "private": True,
+    "static": True,
+    "synchronized": True,
+    "deprecated": True,
+    "public": True,
+    "final": True,
+    "abstract": True,
+};
+
+const Opts = {
+    "apimods": "a,apimods",
+    "verbose": "v,verbose",
+
+    "h": "h,help",
+};
+
+class Qccp {
+    public {
+        string output_dir;
+        hash<auto> opts;
+    }
+
+    constructor() {
+        opts = GetOpt::parseExit(Opts, \ARGV);
+
+        if (opts.apimods) {
+            makeApiModules();
+        } else {
+            copyProcessFile();
+        }
+    }
+
+    # build QorusClient* modules from sources
+    copyProcessFile() {
+        string input_path = shift ARGV;
+        output_dir = shift ARGV ?? (ENV.OMQ_DIR + DirSep + "qlib");
+        string ofn = output_dir + DirSep + basename(input_path);
+
+        printf("copying %y -> %y\n", input_path, ofn);
+
+        File f();
+        f.open2(ofn, O_CREAT | O_WRONLY | O_TRUNC);
+
+        FileLineIterator i(input_path);
+        while (i.next()) {
+            string line = i.getValue();
+            *string fn = (line =~ x/^%include +(.*)$/)[0];
+            if (fn) {
+                writeIncludeFile(f, fn);
+                continue;
+            }
+
+            f.write(line + "\n");
+        }
+    }
+
+    private writeIncludeFile(File f, string fn) {
+        QorusFileLineIterator i(fn);
+        map f.write($1 + "\n"), i;
+    }
+
+    makeApiModules() {
+        int size = 0;
+        hash<auto> api;
+
+        string source_dir = shift ARGV ?? (ENV.QORUS_GIT_ROOT + DirSep + "qorus");
+        output_dir = shift ARGV ?? (ENV.OMQ_DIR + DirSep + "qlib");
+
+        foreach string fn in (ApiSourceFiles) {
+            int fsize = 0;
+            #printf("reading %y: ", fn);
+
+            # namespace list
+            list<string> nl = ();
+            # curly bracket count
+            int cbc = 0;
+
+            if (source_dir) {
+                fn = sprintf("%s%s%s", source_dir, DirSep, fn);
+            }
+
+            QorusFileLineIterator i(fn, True);
+            while (i.next()) {
+                string l = i.getValue();
+
+                *string str = (l =~ x/namespace\s+([a-z_0-9]+)\s*{/i)[0];
+                if (str) {
+                    if (!exists api{str})
+                        api{str} = ();
+                    #printf("%s:%d: added namespace %s\n", fn, i.index(), str);
+                    nl += str;
+                    continue;
+                }
+
+                if (!cbc) {
+                    if (l =~ /sub /) {
+                        bool ignore_args;
+                        foreach string aa in (ApiArgs) {
+                            if (l.find(aa) != -1) {
+                                ignore_args = True;
+                                break;
+                            }
+                        }
+
+                        string rv;
+
+                        # get return type
+                        *string rt = (l =~ x/([\*a-zA-Z:]+)\s+sub/)[0];
+                        if (rt) {
+                            if (Mods{rt} || rt =~ /^\*/)
+                                delete rt;
+                            else {
+                                switch (rt) {
+                                    case "softstring":
+                                    case "string":
+                                    case "data":
+                                        rv += "\"\""; break;
+                                    case "softint":
+                                    case "int": rv += "0"; break;
+                                    case "softbool":
+                                    case "bool": rv += "False"; break;
+                                    case "softfloat":
+                                    case "float": rv += "0.0"; break;
+                                    case "softnumber":
+                                    case "number": rv += "0n"; break;
+                                    case "binary": rv += "binary()"; break;
+                                    case "hash": rv += "{}"; break;
+                                    case "softlist":
+                                    case "list": rv += "()"; break;
+                                    case "nothing":
+                                    case "any":
+                                        delete rt; break;
+                                    case "object": rv += "new Dir()"; break;
+                                    case "QorusSystemAPIHelper": rv += "new QorusSystemAPIHelper()"; break;
+                                    case "QorusSystemRestHelper": rv += "new QorusSystemRestHelper()"; break;
+                                    case "Datasource":
+                                    case "Qore::SQL::Datasource":
+                                        rv += "new Datasource('')";
+                                        break;
+                                    case "DatasourcePool":
+                                    case "Qore::SQL::DatasourcePool":
+                                        rv += "new DatasourcePool('')";
+                                        break;
+                                }
+                            }
+                        }
+
+                        if (rt)
+                            rv = (rv.val() ? ("return " + rv) : sprintf("throw \"FAKE-API-ERROR-%d\"", i.index())) + ";";
+
+                        string targ = sprintf("{%s%s}", ignore_args ? "delete argv;" : "", rv);
+
+                        l = regex_subst(l, "({(\s*}\s*)?)?$", targ);#");
+
+                        # remove excess spaces
+                        l =~ s/\s+/ /g;
+                        l =~ s/^\s*//;
+
+                        # add public flag
+                        if (l !~ /public /) {
+                            l = "public " + l;
+                        }
+
+                        # normalize declarations
+                        l =~ s/deprecated public/public deprecated/g;
+
+                        api{nl ? nl.last() : "::"} += l;
+                        ++size;
+                        ++fsize;
+                    }
+                }
+
+                if (l =~ /{|}/) {
+                    # count number of open brackets in line
+                    int no = (l =~ x/({)/g).size();
+                    # count number of close brackets in line
+                    int nc = (l =~ x/(})/g).size();
+                    if (no == nc)
+                        continue;
+                    if (no > nc) {
+                        cbc += (no - nc);
+                        continue;
+                    }
+                    while (nc-- > no) {
+                        if (cbc)
+                            --cbc;
+                        else {
+                            if (!nl)
+                                throw "ERROR", sprintf("%s:%d: nl: %y", fn, i.index(), nl);
+
+                            #string nsn = pop nl;
+                            #printf("%s:%d: popped namespace %s\n", fn, i.index(), nsn);
+                        }
+                    }
+                }
+            }
+            #printf("done (%d function%s)\n", fsize, fsize == 1 ? "" : "s");
+        }
+
+        foreach hash<auto> i in (IxSources.pairIterator()) {
+            foreach hash<auto> rec in (i.value) {
+                string fn = source_dir ? source_dir + "/" + rec.file : rec.file;
+                string source = QorusFileLineIterator::readTextFile(fn, True);
+                if (!rec."public") {
+                    # make all declarations private
+                    source =~ s/public\s+(?!{|namespace)/$1/g;
+                }
+                api{i.key}{basename(rec.file)} = source;
+            }
+        }
+
+        #printf("api: %y\n", api.keys());
+
+        # output fake API modules
+        outputCommonModule(api);
+        outputWorkflowModule(api);
+        outputServiceModule(api);
+        outputJobModule(api);
+        outputMapperModule(api);
+    }
+
+    private doApi(File f, hash<auto> api, string key) {
+        map f.printf("# file: %s\n%s\n", $1.key, $1.value), api{key}.pairIterator();
+    }
+
+    private File doModuleHeader(string base) {
+        string mod = sprintf("QorusFakeApi%s", base);
+        string ofn = sprintf("%s%s%s.qm", output_dir, DirSep, mod);
+        if (opts.verbose) {
+            printf("creating %y\n", ofn);
+        }
+
+        File f();
+        f.open2(ofn, O_CREAT | O_WRONLY | O_TRUNC);
+
+        string extra_requires = base == "Common"
+            ? ""
+            : "%requires QorusFakeApiCommon\n";
+
+        # print out module header
+        f.printf("# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file %s.qm Qorus Fake API Module
+/*
+    Copyright 2016 - %d Qore Technologies, s.r.o., All Rights Reserved
+
+    AUTOMATICALLY GENERATED; DO NOT EDIT
+*/
+
+# minimum Qore version
+%%requires qore >= %s
+
+%s
+%%require-types
+%%enable-all-warnings
+%%new-style
+%%strict-args
+%%disable-warning unreferenced-variable
+
+%%requires Mapper
+%%requires SqlUtil
+%%requires TableMapper
+%%requires Qorize
+%%requires Logger
+%%requires Util
+%%requires DataStreamClient
+%%requires YamlRpcClient
+%%requires FileLocationHandler
+%%requires xml
+%%requires yaml
+%%requires json
+
+module QorusFakeApi%s {
+    version = \"1.0\";
+    desc    = \"Fake %s API for Qorus\";
+    author  = \"Qore Technologies, s.r.o.\";
+    url     = \"https://qoretechnologies.com\";
+    license = \"proprietary\";
+}\n\n",
+            mod, now().years(), VersionString, extra_requires, base, base);
+
+        return f;
+    }
+
+    private outputCommonModule(hash<auto> api) {
+        File f = doModuleHeader("Common");
+
+        f.printf("public namespace OMQ {
+    # non-functional classes that can only be used for simple parse-time validation
+    public class QorusSystemAPIHelper;
+    public class QorusSystemRestHelper inherits QorusSystemRestHelperBase {
+        autoSetUrl(*hash opts) {}
+        auto restDo(string m, string path, auto args, *hash<auto> hdr, *hash<auto> opt, *reference<hash> info) {}
+        warning(string fmt) {}
+    }
+    class Dummy { auto methodGate(string m) { delete argv; }}
+    our Dummy omqclient;
+    our QorusSystemRestHelper qrest;
+    auto sub qorus_get_system_options() {delete argv;}
+    string sub get_url_from_option(string prot, softstring opt, *string username, *string password) {}
+    int sub convert_old_log_level(int old_lvl) { return 1; }
+}\n");
+
+        # make common api
+        map f.printf("%s\n", $1), api."::";
+        f.print("public namespace OMQ { public namespace UserApi {\n");
+        map f.printf("%s\n", $1), api.UserApi;
+        f.print("}}\n");
+
+        doApi(f, api, "CommonApi");
+    }
+
+    private outputWorkflowModule(hash<auto> api) {
+        File f = doModuleHeader("Workflow");
+
+        # make workflow api
+        f.printf("OMQ::ThreadLocalData tld;\n");
+        f.printf("public namespace OMQ { public namespace UserApi { public namespace Workflow {\n");
+        map f.printf("%s\n", $1), api.Workflow;
+        f.print("}}}\n");
+
+        doApi(f, api, "WorkflowApi");
+    }
+
+    private outputServiceModule(hash<auto> api) {
+        File f = doModuleHeader("Service");
+
+        # make service api
+        f.printf("%%requires(reexport) RestHandler\n");
+        f.printf("%%requires HttpServerUtil\n");
+        f.printf("%%requires WebUtil\n");
+        f.printf("%%requires WebSocketHandler\n");
+        f.printf("%%requires DataStreamRequestHandler\n");
+        f.printf("%%requires SoapHandler\n");
+        f.printf("%%requires WSDL\n");
+
+        f.printf("OMQ::ThreadLocalData tld;\n");
+        f.printf("public class DefaultQorusRBACAuthenticator inherits public HttpServer::AbstractAuthenticator;
+public class DefaultQorusRBACBasicAuthenticator inherits DefaultQorusRBACAuthenticator;
+public class QorusParametrizedAuthenticator inherits public HttpServer::AbstractAuthenticator;
+public class QorusCookieAuthenticator inherits DefaultQorusRBACAuthenticator {
+    public { const DefaultCookie = 'qorus_auth_token'; }
+}\n");
+        f.printf("public namespace OMQ { public namespace UserApi { public namespace Service {\n");
+        map f.printf("%s\n", $1), api.Service;
+        f.print("}}}\n");
+
+        doApi(f, api, "ServiceApi");
+    }
+
+    private outputJobModule(hash<auto> api) {
+        File f = doModuleHeader("Job");
+
+        # make job api
+        f.print("public namespace OMQ { public namespace UserApi { public namespace Job {\n");
+        map f.printf("%s\n", $1), api.Job;
+        f.print("}}}\n");
+
+        doApi(f, api, "JobApi");
+    }
+
+    private outputMapperModule(hash<auto> api) {
+        string ofn = sprintf("%s%sQorusFakeApiMapper.qm", output_dir, DirSep);
+        if (opts.verbose) {
+            printf("creating %y\n", ofn);
+        }
+
+        File f();
+        f.open2(ofn, O_CREAT | O_WRONLY | O_TRUNC);
+
+        # generate module source
+        f.printf("# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusMqpper.qm Qorus Fake API Module
+/*
+    Copyright 2016 - %d Qore Technologies, s.r.o., All Rights Reserved
+
+    AUTOMATICALLY GENERATED; DO NOT EDIT
+*/
+
+# minimum Qore version
+%%requires qore >= %s
+
+%%require-types
+%%enable-all-warnings
+%%new-style
+%%strict-args
+%%disable-warning unreferenced-variable
+
+module QorusFakeApiMapper {
+    version = \"1.0\";
+    desc    = \"Fake Mapper API for Qorus\";
+    author  = \"Qore Technologies, s.r.o.\";
+    url     = \"https://qoretechnologies.com\";
+    license = \"proprietary\";
+}
+", now().years(), VersionString);
+
+        doApi(f, api, "MapperApi");
+    }
+}
+
+class QorusFileLineIterator inherits FileLineIterator {
+    private:internal {
+        string line;
+        bool block_comment;
+        bool fake_api;
+
+        list<auto> if_stack;
+    }
+
+    constructor(string fn, bool fake_api = False) : FileLineIterator(fn) {
+        self.fake_api = fake_api;
+    }
+
+    bool next() {
+        int inhibit_write_count = 0;
+
+        while (True) {
+            if (!FileLineIterator::next()) {
+                delete line;
+                return False;
+            }
+
+            string line = FileLineIterator::getValue();
+
+            if (line =~ /^%endif/) {
+                if (!if_stack) {
+                    throw "ENDIF-ERR", getFileName();
+                }
+                auto val = pop if_stack;
+                if (val) {
+                    --inhibit_write_count;
+                    continue;
+                }
+                if (!exists val) {
+                    continue;
+                }
+            }
+
+            if (line =~ /^%ifdef QorusServer/
+                || line =~ /^%ifdef QorusQwfServer/
+                || line =~ /^%ifdef QorusQsvcServer/
+                || line =~ /^%ifdef QorusQjobServer/
+                || line =~ /^%ifdef QorusCore/
+                || line =~ /^%ifdef QorusClusterServer/) {
+                ++inhibit_write_count;
+                if_stack += True;
+                continue;
+            } else if (line =~ /^%if/) {
+                if_stack += False;
+            }
+
+            if (inhibit_write_count) {
+                if (line =~ /^%else/) {
+                    if (if_stack.last()) {
+                        --inhibit_write_count;
+                        if (!inhibit_write_count) {
+                            if_stack[if_stack.size() - 1] = NOTHING;
+                        } else {
+                            if_stack[if_stack.size() - 1] = False;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (fake_api) {
+                if (line =~ /%ifndef QorusFakeApi/ || line =~ /^%ifdef QorusClient/) {
+                    ++inhibit_write_count;
+                    if_stack[if_stack.size() - 1] = True;
+                    continue;
+                }
+            }
+
+            # remove group line comments
+            line =~ s/#\/@.*//;
+
+            # remove line comments (BROKEN - breaks the code)
+            #line =~ s/([^\$("?]|^)#.*/$1/;
+
+            # process block comments
+            if (block_comment) {
+                if (line =~ /\*\//) {
+                    line =~ s/.*\*\///;
+                    block_comment = False;
+                } else {
+                    continue;
+                }
+            } else if (line =~ /([^\"]|^)\/\*/) {
+                int pos = line.find("/*");
+                int close = line.find("*/", pos + 2);
+                if (close > 0) {
+                    # remove block quote but do not set flag
+                    splice line, pos, close - pos + 2;
+                } else {
+                    # remove start of block quote and set flag
+                    splice line, pos;
+                    block_comment = True;
+                }
+            }
+
+            # ignore blank lines or QDBG_ lines
+            if (!line.val() || line =~ /^\s*$/) {
+                continue;
+            }
+
+            if (line =~ /QDBG_/) {
+                bool brk;
+                while (line !~ /;\w*$/) {
+                    if (!FileLineIterator::next()) {
+                        brk = True;
+                        break;
+                    }
+                    line = FileLineIterator::getValue();
+                }
+                if (brk) {
+                    break;
+                }
+                continue;
+            }
+
+            # substitute API calls that require higher permissions
+            line =~ s/get_all_thread_call_stacks\(\)/{}/;
+
+            self.line = line;
+            break;
+        }
+        return True;
+    }
+
+    string getValue() {
+        if (!line.val()) {
+            throw "ITERATOR-ERROR", "iterator is not valid";
+        }
+        return line;
+    }
+
+    static string readTextFile(string fn, bool fake_api = False) {
+        QorusFileLineIterator i(fn, fake_api);
+        return foldl $1 + "\n" + $2, i;
+    }
+}

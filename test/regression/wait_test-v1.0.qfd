@@ -1,0 +1,16 @@
+# type: GENERIC
+# version: 1.0
+# desc: Qore wait test step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub wait_test() {
+    int wait_secs = WorkflowApi::getStaticData().wait ?? 20;
+    UserApi::logInfo("waiting for %d seconds...", wait_secs);
+    UserApi::sleep(wait_secs);
+    UserApi::logInfo("done");
+}
+# END

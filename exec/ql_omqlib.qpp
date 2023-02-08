@@ -1,0 +1,120 @@
+/*
+    ql_omqlib.cpp
+*/
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include <qore/Qore.h>
+#include "ql_omqlib.h"
+
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <errno.h>
+
+/** @defgroup rlimit_constants Rlimit Constants
+    Rlimit constants
+*/
+///@{
+//! nofile
+/**
+*/
+const RLIMIT_NOFILE = RLIMIT_NOFILE;
+
+//! nofile
+/**
+*/
+const RLIMIT_NPROC = RLIMIT_NPROC;
+///@}
+
+/** @defgroup qorus_internal_functions Qorus internal functions
+ */
+///@{
+//! assuming a sorted list of integers, find if the passed value is contained in the list, and, if not, write out the first integer value that is greater than the passed value in the reference
+/**
+*/
+bool omq_inlist_sorted(int i, list<auto> l, reference r) [flags=CONSTANT] {
+    ConstListIterator li(l);
+    while (li.next()) {
+        QoreValue n = li.getValue();
+        assert(n.getType() == NT_INT);
+        int bi = n.getAsBigInt();
+        if (bi == i)
+            return true;
+
+        // write back number to reference
+        if (bi > i) {
+            QoreTypeSafeReferenceHelper ref(r, xsink);
+            if (!ref)
+                return QoreValue();
+            ref.assign(bi);
+            return false;
+        }
+    }
+
+    return false;
+}
+
+//! returns the current \c nofile soft limit value
+/**
+*/
+int get_limit_soft_nofile() [flags=RET_VALUE_ONLY] {
+    rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl)) {
+        xsink->raiseErrnoException("GET-LIMIT-ERROR", errno, "getrlimit(RLIMIT_NOFILE) error");
+        return QoreValue();
+    }
+    return (int64)rl.rlim_cur;
+}
+
+//! returns the current \c nofile soft limit value
+/**
+*/
+int get_limit_soft_nproc() [flags=RET_VALUE_ONLY] {
+    rlimit rl;
+    if (getrlimit(RLIMIT_NPROC, &rl)) {
+        xsink->raiseErrnoException("GET-LIMIT-ERROR", errno, "getrlimit(RLIMIT_NPROC) error");
+        return QoreValue();
+    }
+    return (int64)rl.rlim_cur;
+}
+
+//! Returns the given limit
+int getrlimit_soft(int resource) [flags=RET_VALUE_ONLY] {
+    rlimit rl;
+    if (getrlimit(resource, &rl)) {
+        xsink->raiseErrnoException("GET-LIMIT-ERROR", errno, "getrlimit() error");
+        return QoreValue();
+    }
+    return (int64)rl.rlim_cur;
+}
+
+//! Returns the given limit
+int getrlimit_hard(int resource) [flags=RET_VALUE_ONLY] {
+    rlimit rl;
+    if (getrlimit(resource, &rl)) {
+        xsink->raiseErrnoException("GET-LIMIT-ERROR", errno, "getrlimit() error");
+        return QoreValue();
+    }
+    return (int64)rl.rlim_max;
+}
+
+//! Sets the given limits
+nothing setrlimit(int resource, int soft, *int hard) {
+    rlimit rl;
+    rl.rlim_cur = soft;
+    rl.rlim_max = hard ? hard : soft;
+
+    if (setrlimit(resource, &rl)) {
+        xsink->raiseErrnoException("SET-LIMIT-ERROR", errno, "setrlimit() error");
+        return QoreValue();
+    }
+}
+///@}

@@ -1,0 +1,89 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Main
+
+class Main inherits QorusWorkflowTest {
+    private {
+        const TypePath = "/type/qoretechnologies/qorus/regression/issue-3446-hash";
+        const WORKFLOW_NAME = "STATIC-DATA-TEST";
+    }
+
+    constructor(): QorusWorkflowTest(WORKFLOW_NAME, "1.0", \ARGV, Opts) {
+        addTestCase("REST test", \restTest());
+        addTestCase("mainTest", \mainTest());
+
+        QorusClientServer::init();
+
+        set_return_value(main());
+    }
+
+    private restTest() {
+        hash<auto> h = {
+            "iface_kind": "workflow",
+            "name": "STATIC-DATA-TEST",
+            "version": "1.0",
+            "label": "STATIC-DATA-TEST:1.0",
+        };
+        hash<auto> wfh = (map $1, qrest.get("system/ix_context"), $1.name == "STATIC-DATA-TEST")[0];
+        assertEq(h, wfh - "id");
+        wfh = (map $1, qrest.get("system?action=interfacesWithDataContext"), $1.name == "STATIC-DATA-TEST")[0];
+        assertEq(h, wfh - "id");
+    }
+
+    private mainTest() {
+        # sanity test for type
+        {
+            AbstractDataProviderType type = QorusDataProviderTypeHelper::getType(parse_yaml(File::readTextFile(
+                get_script_dir() + "/wf-static-data/issue-3446-hash.qtype.yaml")).typeinfo);
+            assertThrows("RUNTIME-TYPE-ERROR", \type.acceptsValue(), {"x": "y"});
+        }
+
+        assertEq(TypePath, qrest.get("workflows/" + WORKFLOW_NAME
+            + "/staticdata_type_path"));
+
+        assertEq(("key", "subrec"), keys qrest.get("workflows/" + WORKFLOW_NAME
+            + "/staticdata_type").fields);
+
+        # negative tests
+        assertThrows("ORDER-DATA-ERROR", \qrest.post(), ("workflows/" + WORKFLOW_NAME + "/createOrder",
+            {"staticdata": {}}));
+        assertThrows("ORDER-DATA-ERROR", \exec(), (new ExecSynchronousOrder({
+            "name": WORKFLOW_NAME,
+            "staticdata": {},
+        })));
+
+        # positive test
+        hash<auto> static_data = {
+            "key": "a",
+            "subrec": {
+                "value": "b",
+            },
+        };
+        softint wfiid = execSynchronous({"staticdata": static_data}).workflow_instanceid;
+
+        # negative tests
+        assertThrows("REPLACE-STATIC-DATA-SKIPPED", \qrest.put(), ("orders/" + wfiid + "/staticData",
+            {"newdata": static_data}));
+        assertThrows("ORDER-DATA-ERROR", \qrest.put(), ("orders/" + wfiid + "/staticData", {"newdata": {"x": "y"}}));
+
+        # positive test
+        static_data.key = "b";
+        qrest.put("orders/" + wfiid + "/staticData", {"newdata": static_data});
+        hash<auto> orderdata = qrest.get("orders/" + wfiid);
+        assertEq("b", orderdata.staticdata.key);
+
+        assertEq(("key", "subrec"), keys qrest.get("orders/" + wfiid + "/staticdata_type").fields);
+
+        # check order APIs
+        assertEq(TypePath, orderdata.staticdata_type_path);
+        assertEq("string", qrest.get("orders/" + wfiid + "/staticdata_type/fields/key/type/name"));
+    }
+}

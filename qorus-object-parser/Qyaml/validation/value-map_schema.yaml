@@ -1,0 +1,35 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - value-map
+  name:
+    type: string
+    max-length: 160
+
+optional:
+  desc:
+    type: string
+    max-length: 4000
+  author:
+    type: list
+    element-type: string
+  exception:
+    type: bool
+    default: false
+  groups:
+    type: list
+    element-type: string
+  valuetype:
+    type: string
+    allowed-values:
+      - int
+      - string
+      - float
+      - raw
+      - date
+  dateformat:
+    type: string
+    default: "YYYY-MM-DD"
+  value-maps:
+    type: hash

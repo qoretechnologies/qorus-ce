@@ -1,0 +1,27 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3102ExampleTestConstants1
+# version: 1.0
+# desc: example test constants 1
+# author: Qore Technologies, s.r.o.
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const Example1 = 1;
+const Example1_1 = "one";
+# END
+
+# name: issue3102ExampleTestConstants2
+# version: 1.0
+# desc: example test constants 2
+# author: Qore Technologies, s.r.o.
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const Example2 = 2;
+const Example2_1 = "two";
+# END

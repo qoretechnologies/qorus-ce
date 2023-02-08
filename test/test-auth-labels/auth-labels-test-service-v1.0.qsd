@@ -1,0 +1,72 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: auth-labels-test-service
+# servicetype: USER
+# serviceversion: 1.0
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# serviceauthor: Qore Technologies, s.r.o.
+# servicedesc: test resource authentication labels
+# autostart: false
+# define-auth-label: auth-lbl-def=default, auth-lbl-def-2=default-basic
+# test-md:
+# functions:
+# constants:
+# ENDSERVICE
+
+# desc: authentication labels test service
+# name: init
+
+#! TestResourceRestHandler
+class TestResourceRestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("auth-labels-test-service", False,
+                                               new QorusParametrizedAuthenticator("auth-lbl-def")) {
+        addClass(new TestResource());
+    }
+}
+
+class TestBasicHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("auth-labels-test-service-basic", False,
+                                               new QorusParametrizedAuthenticator("auth-lbl-def-2")) {
+        addClass(new TestResource());
+    }
+}
+
+#! service initialization function
+sub init() {
+    TestResourceRestHandler rh();
+    ServiceApi::bindHttp(rh);
+    TestBasicHandler rh2();
+    ServiceApi::bindHttp(rh2);
+}
+
+class TestResource inherits AbstractRestClass {
+    const ACL_HDR = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, content-type, qorus-token"};
+    const AcMethodsHdr = {"Access-Control-Allow-Methods": "POST, GET, OPTIONS"};
+    const AcHdr = ACL_HDR + AcMethodsHdr;
+
+    string name() {
+        return "data";
+    }
+
+    /**
+        OPTIONS /data
+    */
+    hash options(hash cx, *hash ah) {
+        return RestHandler::makeResponse(200, NOTHING, AcHdr);
+    }
+
+    /**
+        POST /data
+    */
+    hash post(hash cx, *hash ah) {
+        return RestHandler::makeResponse(200, NOTHING, AcHdr);
+    }
+
+    /**
+        GET /data
+    */
+    hash get(hash cx, *hash ah) {
+        return RestHandler::makeResponse(200, {"response" : "some data"}, AcHdr);
+    }
+}
+# END

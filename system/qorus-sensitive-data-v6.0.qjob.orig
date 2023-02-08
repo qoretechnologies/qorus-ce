@@ -1,0 +1,91 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+# version 5.1: Qorus 5.1: updated to YAML metadata; no change in functionality
+# version 4.0: Qorus 4.0: updated to a class-based job; no change in functionality
+# version 1.0: initial release
+
+#! Qorus sensitive data job
+class QorusSensitiveData inherits QorusJob {
+    public {
+        const Defaults = (
+            "sensitive-data-cutoff-months": 6,
+            "sensitive-data-purge-complete": True,
+            "sensitive-data-purge-canceled": True,
+        );
+    }
+
+    run() {
+        int months = getConfigItemValue("cutoff-months");
+        list<string> statuses = ();
+        if (getConfigItemValue("purge-complete")) {
+            statuses += OMQ::StatComplete;
+        }
+        if (getConfigItemValue("purge-canceled")) {
+            statuses += OMQ::StatCanceled;
+        }
+        date cutoff = now_us() - Qore::months(months);
+        logInfo("purging sensitive data older than %y with statuses: %y", cutoff, statuses);
+        if (!statuses) {
+            logInfo("there are no statuses set; set properties for either %y or %y to enable sensitive data purging with this job",
+                "purge-complete", "purge-canceled");
+            return;
+        }
+
+        *list<auto> l = map $1.("name", "version", "workflowid", "workflow_instanceid", "workflowstatus", "skey"),
+            callRestApi("DELETE", "orders?action=purgeSensitiveData", ("maxmodified": cutoff, "status": statuses));
+
+        # log and save information about data purged
+        map logInfo("purged sensitive data: %y", $1), l;
+        JobApi::saveInfo(("orders_purged": l));
+    }
+
+    # returns config items for this job
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "cutoff-months": <ConfigItemInfo>{
+                "type": "int",
+                "default_value": 6,
+                "description": "age in number of months after which sensitive data is purged",
+                "config_group": "Sensitive Data Purging",
+                "strictly_local": True,
+            },
+            "purge-complete": <ConfigItemInfo>{
+                "type": "bool",
+                "default_value": True,
+                "description": "set to true to purge COMPLETE sensitive workflow order data",
+                "config_group": "Sensitive Data Purging",
+                "strictly_local": True,
+            },
+            "purge-canceled": <ConfigItemInfo>{
+                "type": "bool",
+                "default_value": True,
+                "description": "set to true to purge CANCELED sensitive workflow order data",
+                "config_group": "Sensitive Data Purging",
+                "strictly_local": True,
+            },
+        };
+    }
+}

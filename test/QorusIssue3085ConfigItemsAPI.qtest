@@ -1,0 +1,688 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires yaml
+%requires QUnit
+%requires QorusClientCore
+%requires QorusRemoteDevelopmentClient
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        const STEP_NAME = "Issue3023Step";
+        const EXPECTED_STEP_CONFIG_ITEMS = (
+            {
+                "name": "issue-3023-step-config-1",
+                "type": "hash",
+                "default_value": {
+                    "step_test_1": 1,
+                    "step_test_2": (1, 2),
+                    "step_test_3": {
+                        "step_sub_test_1": "step_test_value_1"
+                    }
+                },
+                "value": {
+                    "step_test_1": 1,
+                    "step_test_2": (1, 2),
+                    "step_test_3": {
+                        "step_sub_test_1": "step_test_value_1"
+                    }
+                },
+                "strictly_local": True,
+                "desc": "This is an example configuration item of type hash",
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-step-config-2",
+                "type": "hash",
+                "default_value": {
+                    "step_test_1": 1,
+                    "step_test_2": "asd",
+                    "step_test_3": (1, 2),
+                    "step_test_4": {
+                        "step_sub_test_1": "step_test_value_1"
+                    }
+                },
+                "value": {
+                    "step_test_1": 1,
+                    "step_test_2": "asd",
+                    "step_test_3": (1, 2),
+                    "step_test_4": {
+                        "step_sub_test_1": "step_test_value_1"
+                    }
+                },
+                "strictly_local": False,
+                "desc": "This is an example configuration item of type hash",
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-step-config-3",
+                "type": "list",
+                "default_value": (
+                    "step_test_value_1",
+                    "step_test_value_2",
+                    "step_test_value_3"
+                ),
+                "value": (
+                    "step_test_value_1",
+                    "step_test_value_2",
+                    "step_test_value_3"
+                ),
+                "strictly_local": False,
+                "desc": "This is an example configuration item of type list",
+                "level": "default",
+                "is_set": True,
+                "config_group": "testGroup",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-step-config-4",
+                "type": "*date",
+                "value": NOTHING,
+                "strictly_local": False,
+                "desc": "This is an example configuration item of type *date",
+                "level": NOTHING,
+                "is_set": False,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-step-config-5",
+                "type": "*bool",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "strictly_local": False,
+                "desc": "This is an example configuration item of type *bool",
+                "level": "default",
+                "is_set": True,
+                "config_group": "testGroup",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-step-config-6",
+                "type": "float",
+                "default_value": 2.2,
+                "value": 2.2,
+                "strictly_local": False,
+                "desc": "This is an example configuration item of type float",
+                "allowed_values": (2.2, 3.33),
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+        );
+
+        const WORKFLOW_NAME = "ISSUE-3023-WORKFLOW";
+        const SERVICE_NAME = "issue-3023-service";
+        const EXPECTED_SERVICE_CONFIG_ITEMS = (
+            {
+                "name": "issue-3023-service-config-1",
+                "type": "hash",
+                "default_value": {
+                    "service_test_1": 1,
+                    "service_test_2": (1, 2),
+                    "service_test_3": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "value": {
+                    "service_test_1": 1,
+                    "service_test_2": (1, 2),
+                    "service_test_3": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "desc": "This is an example configuration item of type hash",
+                "strictly_local": True,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-service-config-2",
+                "type": "hash",
+                "default_value": {
+                    "service_test_1": 1,
+                    "service_test_2": "asd",
+                    "service_test_3": (1, 2),
+                    "service_test_4": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "value": {
+                    "service_test_1": 1,
+                    "service_test_2": "asd",
+                    "service_test_3": (1, 2),
+                    "service_test_4": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "desc": "This is an example configuration item of type hash",
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-service-config-3",
+                "type": "list",
+                "default_value": (
+                    "service_test_value_1",
+                    "service_test_value_2",
+                    "service_test_value_3"
+                ),
+                "value": (
+                    "service_test_value_1",
+                    "service_test_value_2",
+                    "service_test_value_3"
+                ),
+                "desc": "This is an example configuration item of type list",
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-service-config-4",
+                "type": "*int",
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *int",
+                "strictly_local": False,
+                "level": NOTHING,
+                "is_set": False,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-service-config-5",
+                "type": "*float",
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *float",
+                "strictly_local": False,
+                "level": NOTHING,
+                "is_set": False,
+                "config_group": "testGroup",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-service-config-6",
+                "type": "*int",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *int",
+                "allowed_values": (2, 3, NOTHING),
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+        );
+
+        const JOB_NAME = "issue-3023-job";
+        const EXPECTED_JOB_CONFIG_ITEMS = (
+            {
+                "name": "issue-3023-job-config-1",
+                "type": "hash",
+                "default_value": {
+                    "job_test_1": 1,
+                    "job_test_2": (1, 2),
+                    "job_test_3": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "value": {
+                    "job_test_1": 1,
+                    "job_test_2": (1, 2),
+                    "job_test_3": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "desc": "This is an example configuration item of type hash",
+                "strictly_local": True,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-job-config-2",
+                "type": "hash",
+                "default_value": {
+                    "job_test_1": 1,
+                    "job_test_2": "asd",
+                    "job_test_3": (1, 2),
+                    "job_test_4": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "value": {
+                    "job_test_1": 1,
+                    "job_test_2": "asd",
+                    "job_test_3": (1, 2),
+                    "job_test_4": {
+                        "job_sub_test_1": "job_test_value_1"
+                    }
+                },
+                "desc": "This is an example configuration item of type hash",
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "testGroup",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-job-config-3",
+                "type": "list",
+                "default_value": (
+                    "job_test_value_1",
+                    "job_test_value_2",
+                    "job_test_value_3"
+                ),
+                "value": (
+                    "job_test_value_1",
+                    "job_test_value_2",
+                    "job_test_value_3"
+                ),
+                "desc": "This is an example configuration item of type list",
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-job-config-4",
+                "type": "*hash",
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *hash",
+                "strictly_local": False,
+                "level": NOTHING,
+                "is_set": False,
+                "config_group": "testGroup",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-job-config-5",
+                "type": "*string",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *string",
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+            {
+                "name": "issue-3023-job-config-6",
+                "type": "*string",
+                "default_value": NOTHING,
+                "value": NOTHING,
+                "desc": "This is an example configuration item of type *string",
+                "allowed_values": ("A", "B", NOTHING,),
+                "strictly_local": False,
+                "level": "default",
+                "is_set": True,
+                "config_group": "Default",
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+        );
+
+        const USER = "ignored";
+        const DEFAULT_OPTIONS = {"reload": True, "validate": True, "verbosity-level": 1};
+
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3023" + Qore::DirSep;
+
+        RemoteDevelopment::Client remoteDevClient();
+    }
+
+    constructor(): Test("QorusIssue3085ConfigItemsAPI", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("testInterfaceGetAPIs", \testInterfaceGetAPIs());
+        addTestCase("testInterfacePutAPIs", \testInterfacePutAPIs());
+        addTestCase("testGlobalAPIs", \testGlobalAPIs());
+        addTestCase("testImportAPIs", \testImportAPIs());
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        DeployRequest request = new DeployRequest(remoteDevClient.createFileListFromDirectory(srcDir, True),
+                                                  USER, NOTHING, DEFAULT_OPTIONS + {"allow-redef": True});
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        on_error printf("Deployment response: %y\n", response);
+        assertEq(STATUS_FINISHED, response{"status"});
+    }
+
+    globalTearDown() {
+        DeleteRequest delete_request = new DeleteRequest({"service": ({"name": SERVICE_NAME,
+                                                                       "version": "1.0"},),
+                                                         "job": ({"name": JOB_NAME,
+                                                                   "version": "1.0"},),
+                                                         "class": ({"name": STEP_NAME,
+                                                                    "version": "1.0"},),
+                                                         "step": ({"name": STEP_NAME,
+                                                                   "version": "1.0"},),
+                                                         "workflow": ({"name": WORKFLOW_NAME,
+                                                                        "version": "1.0"},),
+                                                         "options": {"allow-redef": True} + DEFAULT_OPTIONS - "validate"},
+                                                         USER, NOTHING);
+        hash<auto> delete_response = remoteDevClient.post(delete_request, 60s);
+        assertEq(STATUS_FINISHED, delete_response{"status"});
+    }
+
+    private testInterfaceGetAPI(string interface, string name, list expected) {
+        printf("=START=============testInterfaceGetAPI===============\n");
+        printf("interface = %s, name = %s\n", interface, name);
+
+        code sort_closure = int sub(hash l, hash r) { return l.name <=> r.name; };
+
+        expected = sort(expected, sort_closure);
+
+        # Test GET all configs API
+        auto rest_response = qrest.get(interface + "s/" + name + "/config");
+        rest_response = sort(rest_response, sort_closure);
+        assertEq(expected, rest_response);
+
+        # Test GET specific config API
+        foreach auto config in (expected) {
+            string uri_path = interface + "s/" + name + "/config/" + config.name;
+            rest_response = qrest.get(uri_path);
+            assertEq(config, rest_response);
+        }
+
+        rest_response = qrest.get(interface + "s/" + name + "/config?action=yaml");
+        rest_response = sort(rest_response, sort_closure);
+        list config_yaml = expected;
+
+        code serialize_to_yaml = auto sub(auto value) {
+            auto result = make_yaml(value, (value.typeCode() == NT_HASH || value.typeCode() == NT_LIST) ?
+                                             YAML::BlockStyle : YAML::None);
+            return trim(result, ".\n\r");
+        };
+
+        foreach auto config in (\config_yaml) {
+            map config{$1} = serialize_to_yaml(config{$1}), ("value", "actual_value", "default_value", "parent_value"),
+                config.hasKey($1);
+            if (config.allowed_values) {
+                config.allowed_values = serializeValuesInListToYaml(config.allowed_values);
+            }
+
+            # Test GET specific config YAML API
+            auto rest_response_item = qrest.get(interface + "s/" + name + "/config/" + config.name + "?action=yaml");
+            assertEq(config, rest_response_item);
+        }
+
+        # Test GET all YAML configs API
+        assertEq(config_yaml, rest_response);
+        printf("=END===============testInterfaceGetAPI===============\n");
+    }
+
+    private testInterfaceGetAPIs() {
+        testInterfaceGetAPI("job", JOB_NAME, EXPECTED_JOB_CONFIG_ITEMS);
+        testInterfaceGetAPI("service", SERVICE_NAME, EXPECTED_SERVICE_CONFIG_ITEMS);
+
+        # from step scope we won't get value and level
+        auto step_configs = EXPECTED_STEP_CONFIG_ITEMS;
+        foreach auto config in (\step_configs) {
+            remove config.value;
+            remove config.level;
+            remove config.is_set;
+            remove config.is_templated_string;
+        }
+        testInterfaceGetAPI("step", STEP_NAME, step_configs);
+
+        # Workflow step info
+        testInterfaceGetAPI("workflow", WORKFLOW_NAME + "/stepinfo/" + STEP_NAME, EXPECTED_STEP_CONFIG_ITEMS);
+    }
+
+    private auto serializeToYaml(auto value) {
+        auto result = make_yaml(value, (value.typeCode() == NT_HASH || value.typeCode() == NT_LIST) ?
+                                        YAML::BlockStyle : YAML::None);
+        return trim(result, ".\n\r");
+    }
+
+    private list<auto> serializeValuesInListToYaml(*list<auto> l) {
+        return map serializeToYaml($1), l;
+    }
+
+    private testInterfacePutAPI(string interface, string name, string item, hash config) {
+        printf("=START=============testInterfacePutAPI===============\n");
+        printf("interface = %s, name = %s\n", interface, name);
+        auto rest_response = qrest.put(interface + "s/" + name + "/config/" + item, config);
+        assertEq(True, rest_response.inserted);
+        assertEq(config.value, rest_response.value);
+
+        # check if value was really set
+        rest_response = qrest.get(interface + "s/" + name + "/config/" + item + "/value");
+        assertEq(config.value, rest_response);
+
+        config.value = serializeToYaml(config.value);
+        rest_response = qrest.put(interface + "s/" + name + "/config/" + item + "?action=yaml", config).value;
+        assertEq(config.value, rest_response);
+
+        # check if value was really set
+        rest_response = qrest.get(interface + "s/" + name + "/config/" + item + "?action=yaml").value;
+        assertEq(config.value, rest_response);
+
+        # delete value
+        rest_response = qrest.del(interface + "s/" + name + "/config/" + item + "?action=yaml");
+        assertEq(True, rest_response.deleted);
+        assertEq(config.value, rest_response.value);
+
+        printf("=END===============testInterfacePutAPI===============\n");
+    }
+
+    private testInterfacePutAPIs() {
+        testInterfacePutAPI("job", JOB_NAME, "issue-3023-job-config-1",
+            {
+                "value": {
+                    "job_test_put_1": {
+                        "job_sub_test_1": "job_test_value_1",
+                        "job_test_2": (1, 2),
+                    }
+                }
+            }
+        );
+
+        testInterfacePutAPI("service", SERVICE_NAME, "issue-3023-service-config-1",
+            {
+                "value": {
+                    "service_test_put_1": {
+                        "service_test_sub_put_1": "service_test_put_1_value",
+                        "job_test_2": (1, 2, 14312),
+                    }
+                }
+            }
+        );
+        testInterfacePutAPI("service", SERVICE_NAME, "issue-3023-service-config-3",
+            {
+                "value": (123, "23432", "test", 3)
+            }
+        );
+
+        testWorkflowPutAPI();
+    }
+
+    private testWorkflowPutAPI() {
+        printf("=START=============testWorkflowPutAPI===============\n");
+
+        hash config =  {
+            "value": {"test": (1, 2, 123, 65, "test")},
+            "name": "issue-3023-step-config-2"
+        };
+
+        auto rest_response = qrest.post("workflows/" + WORKFLOW_NAME + "/config", config);
+        assertEq(True, rest_response.inserted);
+        assertEq(config.value, rest_response.value);
+
+        # check if value was really set
+        rest_response = qrest.get("workflows/" + WORKFLOW_NAME + "/config/issue-3023-step-config-2/value");
+        assertEq(config.value, rest_response);
+
+        rest_response = qrest.get("workflows/" + WORKFLOW_NAME + "/stepinfo/" + STEP_NAME + "/config/issue-3023-step-config-2");
+        assertRegex("workflow", rest_response.level);
+        assertEq(config.value, rest_response.value);
+
+        # delete value
+        rest_response = qrest.del("workflows/" + WORKFLOW_NAME + "/config/issue-3023-step-config-2");
+        assertEq(True, rest_response.deleted);
+        assertEq(config.value, rest_response.value);
+
+        printf("=END===============testWorkflowPutAPI===============\n");
+    }
+
+    private testGlobalAPIs() {
+        printf("=START=============testGlobalAPIs===============\n");
+        hash config =  {
+            "value": {"test": (1, 2, 123, 65, "test")},
+            "name": "issue-3023-step-config-2"
+        };
+
+        auto rest_response = qrest.post("system/config/", config);
+        assertEq(True, rest_response.inserted);
+        assertEq(config.value, rest_response.value);
+
+        # check if the value was really set
+        rest_response = qrest.get("system/config/issue-3023-step-config-2/value");
+        assertEq(config.value, rest_response);
+
+        # check if the value is present in global_config of the workflow
+        rest_response = qrest.get("workflows/" + WORKFLOW_NAME + "/global_config/issue-3023-step-config-2");
+        assertEq(config.value, rest_response.value);
+
+        rest_response = qrest.get("workflows/" + WORKFLOW_NAME + "/stepinfo/" + STEP_NAME + "/config/issue-3023-step-config-2");
+        assertRegex("global", rest_response.level);
+        assertEq(config.value, rest_response.value);
+
+        # delete value
+        rest_response = qrest.del("system/config/issue-3023-step-config-2");
+        assertEq(True, rest_response.deleted);
+        assertEq(config.value, rest_response.value);
+        printf("=END===============testGlobalAPIs===============\n");
+    }
+
+    private testImportAPIs() {
+        printf("=START=============testImportAPIs===============\n");
+        auto serviceid = qrest.get("services/" + SERVICE_NAME + "/serviceid");
+        auto jobid = qrest.get("jobs/" + JOB_NAME + "/jobid");
+        auto wfid = qrest.get("workflows/" + WORKFLOW_NAME + "/workflowid");
+
+        list config_items = (
+            {
+                "name": "issue-3023-step-config-2",
+                "value": {"test": (1, 123, "test")},
+                "interface-type": "global",
+                "level": "global", # for deletion
+            },
+            {
+                "name": "issue-3023-step-config-3",
+                "value": (13, 123, 77),
+                "interface-type": "workflow",
+                "interface-name": WORKFLOW_NAME,
+                "interface-version": "1.0",
+                "level": "workflow:" + wfid, # for deletion
+            },
+            {
+                "name": "issue-3023-service-config-6",
+                "value": 3,
+                "interface-type": "service",
+                "interface-name": SERVICE_NAME,
+                "interface-version": "1.0",
+                "level": "service:" + serviceid, # for deletion
+            },
+            {
+                "name": "issue-3023-job-config-4",
+                "value": {"test": "ASDASD"},
+                "interface-type": "job",
+                "interface-name": JOB_NAME,
+                "interface-version": "1.0",
+                "level": "job:" + jobid, # for deletion
+            }
+        );
+
+        printf("importing values...\n");
+        auto rest_response = qrest.put("system/config", {"config-items": config_items});
+        for (int i = 0; i < config_items.size(); i++) {
+            assertEq(True, rest_response[i].inserted);
+            assertEq(config_items[i].value, rest_response[i].value);
+        }
+        printf("OK\n");
+
+        printf("deleting values...\n");
+        qrest.del("system/config", {"config-items": config_items});
+        printf("OK\n");
+
+        printf("importing values from yaml...\n");
+        for (int i = 0; i < config_items.size(); i++) {
+            config_items[i].value = serializeToYaml(config_items[i].value);
+        }
+
+        rest_response = qrest.put("system/config?action=yaml", {"config-items": config_items});
+        for (int i = 0; i < config_items.size(); i++) {
+            assertEq(True, rest_response[i].inserted);
+            assertEq(config_items[i].value, rest_response[i].value);
+        }
+        printf("OK\n");
+
+        printf("deleting values...\n");
+        qrest.del("system/config", {"config-items": config_items});
+        printf("OK\n");
+
+        printf("=END===============testImportAPIs===============\n");
+    }
+} # class Main
+

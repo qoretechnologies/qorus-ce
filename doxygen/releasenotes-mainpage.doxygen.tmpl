@@ -1,0 +1,47 @@
+/** @page releasenotes Release Notes
+
+    @tableofcontents
+
+    Latest version: @ref currentversion
+
+    @section currentversion Qorus 6.0
+
+    @subsection q60overview Release Overview
+    Initial release of Qorus Integration Engine(R) Community Edition, an open-source Enterprise Service Bus designed
+    to reduce the effort needed to create, operate, and maintain enterprise integration and automation solutions
+    through the following features:
+    - Reduce or eliminate coding through a low-code / no-code, building-block-based approach
+      - Workflows and steps for orchestration
+      - Services for API management, protocol handlers, event sources, data caches, and named / version API sets
+      - Jobs for scheduled tasks / polling
+      - Flows / finite state machine for building logic graphically
+      - Mappers for data transformations
+      - Pipelines for staged data processing
+      - Connections to external systems and data
+      - DataProvider API for consistent access to multiple enterprise integration patterns, introspection, powering
+        UI components
+    - Customize the behaviour of integration objects with lightweight scripting code in Python or use Java if desired
+    - Reduce OPEX and increase process quality by leveraging automatic error detection and recovery for IT process
+      orchestration
+    - Integrate IT integration and automation functionality with external systems using Qorus's open REST API
+    - Establish control and governance over your IT integration and automation architecture through the following
+      features:
+      - Release packaging and automation
+      - Testing framework support
+      - Operational reporting, alerting, SLA tracking
+      - Solution lifecycle management
+    - Differences from the Enterprise Edition
+      - No enterprise security; no users, permissions or external authentication support
+      - No <a href="https://kubernetes.io/">Kubernetes</a> API support for microservices
+
+    @subsection q60docker Docker Info
+    - Ubuntu images are based on 22.04 LTS, Alpine images on Alpine Linux 3.17
+    - All Docker images feature Python 10 and Java 17
+
+    @note Not all Docker images include Java support, read the image description for details before deploying
+
+    @see <a href="https://gallery.ecr.aws/qorus">Public Docker registry</a> and
+    <a href="https://github.com/qoretechnologies/qorus-docker/tree/main">Docker info</a>
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine"
+*/

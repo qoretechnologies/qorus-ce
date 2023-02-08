@@ -1,0 +1,9 @@
+# testing user connection automatic up/down functions (manage-interfaces)
+conn-test = (
+    desc = testing connection availability,
+    url = http://localhost:1,
+    connect_timeout = 2000,
+    timeout = 2000,
+    tags = "tag1=value1, tag2=2, tag3=\"3\"",
+)
+

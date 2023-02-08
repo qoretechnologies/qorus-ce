@@ -1,0 +1,85 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: detach test onetimeinit function
+# author: Qore Technologies, sro
+%new-style
+%require-types
+
+sub detach_onetimeinit() {
+    UserApi::getRunningWorkflowList();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: detach test workflow step function
+# author: Qore Technologies, sro
+%new-style
+%require-types
+
+sub detach_test_1() {
+    *string stat = WorkflowApi::getStaticData("status");
+    UserApi::logInfo("got status: %n", stat);
+
+    softint wfiid = WorkflowApi::getWorkflowInstanceData("workflow_instanceid");
+    WorkflowApi::setOrderKeys(("key1": wfiid, "key2": wfiid + "-2"));
+
+    switch (stat) {
+	case OMQ::StatError:
+	    throw "ERROR";
+
+	case OMQ::StatRetry:
+	    throw "RETRY-ERROR";
+    }
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# name: detach_test_detach
+# desc: detach test workflow detach function test
+# author: Qore Technologies, sro
+%new-style
+%require-types
+
+sub test_value(any v1, any v2, string msg) {
+    if (v1 === v2) {
+	UserApi::logInfo("OK: %s", msg);
+	return;
+    }
+
+    string err = sprintf("ERROR: %s test failed! (%N != %N)", msg, v1, v2);
+    UserApi::logInfo(err);
+    throw "ERROR", err;
+}
+
+sub detach_test_detach(string stat) {
+    # check order keys
+    hash h = WorkflowApi::getOrderKeys();
+    UserApi::logInfo("order keys=%y", h);
+    softint wfiid = WorkflowApi::getWorkflowInstanceData("workflow_instanceid");
+    if (h.key1 != wfiid)
+	throw "ORDERKEY-ERROR", sprintf("order key 'key1' = %y, expecting '%d'", h.key1, wfiid);
+    if (h.key2 != wfiid + "-2")
+	throw "ORDERKEY-ERROR", sprintf("order key 'key2' = %y, expecting '%d-2'", h.key2, wfiid);
+
+    if (WorkflowApi::getStaticData("skip-logic"))
+        return;
+
+    hash event = WorkflowApi::getStaticData("event");
+    # test for bug 287
+    hash info = WorkflowApi::getWorkflowInstanceData();
+    UserApi::logInfo("detach function test, stat=%y, event=%y, info=%y", stat, event, info);
+
+    test_value(info.priority, OMQ::DefaultOrderPriority, "priority");
+    test_value(info.started > 2011-03-15, True, "started");
+
+    if (stat == OMQ::StatCanceled) {
+	UserApi::logInfo("posting event type %y key %y", event.type, event.key);
+	UserApi::callNetworkApi("omq.system.post-event", event.type, event.key);
+    }
+}
+# END

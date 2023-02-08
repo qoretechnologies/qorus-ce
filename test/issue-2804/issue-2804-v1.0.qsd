@@ -1,0 +1,43 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2804
+# class-name: Issue2804
+# serviceversion: 1.0
+# servicedesc: class-based test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-based: true
+# lang: qore
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# ENDSERVICE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class Issue2804 inherits QorusService {
+    private:internal {
+        Mutex m();
+        RWLock rwl();
+    }
+
+    # name: start
+    # desc: starts the service
+    start() {
+        m.lock();
+    }
+
+    # name: stop
+    # desc: stops the service
+    stop() {
+        m.unlock();
+    }
+
+    # name: test
+    # desc: grgabs the read-write lock
+    test() {
+        rwl.writeLock();
+    }
+}

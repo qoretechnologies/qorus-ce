@@ -1,0 +1,399 @@
+/** @page workflowapi Workflow API Reference
+
+    @tableofcontents
+
+    @section wfintro Introduction to the Qorus Workflow API
+
+    @see
+    - @ref designimplworkflows
+    - @ref python_development_workflows
+    - @ref javadevelopment_workflows
+
+    This section describes additional @ref qore_classes "classes", @ref constants "constants", and
+    @ref qore_functions "functions" that are imported into workflow @ref Qore::Program "Program" objects by the Qorus
+    system itself that make up the Qorus Workflow API for the %Qore proggramming language.
+
+    @subsection wfclassapi Workflow API
+
+    The workflow APIs are documented here:
+    - \b %Python: @ref OMQ::UserApi::Workflow::WorkflowApi "wfapi"
+    - \b Java: @ref OMQ::UserApi::Workflow::WorkflowApi "qore.OMQ.UserApi.Workflow.WorkflowApi"
+    - \b %Qore: @ref OMQ::UserApi::Workflow::WorkflowApi "Workflow::WorkflowApi"
+
+    The base @ref step_source "classes" for steps are the following:
+    - \b %Python:
+      - @ref OMQ::UserApi::Workflow::QorusAsyncStep "wf.QorusAsyncStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventStep "wf.QorusEventStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalStep "wf.QorusNormalStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowStep "wf.QorusSubworkflowStep"
+      - @ref OMQ::UserApi::Workflow::QorusAsyncArrayStep "wf.QorusAsyncArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventArrayStep "wf.QorusEventArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalArrayStep "wf.QorusNormalArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowArrayStep "wf.QorusSubworkflowArrayStep"
+    - \b Java:
+      - @ref OMQ::UserApi::Workflow::QorusAsyncStep "qore.OMQ.UserApi.Workflow.QorusAsyncStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventStep "qore.OMQ.UserApi.Workflow.QorusEventStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalStep "qore.OMQ.UserApi.Workflow.QorusNormalStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowStep "qore.OMQ.UserApi.Workflow.QorusSubworkflowStep"
+      - @ref OMQ::UserApi::Workflow::QorusAsyncArrayStep "qore.OMQ.UserApi.Workflow.QorusAsyncArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventArrayStep "qore.OMQ.UserApi.Workflow.QorusEventArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalArrayStep "qore.OMQ.UserApi.Workflow.QorusNormalArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowArrayStep "qore.OMQ.UserApi.Workflow.QorusSubworkflowArrayStep"
+    - \b %Qore:
+      - @ref OMQ::UserApi::Workflow::QorusAsyncStep "QorusAsyncStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventStep "QorusEventStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalStep "QorusNormalStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowStep "QorusSubworkflowStep"
+      - @ref OMQ::UserApi::Workflow::QorusAsyncArrayStep "QorusAsyncArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusEventArrayStep "QorusEventArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusNormalArrayStep "QorusNormalArrayStep"
+      - @ref OMQ::UserApi::Workflow::QorusSubworkflowArrayStep "QorusSubworkflowArrayStep"
+
+    This means that step methods can call the static methods defined in the base class directly.
+
+    For library classes and other workflow code, calls must be prefixed with the class name.
+
+    @subsection workflowprograms Qore Workflow Program Container
+
+    Each workflow has a single %Qore @ref Qore::Program "Program" logic container containing all the code for the
+    workflow, as well as any objects imported into the @ref Qore::Program "Program" object
+    (@ref qore_classes "classes", @ref constants "constants", and @ref qore_functions "functions" listed as attributes
+    of the workflow when the workflow is defined).
+
+    @note Each workflow has one @ref Qore::Program "Program" object, and workflow and step objects are global;
+    they are shared across all workflow execution instances and are used to process all order data as well, therefore
+    using class members to store state or information related workflow processing is generally inadvisable; please see
+    @ref workflowdata for more information about Qorus APIs that provide workflow-order-specific data storage types
+    that can be used to store and manage data specific to workflow orders being processed.
+
+    Workflow @ref Qore::Program "Program" objects are restricted from using elements of the %Qore language related to
+    process and thread control; the use of these functions is either dangerous or could violate the integrity of the
+    Qorus server process and therefore is restricted.
+
+    To enforce these restrictions, workflow @ref Qore::Program "Program" logic containers are created with the
+    following sandbox flags:
+    |!Directive|!Constant|!Description
+    |@ref allow-weak-references "%allow-weak-references"|@ref Qore::PO_ALLOW_WEAK_REFERENCES|the \
+        @ref weak_assignment_operator ":= operator" may be used
+    |@ref no-global-vars "%no-global-vars"|@ref Qore::PO_NO_GLOBAL_VARS|Global variables may not be defined
+    |@ref no-process-control "%no-process-control"|@ref Qore::PO_NO_PROCESS_CONTROL|Functionality that affects the \
+        entire process is unavailable
+    |@ref no-thread-control "%no-thread-control"|@ref Qore::PO_NO_THREAD_CONTROL|Thread management functionality is \
+        unavailable
+    |@ref no-top-level "%no-top-level"|@ref Qore::PO_NO_TOP_LEVEL_STATEMENTS|No code is allowed in the top-level \
+        statement (outside a function or class)
+    |@ref require-our "%require-our"|@ref Qore::PO_REQUIRE_OUR|All variables must be declared before use
+
+    Additionally, each workflow's @ref Qore::Program "Program" container is set up with the following imported objects:
+    - @ref wfapis
+    - @ref wfapiclasses
+    - @ref wfapimodules
+
+    In addition to the above, all public constants in the OMQ namespace are available.
+
+    Please see the above links for more information on the features made unavailable when these parse options are set.
+
+    Please note that despite these restrictions, workflow program objects have most of the %Qore language API and
+    class library available for use.
+
+    Furthermore sandbox restrictions apply to %Qore code; code in other languages such as Java is not subject to these
+    restrictions.
+
+    Furthermore, the following @ref conditional_parsing "parse defines" are defined:
+    |!Define|!Availability|!Description
+    |\c Qorus|\c W, \c S, \c J|Identifies code in Qorus
+    |\c QorusCE|\c W, \c S, \c J|Identifies the Community Edition of Qorus (\c QorusEE is defined in the Enterprise \
+        Edition)
+    |\c QorusHasAlerts|\c W, \c S, \c J|Marks the availability of the @ref systemalertapi "alert API" (Qorus 3.0+)
+    |\c QorusHasTableCache|\c W, \c S, \c J|Marks the availability of the @ref systemsqlcacheapi "table cache API" (Qorus 3.1+)
+    |\c QorusHasUserConnections|\c W, \c S, \c J|Marks the availability of the @ref systemconnapi "connection API" (Qorus 3.0+)
+    |\c QorusServer|\c W, \c S, \c J|Identifies code used in Qorus server interfaces
+    |\c QorusWorkflow|\c W|Identifies code used in a workflow @ref Qore::Program "Program" container
+
+    @note All defines set in @ref defines (common to workflows, services, and jobs) are also set in Workflow @ref Qore::Program "Program" containers
+
+    @subsection wfapis Workflow APIs
+
+    The following APIs are imported into @ref workflowprograms "workflow program logic containers:
+
+    |!API Method|!Domain|!Availability|!Description
+    |@ref OMQ::UserApi::UserApi::auditCheckEventString() "UserApi::auditCheckEventString()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as a string) is enabled
+    |@ref OMQ::UserApi::UserApi::auditCheckEvent() "UserApi::auditCheckEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as an integer code) is enabled
+    |@ref OMQ::UserApi::UserApi::auditGetMask() "UserApi::auditGetMask()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|returns the audit event mask
+    |@ref OMQ::UserApi::UserApi::auditUserEvent() "UserApi::auditUserEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|creates a user audit event (with audit event code @ref OMQ::AE_USER_EVENT) against the workflow, service, or job instance
+    |@ref OMQ::UserApi::UserApi::callNetworkApi() "UserApi::callNetworkApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgs() "UserApi::callNetworkApiArgs()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions with an explicit argument list argument
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgsWithAuthentication() "UserApi::callNetworkApiArgsWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::callRestApi() "UserApi::callRestApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callRestApiWithAuthentication() "UserApi::callRestApiWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::clearSqlTableCache() "UserApi::clearSqlTableCache()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|clears a cached table from the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::createOrder() "UserApi::createOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in the database and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::createRemoteOrder() "UserApi::createRemoteOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in a @ref remoteconn "remote Qorus instance" and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::deserializeQorusData() "UserApi::deserializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|deserializes strings to %Qore data structures
+    |@ref OMQ::UserApi::UserApi::execSynchronousWorkflow() "UserApi::execSynchronousWorkflow()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|executes a workflow order synchronously and returns the result of execution
+    |@ref OMQ::UserApi::UserApi::executeFsm() "UserApi::executeFsm()"|@ref systemutilityapi "Utility"\
+        |\c W, \c S, \c J|executes a @ref finite_state_machines "finite state machine" registered with the interface \
+        and returns the result
+    |@ref OMQ::UserApi::UserApi::flushSlaEvents() "UserApi::flushSlaEvents()"|@ref sla_api "SLA"|\c W, \c S, \c J|flushes all pending SLA events to the DB
+    |@ref OMQ::UserApi::UserApi::getActiveJobs() "UserApi::getActiveJobs()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about active jobs
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getConfigItemHash() "WorkflowApi::getConfigItemHash()"|n/a|\c W|retrieves a hash of all step configuration items
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getConfigItemValue() "WorkflowApi::getConfigItemValue()"|n/a|\c W|retrieves the value of a step configuration item
+    |@ref OMQ::UserApi::UserApi::getDatasourceDedicated() "UserApi::getDatasourceDedicated()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a dedicated @ref Qore::SQL::Datasource object
+    |@ref OMQ::UserApi::UserApi::getDatasourcePool() "UserApi::getDatasourcePool()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a shared @ref Qore::SQL::DatasourcePool object
+    |@ref OMQ::UserApi::UserApi::getGlobalConfigItemValue() "UserApi::getGlobalConfigItemValue()"|@ref systeminfoapi|\c W, \c S, \c J|returns the value of the given configuration item on global level
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getOption() "WorkflowApi::getOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of one or more system or interface options
+    |@ref OMQ::UserApi::UserApi::getQorusOptions() "UserApi::getQorusOptions()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionsArgs() "UserApi::getQorusOptionsArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfo() "UserApi::getQorusOptionInfo()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfoArgs() "UserApi::getQorusOptionInfoArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getRemoteRestConnection() "UserApi::getRemoteRestConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemRestHelperBase "QorusSystemRestHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRemoteRpcConnection() "UserApi::getRemoteRpcConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowInfo() "UserApi::getRunningWorkflowInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a running workflow execution instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowList() "UserApi::getRunningWorkflowList()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about running workflow execution instances
+    |@ref OMQ::UserApi::UserApi::getServiceInfo() "UserApi::getServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a service
+    |@ref OMQ::UserApi::UserApi::getSessionId() "UserApi::getSessionId()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns the current @ref appsessionmodel "application session ID"
+    |@ref OMQ::UserApi::UserApi::getSqlTable() "UserApi::getSqlTable()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|retrieves an @ref SqlUtil::AbstractTable "AbstractTable" object from the @ref sql-cache "SQL cache" for DML operations
+    |@ref OMQ::UserApi::UserApi::getSqlCacheInfo() "UserApi::getSqlCacheInfo()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|returns information about the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::getSystemInfo() "UserApi::getSystemInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about the system
+    |@ref OMQ::UserApi::UserApi::getSystemServiceInfo() "UserApi::getSystemServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a system service
+    |@ref OMQ::UserApi::UserApi::getUserConnection() "UserApi::getUserConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns the given @ref userconn "user connection" object
+    |@ref OMQ::UserApi::UserApi::getUserServiceInfo() "UserApi::getUserServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a user service
+    |@ref OMQ::UserApi::UserApi::getValueMap() "UserApi::getValueMap()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a value mapping from a value map
+    |@ref OMQ::UserApi::UserApi::getValueMaps() "UserApi::getValueMaps()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a list of all known value sets
+    |@ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"|@ref systemloggingapi "logging"|\c W, \c S, \c J|outputs a log message in the workflow's log file
+    |@ref OMQ::UserApi::UserApi::getNextSequenceValue() "UserApi::getNextSequenceValue()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|returns the next value from the given datasource and database sequence
+    |@ref OMQ::UserApi::UserApi::sleep() "UserApi::sleep()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::usleep() "UserApi::usleep()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::postSlaEventError() "UserApi::postSlaEventError()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts an unsuccessful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSlaEventSuccess() "UserApi::postSlaEventSuccess()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts a successful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSyncEvent() "UserApi::postSyncEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts a workflow synchronization event given the event type name and event key
+    |@ref OMQ::UserApi::UserApi::postUserEvent() "UserApi::postUserEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts an application event of class @ref OMQ::QE_CLASS_USER
+    |@ref OMQ::UserApi::UserApi::propGet() "UserApi::propGet()"|@ref systempropapi "System Props"|\c W, \c S, \c J|returns the value of the given @ref sysprops "system property key" in the given domain or @ref nothing if the system property does not exist
+    |@ref OMQ::UserApi::UserApi::propUpdate() "UserApi::propUpdate()"|@ref systempropapi "System Props"|\c W, \c S, \c J|changes (inserts, updates, or deletes) the value of one or more @ref sysprops "system properties"
+    |@ref OMQ::UserApi::UserApi::qorusGetLocalUrl() "UserApi::qorusGetLocalUrl()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns a URL for the current system
+    |@ref OMQ::UserApi::UserApi::raiseTransientAlert() "UserApi::raiseTransientAlert()"|@ref systemalertapi "Alerts"|\c W, \c S, \c J|raises a transient alert
+    |@ref OMQ::UserApi::UserApi::registerFsmAsObserver() "UserApi::registerFsmAsObserver()"\
+        |@ref systemutilityapi "Utility"|\c W, \c S, \c J|registers a \
+        @ref finite_state_machines "finite state machine" as an event observer
+    |@ref OMQ::UserApi::UserApi::restartTransaction() "UserApi::restartTransaction()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|enables recovery from restartable DB communication errors
+    |@ref OMQ::UserApi::UserApi::runtimeProperties() "UserApi::runtimeProperties()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about runtime @ref defines "system defines" defined
+    |@ref OMQ::UserApi::UserApi::serializeQorusData() "UserApi::serializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|serializes %Qore data structures to strings
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setOption() "WorkflowApi::setOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|sets option values on a workflow, service, or job
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::addOrderNote() "WorkflowApi::addOrderNote()"|@ref workflowmiscapi "WF Misc"|\c W|adds a @ref workflow_order_notes "note" to a workflow order
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::bindEvent() "QorusEventStepBase::bindEvent()"|@ref workfloweventsyncapi "WF Event"|\c W|binds a workflow synchronization event to the current binds a workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::bindEventUnposted() "QorusEventStepBase::bindEventUnposted()"|@ref workfloweventsyncapi "WF Event"|\c W|binds an unposted workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+    |@ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase::bindSubworkflow() "QorusSubworkflowStepBase::bindSubworkflow()"|@ref workflowsubworkflowapi "WF Sub"|\c W|binds a subworkflow to the current @ref subworkflowsteps "subworkflow step"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteDynamicDataKey() "WorkflowApi::deleteDynamicDataKey()"|@ref workflowdataapi "WF Data"|\c W|deletes a key in @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteInstanceDataKey() "WorkflowApi::deleteInstanceDataKey()"|@ref workflowdataapi "WF Data"|\c W|deletes a key in @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteSensitiveData() "WorkflowApi::deleteSensitiveData()"|@ref workflowdataapi "WF Data"|\c W|deletes the sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteSensitiveDataKey() "WorkflowApi::deleteSensitiveDataKey()"|@ref workflowdataapi "WF Data"|\c W|deletes one or more keys from the workflow order data instance’s sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteTempDataKey() "WorkflowApi::deleteTempDataKey()"|@ref workflowdataapi "WF Data"|\c W|deletes a key in @ref tempdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::generateUniqueKey() "WorkflowApi::generateUniqueKey()"|@ref workflowmiscapi "WF Misc"|\c W|returns a unique key that can be used for an @ref asyncsteps "asynchronous step" event key
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getDynamicData() "WorkflowApi::getDynamicData()"|@ref workflowdataapi "WF Data"|\c W|retrieves information from @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getErrorInfo() "WorkflowApi::getErrorInfo()"|@ref workflowmiscapi "WF Misc"|\c W|returns information about the given @ref globalandworkflowerrors "workflow error"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getInstanceData() "WorkflowApi::getInstanceData()"|@ref workflowdataapi "WF Data"|\c W|retrieves information from @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getOrderKeys() "WorkflowApi::getOrderKeys()"|@ref workflowmiscapi "WF Misc"|\c W|returns information about @ref wf_keylist "order keys" associated with the current workflow order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getOrderNotes() "WorkflowApi::getOrderNotes()"|@ref workflowmiscapi "WF Misc"|\c W|retrieves @ref workflow_order_notes "notes" saved against the workflow order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::parentWfiid() "WorkflowApi::parentWfiid()"|@ref workflowmiscapi "WF Misc"|\c W|returns the current workflow order's parent workflow_instanceid, if any
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveData() "WorkflowApi::getSensitiveData()"|@ref workflowdataapi "WF Data"|\c W|retrieves the sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveDataFromAlias() "WorkflowApi::getSensitiveDataFromAlias()"|@ref workflowdataapi "WF Data"|\c W|retrieves the sensitive data hash for the given sensitive data alias
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveDataKeyValues() "WorkflowApi::getSensitiveDataKeyValues()"|@ref workflowdataapi "WF Data"|\c W|retrieves  a hash of sensitive data keys and values saved against the order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStaticData() "WorkflowApi::getStaticData()"|@ref workflowdataapi "WF Data"|\c W|retrieves information from @ref staticdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStepInfo() "WorkflowApi::getStepInfo()"|@ref workflowmiscapi "WF Misc"|\c W|returns information about the current step
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStepStatus() "WorkflowApi::getStepStatus()"|@ref workflowmiscapi "WF Misc"|\c W|returns information about the status of the given step
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getTempData() "WorkflowApi::getTempData()"|@ref workflowdataapi "WF Data"|\c W|retrieves information from @ref tempdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWorkflowInstanceData() "WorkflowApi::getWorkflowInstanceData()"|@ref workflowdataapi "WF Data"|\c W|retrieves information from the running @ref workflowexecutioninstanceinfo "workflow execution instance" itself
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWorkflowMetadata() "WorkflowApi::getWorkflowMetadata()"|@ref workflowmiscapi "WF Misc"|\c W|returns workflow metadata for the current workflow
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::parentWfiid() "WorkflowApi::parentWfiid()"|@ref workflowmiscapi "WF Misc"|\c W|returns the order's parent \c workflow_instanceid, if any, otherwise returns @ref nothing
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::rescheduleOrder() "WorkflowApi::rescheduleOrder()"|@ref workflowattachapi "WF Attach"|\c W|changes the earliest possible processing date for the current workflow order instance in the @ref attach "attach logic"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::reprioritizeOrder() "WorkflowApi::reprioritizeOrder()"|@ref workflowmiscapi "WF Misc"|\c W|set the priority value of a workflow order instance
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setBlocked() "WorkflowApi::setBlocked()"|@ref workflowattachapi "WF Attach"|\c W|sets the current workflow order instance to status @ref OMQ::StatBlocked in the @ref attach "attach logic"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setRetryDelay() "WorkflowApi::setRetryDelay()"|@ref workflowerrorapi "WF Errors"|\c W|sets the retry delay explicitly after raising an error against the workflow order instance with wf_serror()
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setCustomStatus() "WorkflowApi::setCustomStatus()"|@ref workflowmiscapi "WF Misc"|\c W|sets a custom status value for the current workflow order data instance
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setOrderKeys() "WorkflowApi::setOrderKeys()"|@ref workflowmiscapi "WF Misc"|\c W|sets @ref wf_keylist "order keys" on the current workflow order instance
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepError() "WorkflowApi::stepError()"|@ref workflowerrorapi "WF Errors"|\c W|raises an error against the workflow order data without affecting the flow of processing
+    |@ref OMQ::UserApi::Workflow::QorusAsyncStepBase::skipAsyncStep() "QorusAsyncStepBase::skipAsyncStep()"|@ref workflowasyncapi "WF Async"|\c W|skips setting an asynchronous key for an @ref asyncsteps "asynchronous step"
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::skipEvent() "QorusEventStepBase::skipEvent()"|@ref workfloweventsyncapi "WF Event"|\c W|skips binding a workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+    |@ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase::skipSubworkflow() "QorusSubworkflowStepBase::skipSubworkflow()"|@ref workflowsubworkflowapi "WF Sub"|\c W|skips the subworkflow bind in a @ref subworkflowsteps "subworkflow step"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepExecuted() "WorkflowApi::stepExecuted()"|@ref workflowmiscapi "WF Misc"|\c W|verifies if a step has been executed on the current workflow order instance and has status @ref OMQ::StatComplete "COMPLETE"
+    |@ref OMQ::UserApi::Workflow::QorusAsyncStepBase::submitAsyncKey() "QorusAsyncStepBase::submitAsyncKey()"|@ref workflowasyncapi "WF Async"|\c W|submits an async key for an @ref asyncsteps "asynchronous step"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepWarning() "WorkflowApi::()"|@ref workflowerrorapi "WF Errors"|\c W|raises a warning against the workflow order data
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateDynamicData() "WorkflowApi::updateDynamicData()"|@ref workflowdataapi "WF Data"|\c W|performs an update in @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateInstanceData() "WorkflowApi::updateInstanceData()"|@ref workflowdataapi "WF Data"|\c W|performs an update in @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateSensitiveData() "WorkflowApi::updateSensitiveData()"|@ref workflowdataapi "WF Data"|\c W|performs an update in @ref sensitive_data
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateSensitiveDataFromAlias() "WorkflowApi::updateSensitiveDataFromAlias()"|@ref workflowdataapi "WF Data"|\c W|performs an update in @ref sensitive_data from a sensitive data alias
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateTempData() "WorkflowApi::updateTempData()"|@ref workflowdataapi "WF Data"|\c W|performs an update in @ref tempdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWfiid() "WorkflowApi::getWfiid()"|@ref workflowmiscapi "WF Misc"|\c W|returns the current order's \c workflow_instanceid
+
+    @subsection wfapiclasses Workflow API Classes
+
+    The following classes are imported into @ref workflowprograms "workflow program logic containers":
+
+    |!Class|!Availability|!Description
+    |@ref OMQ::AbstractFsRemoteReceive "AbstractFsRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote filesystem through a remote Qorus instance
+    |@ref OMQ::AbstractParallelStream "AbstractParallelStream"|\c W, \c S, \c J|provides an abstract base class for streaming data to or from a remote database through a remote Qorus instance and also provides static helper methods
+    |@ref OMQ::DbRemote "DbRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_sqlutil "system.sqlutil" service methods
+    |@ref OMQ::DbRemoteReceive "DbRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote database through a remote Qorus instance
+    |@ref OMQ::DbRemoteSend "DbRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote database through a remote Qorus instance
+    |@ref OMQ::UserApi::Workflow::DynamicDataHelper "DynamicDataHelper"|\c W|provides an API for managing @ref dynamicdata "dynamic data" atomically in workflows
+    |@ref OMQ::FsRemote "FsRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_fs "system.fs" service methods
+    |@ref OMQ::FsRemoteSend "FsRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote filesystem through a remote Qorus instance
+    |@ref OMQ::QorusInboundTableMapper "QorusInboundTableMapper"|\c W, \c S, \c J|provides an API for mapping data to a DB table
+    |@ref OMQ::QorusInboundTableMapperIterator "QorusInboundTableMapperIterator"|\c W, \c S, \c J|provides an iterator-based API for mapping data to a DB table
+    |@ref OMQ::QorusRawSqlStatementOutboundMapper "QorusRawSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using direct SQL statements passed in
+    |@ref OMQ::QorusRemoteServiceHelper "QorusRemoteServiceHelper"|\c W, \c S, \c J|provides an API for calling service methods in remote Qorus instances
+    |@ref OMQ::QorusSqlStatementOutboundMapper "QorusSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using SqlUtil
+    |@ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper"|\c W, \c S, \c J|provides an API for calling RPC API methods in remote Qorus instances
+    |@ref OMQ::QorusSystemRestHelperBase "OMQ::QorusSystemRestHelper"|\c W, \c S, \c J|provides an API for using the REST API in remote Qorus instances
+    |@ref OMQ::UserApi::Workflow::SensitiveDataHelper "SensitiveDataHelper"|\c W|provides an API for managing @ref sensitive_data "sensitive data" atomically in workflows
+    |@ref OMQ::UserApi::Workflow::TempDataHelper "TempDataHelper"|\c W|provides an API for managing @ref tempdata "temp data" atomically in workflows
+    |@ref OMQ::UserApi::UserApi "UserApi"|\c W, \c S, \c J|the primary shared Qorus API class
+    |@ref OMQ::UserApi::Workflow::WorkflowApi "WorkflowApi"|\c W|the primary workflow API class
+
+    @subsection wfapimodules Workflow API Qore Modules
+
+    The following modules are imported by default into %Qore @ref workflowprograms "workflow program logic containers":
+
+    |!Name|!Availability|!Description
+    |@ref jsonintro "json"|\c W, \c S, \c J|provides APIs for JSON data serialization and deserialization support
+    |@ref mimeintro "Mime"|\c W, \c S, \c J|provides MIME definitions and functionality
+    |@ref mapperintro "Mapper"|\c W, \c S, \c J|provides a data-mapping API
+    |@ref soapclientintro "SoapClient"|\c W, \c S, \c J|provides a SOAP client API
+    |@ref sqlutilintro "SqlUtil"|\c W, \c S, \c J|provides high-level APIs for programmatic DML (SQL data manipulation), DDL (creating, querying, manipulating database definitions), and DBA operations
+    |@ref tablemapperintro "TableMapper"|\c W, \c S, \c J|provides high-level APIs for mapping data to and from database tables
+    |@ref utilintro "Util"|\c W, \c S, \c J|provides utility APIs
+    |@ref uuidintro "uuid"|\c W, \c S, \c J|provides an API for generating UUIDs
+    |@ref xmlintro "xml"|\c W, \c S, \c J|provides APIs for parsing, validating, and generating XML documents
+    |@ref yamlintro "yaml"|\c W, \c S, \c J|provides APIs for %Qore's YAML-based data serialization and deserialization support
+
+    @note other modules can be imported using the @ref requires "%requires" directive, and it's always safe to @ref requires "%require" a module that's already imported into the current @ref Qore::Program "Program" container
+
+    @section workflowapioverview Workflow API Overview
+
+    This section lists all of the API methods specific to workflows; the main workflow API classes are:
+    - \b %Python: @ref OMQ::UserApi::Workflow::WorkflowApi "wfapi"
+    - \b Java: @ref OMQ::UserApi::Workflow::WorkflowApi "qore.OMQ.UserApi.Workflow.WorkflowApi"
+    - \b %Qore: @ref OMQ::UserApi::Workflow::WorkflowApi "WorkflowApi"
+
+    @note
+    - Workflow-specific API functions have been superceded by the API classes listed above; the old workflow api functions
+      can be found in the @ref OMQ::UserApi::Workflow namespace and are prefixed by \c "wf_" and are deprecated.
+    - Qorus @ref step_source "class-based steps" should inherit a specific class depending on the step type; see
+      @ref step_source for more information
+
+    @see
+    - @ref commonserverapi for APIs and API concepts common to all Qorus server code (workflows, services, and jobs).
+    - @ref commonintro "Qorus Common API" for a definition of API definitions common to all Qorus user code
+      (workflows, services, and jobs) as well as the client library.
+
+    Logging APIs:
+    - \b %Python: @ref OMQ::UserApi::UserApi::logInfo() "UserApi.logInfo()"
+    - \b Java: @ref OMQ::UserApi::UserApi::logInfo() "qore.OMQ.UserApi.UserApi.logInfo()"
+    - \b %Qore: @ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"
+
+    @subsection workflowmiscapi Workflow Miscellaneous API
+
+    Miscellaneous workflow API methods:
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::addOrderNote() "WorkflowApi::addOrderNote()"|adds a @ref workflow_order_notes "note" to a workflow order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::generateUniqueKey() "WorkflowApi::generateUniqueKey()"|returns a unique key that can be used for an @ref asyncsteps "asynchronous step" event key
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getErrorInfo() "WorkflowApi::getErrorInfo()"|returns information about the given @ref globalandworkflowerrors "workflow error"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getOrderKeys() "WorkflowApi::getOrderKeys()"|returns information about @ref wf_keylist "order keys" associated with the current workflow order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getOrderNotes() "WorkflowApi::getOrderNotes()"|retrieves @ref workflow_order_notes "notes" saved against the workflow order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStepInfo() "WorkflowApi::getStepInfo()"|returns information about the current step
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStepStatus() "WorkflowApi::getStepStatus()"|returns information about the status of the given step
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWfiid() "WorkflowApi::getWfiid()"|returns the current order's \c workflow_instanceid
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWorkflowMetadata() "WorkflowApi::getWorkflowMetadata()"|returns workflow metadata for the current workflow
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::parentWfiid() "WorkflowApi::parentWfiid()"|returns the order's parent \c workflow_instanceid, if any, otherwise returns @ref nothing
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::reprioritizeOrder() "WorkflowApi::reprioritizeOrder()"|set the priority value of a workflow order instance
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setCustomStatus() "WorkflowApi::setCustomStatus()"|sets a custom status value for the current workflow order data instance
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setOrderKeys() "WorkflowApi::setOrderKeys()"|sets @ref wf_keylist "order keys" on the current workflow order instance
+    |@ref OMQ::UserApi::UserApi::sleep() "UserApi::sleep()"|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepExecuted() "WorkflowApi::stepExecuted()"|verifies if a step has been executed on the current workflow order instance and has status @ref OMQ::StatComplete "COMPLETE"
+    |@ref OMQ::UserApi::UserApi::usleep() "UserApi::usleep()"|safely pause execution for a defined period of time
+
+    @subsection workflowdataapi Workflow Data API
+
+    API calls related to workflow data (see @ref workflowdata "Workflow Data"):
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteDynamicDataKey() "WorkflowApi::deleteDynamicDataKey()"|deletes a key in @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteDynamicDataKey() "WorkflowApi::deleteDynamicDataKey()"|deletes a key in @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteInstanceDataKey() "WorkflowApi::deleteInstanceDataKey()"|deletes a key in @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteSensitiveData() "WorkflowApi::deleteSensitiveData()"|deletes the sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteSensitiveDataKey() "WorkflowApi::deleteSensitiveDataKey()"|deletes one or more keys from the workflow order data instance’s sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::deleteTempDataKey() "WorkflowApi::deleteTempDataKey()"|deletes a key in @ref tempdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getDynamicData() "WorkflowApi::getDynamicData()"|retrieves information from @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getInstanceData() "WorkflowApi::getInstanceData()"|retrieves information from @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveData() "WorkflowApi::getSensitiveData()"|retrieves the sensitive data hash for the given sensitive data key and value
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveDataFromAlias() "WorkflowApi::getSensitiveDataFromAlias()"|retrieves the sensitive data hash for the given sensitive data alias
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getSensitiveDataKeyValues() "WorkflowApi::getSensitiveDataKeyValues()"|retrieves  a hash of sensitive data keys and values saved against the order
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getStaticData() "WorkflowApi::getStaticData()"|retrieves information from @ref staticdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getTempData() "WorkflowApi::getTempData()"|retrieves information from @ref tempdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::getWorkflowInstanceData() "WorkflowApi::getWorkflowInstanceData()"|retrieves information from the running @ref workflowexecutioninstanceinfo "workflow execution instance" itself
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateDynamicData() "WorkflowApi::updateDynamicData()"|performs an update in @ref dynamicdata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateInstanceData() "WorkflowApi::updateInstanceData()"|performs an update in @ref instancedata
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateSensitiveData() "WorkflowApi::updateSensitiveData()"|performs an update in @ref sensitive_data
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateSensitiveDataFromAlias() "WorkflowApi::updateSensitiveDataFromAlias()"|performs an update in @ref sensitive_data from a sensitive data alias
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::updateTempData() "WorkflowApi::updateTempData()"|performs an update in @ref tempdata
+
+    @subsection workflowerrorapi Workflow Error-Handling API
+
+    APIs related to @ref wferrorhandling "workflow error handling":
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepError() "WorkflowApi::stepError()"|raises an error against the workflow order data without affecting the flow of processing
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setRetryDelay() "WorkflowApi::setRetryDelay()"|sets the retry delay explicitly after raising an error against the workflow order instance with @ref OMQ::UserApi::Workflow::WorkflowApi::stepError() "WorkflowApi::stepError()"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::stepWarning() "WorkflowApi::stepWarning()"|raises a warning against the workflow order data
+
+    @subsection workflowasyncapi Workflow Async API
+
+    API calls that can only be called from @ref asyncsteps "asynchronous steps":
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::QorusAsyncStepBase::skipAsyncStep() "QorusAsyncStepBase::skipAsyncStep()"|skips setting an asynchronous key for an @ref asyncsteps "asynchronous step"
+    |@ref OMQ::UserApi::Workflow::QorusAsyncStepBase::submitAsyncKey() "QorusAsyncStepBase::submitAsyncKey()"|submits an async key for an @ref asyncsteps "asynchronous step"
+
+    @note @ref step_source "Class-based" @ref asyncsteps "asynchronous steps" should inherit one of the following classes
+    where the above methods are implemented:
+    - \b %Python: @ref OMQ::UserApi::Workflow::QorusAsyncStepBase "wf.QorusAsyncStepBase"
+    - \b Java: @ref OMQ::UserApi::Workflow::QorusAsyncStepBase "qore.OMQ.UserApi.Workflow.QorusAsyncStepBase"
+    - \b %Qore: @ref OMQ::UserApi::Workflow::QorusAsyncStepBase "QorusAsyncStepBase"
+
+    @subsection workflowsubworkflowapi Workflow Subworkflow API
+
+    API calls that can only be called from @ref subworkflowsteps "subworkflow steps":
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase::bindSubworkflow() "QorusSubworkflowStepBase::bindSubworkflow()"|binds a subworkflow to the current @ref subworkflowsteps "subworkflow step"
+    |@ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase::skipSubworkflow() "QorusSubworkflowStepBase::skipSubworkflow()"|skips the subworkflow bind in a @ref subworkflowsteps "subworkflow step"
+
+    @note @ref step_source "Class-based" @ref subworkflowsteps "subworkflow steps" should inherit one of the following classes
+    where the above methods are implemented:
+    - \b %Python: @ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase "wf.QorusSubworkflowStepBase"
+    - \b Java: @ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase "qore.OMQ.UserApi.Workflow.QorusSubworkflowStepBase"
+    - \b %Qore: @ref OMQ::UserApi::Workflow::QorusSubworkflowStepBase "QorusSubworkflowStepBase"
+
+    @subsection workfloweventsyncapi Workflow Event Synchronization API
+
+    API calls that can only be called from @ref eventsteps "workflow synchronization event steps":
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::bindEvent() "QorusEventStepBase::bindEvent()"|binds a workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::bindEventUnposted() "QorusEventStepBase::bindEventUnposted()"|binds an unposted workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+    |@ref OMQ::UserApi::Workflow::QorusEventStepBase::skipEvent() "QorusEventStepBase::skipEvent()"|skips binding a workflow synchronization event to the current @ref eventsteps "workflow synchronization event step"
+
+    @note @ref step_source "Class-based" @ref eventsteps "event steps" should inherit one of the following classes
+    where the above methods are implemented:
+    - \b %Python: @ref OMQ::UserApi::Workflow::QorusEventStepBase "wf.QorusEventStepBase"
+    - \b Java: @ref OMQ::UserApi::Workflow::QorusEventStepBase "qore.OMQ.UserApi.Workflow.QorusEventStepBase"
+    - \b %Qore: @ref OMQ::UserApi::Workflow::QorusEventStepBase "QorusEventStepBase"
+
+    @subsection workflowattachapi Workflow Attach API
+
+    API calls that can only be called from the @ref attach "attach logic":
+
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::setBlocked() "WorkflowApi::setBlocked()"|sets the current workflow order instance to status @ref OMQ::StatBlocked in the @ref attach "attach logic"
+    |@ref OMQ::UserApi::Workflow::WorkflowApi::rescheduleOrder() "WorkflowApi::rescheduleOrder()"|changes the earliest possible processing date for the current workflow order instance in the @ref attach "attach logic"
+*/|

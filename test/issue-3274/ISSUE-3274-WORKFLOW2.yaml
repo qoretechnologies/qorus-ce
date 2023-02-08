@@ -1,0 +1,11 @@
+type: workflow
+name: "ISSUE-3274-WORKFLOW2"
+version: "1.0"
+desc: test class-based java workflow
+author:
+  - Qore Technologies, s.r.o.
+steps: ["Issue3274Step2:1.0"]
+sla_threshold: 2
+code: Issue3274WorkflowJavaClass.java
+class-name: Issue3274WorkflowJavaClass
+lang: java

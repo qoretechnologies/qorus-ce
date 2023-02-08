@@ -1,0 +1,140 @@
+# This is a generated file, don't edit!
+type: fsm
+name: issue-3858-update
+desc: record update test
+groups:
+  - regression
+  - test
+states:
+    '2':
+        position:
+            x: 306
+            'y': 69.20587158203125
+        initial: false
+        name: Log Output
+        desc: ''
+        type: state
+        id: QsQWFHg8G
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                desc: >-
+                    Request/response data provider: writes a log message to the current
+                    log file.
+
+
+                    This API call can only be made internally in Qorus.
+
+
+                    This API call does not return any response.
+                supports_request: true
+                path: /util/log-message
+                use_args: true
+                args:
+                    type: hash
+                    value:
+                        level:
+                            type: select-string
+                            value: INFO
+                        message:
+                            type: string
+                            value: 'record: %y'
+                        args:
+                            type: auto
+                            value: '$local:input'
+    '3':
+        position:
+            x: 274
+            'y': 183.20587158203125
+        initial: false
+        name: Save Output
+        desc: ''
+        type: state
+        id: ijj69xl2t
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                desc: >-
+                    Request/response data provider: Writes output data to locations
+                    provided by the argument, which must be a hash where keys provide
+                    values to be stored; each key is subject to template substitution
+                    with `UserApi::expandTemplatedValue()`; hash values provide the
+                    locations to store the values in.
+
+
+                    Example: `\$local:input: \$dynamic:account`
+
+
+                    This above value would result in input data being stored in workflow
+                    dynamic data when executed in a workflow context.
+
+
+                    Note:
+
+                    - \$local:input represents input data
+
+                    - Escape all `$` signs so they are evaluated by the API call and not
+                    during standard template evaluation of API call arguments by Qorus
+                    itself
+                supports_request: true
+                path: /util/write-output
+                use_args: true
+                args:
+                    type: '*hash<auto>'
+                    value: '\$local:input: \$info:*'
+    '4':
+        position:
+            x: 43
+            'y': 99.80389404296875
+        initial: true
+        name: Update Record
+        desc: ''
+        type: state
+        id: sOCXFraa5
+        action:
+            type: update
+            value:
+                type: datasource
+                name: omquser
+                supports_read: true
+                supports_update: true
+                supports_create: true
+                supports_delete: true
+                descriptions:
+                    - >-
+                        Data provider for database `pgsql:omquser@omquser`; use the
+                        search API with the `sql` and `args` arguments to execute
+                        record-based queries
+                    - >-
+                        Record-based data provider for db table `public.test_table_1`;
+                        supports create, read/search, update, delete, upsert, and bulk
+                        operations
+                path: /test_table_1
+                search_options:
+                    requires_result:
+                        type: bool
+                        value: true
+                search_args:
+                    col_1:
+                        type: number
+                        value: '$qore-expr:{$local:* ? 1 : 0}'
+                        op:
+                            - '='
+                update_args:
+                    col_1:
+                        type: number
+                        value: 3
+        execution_order: 1
+        transitions:
+            -
+                state: '2'
+                language: qore
+            -
+                state: '3'
+                language: qore

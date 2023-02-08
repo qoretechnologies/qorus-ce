@@ -1,0 +1,257 @@
+# -*- mode: conf -*-
+# $OMQ_DIR/etc/options
+#
+# qorus options are specified with the following format:
+# 	qore.<option-name>: <value>
+#
+# for a list of valid options, type qorus -l
+
+# connection string to the system database
+# (default: none)
+#qorus.systemdb: pgsql:qorus/qorus@qorus
+
+# the name of this instance
+# (default: test-instance-1)
+#qorus.instance-key: test-instance-1
+
+# to ensure that the system tries to recover any open session when it starts
+# (default: false)
+qorus.auto-recover: true
+
+# the directory for all Qorus log files
+# (default: $OMQ_DIR/log or /var/opt/log for LSB installations when installing from RPMs on Linux)
+#qorus.logdir: /var/log/qorus/
+
+# the port (and optional interface) for the http server
+# (default: 8001 - meaning listen to port 8001 on all interfaces)
+#qorus.http-server: 8001
+
+# the URL for locally-connected clients
+# (default: derived from the http-server setting)
+#qorus.http-client-url: http://localhost:8001
+
+# if true then Qorus will launch in the background
+# (default: true)
+#qorus.daemon-mode: true
+
+# sets the maximum number of old log files to keep when rotating log files
+# (default: 10)
+#qorus.max-log-files:
+
+# sets the minimum number of datasources in the system omq pool
+# (default: 3)
+#qorus.system-pool-minumum: 3
+
+# sets the maximum number of datasources in the system omq
+# (default: 10)
+#qorus.system-pool-maximum: 10
+
+# sets maximum number of retries before a step receives status 'ERROR'
+# (default: 5)
+#qorus.max-retries: 5
+
+# sets maximum number of retries before a step with ASYNC-WAITING receives status 'ERROR'
+# (default: 20)
+#qorus.max-async-retries: 20
+
+# sets delay between automatic recovery attempts of RETRY steps/segments in seconds
+# (default: 300)
+#qorus.recover_delay: 300
+
+# sets delay between automatic recovery attempts of ASYNC-WAITING steps/segments in seconds
+# (default: 1200)
+#qorus.async_delay: 1200
+
+# sets workflow instance data cache expiration delay in seconds
+# (default: 3600)
+#qorus.detach-delay: 3600
+
+# maximum number of workflow instance cache entries
+# (default: 50000)
+#qorus.cache-max: 50000
+
+# network address on host for HTTPS server (giving just a port number will bind to all interfaces)
+# (default: none)
+#qorus.http-secure-server: 8011
+
+# file name of PEM certificate file for the secure (SSL-based) HTTP server
+# (default: none)
+#qorus.http-secure-certificate: $OMQ_DIR/etc/cert.pem
+
+# file name of PEM private key file for the secure (SSL-based) HTTP server, if the certificate does not include the private key
+# (default: none)
+#qorus.http-secure-private-key: $OMQ_DIR/etc/key.pem
+
+# the password to the PEM private key for the secure (SSL-based) HTTP server
+# (default: none)
+#qorus.http-secure-private-key-password:
+
+# template for system log file names
+# (default: OMQ-$instance)
+#qorus.logfile-template: OMQ-$instance
+
+# template for workflow log file names
+# (default: OMQ-$instance-$name)
+#qorus.wf-logfile-template: OMQ-$instance-$name
+
+# template for service log file names
+# (default: OMQ-$instance-SVC-$type-$name)
+#qorus.svc-logfile-template: OMQ-$instance-SVC-$type-$name
+
+# template for job log file names
+# (default: OMQ-$instance-JOB-$name)
+#qorus.job-logfile-template: OMQ-$instance-JOB-$name
+
+# maximum number of events to hold in the internal event cache
+# (default: 10000)
+#qorus.max-events: 10000
+
+# each key in the hash specifies a workflow and option in the following format: <workflow-name>:<workflow-version>:<workflow-option>, note that <workflow-version> may be '*' (as long as the option is not a per-segment option), meaning all versions of a particular workflow match; <workflow-option> may be any option affecting workflow processing; note that per-segment options are specified as follows: <segmentid>/<option-name> where <segmentid> can be given by the step name and optional version: <stepname>[/<stepversion>] (in this case the workflow version must be given explicitly)
+# (default: none)
+#qorus.workflow-params:
+
+# maximum allowed DB threads for parallelized tasks (ex: session recovery); typically the system schema DB server's CPU count + 2; must be less than system-pool-maximum
+# (default: 10)
+#qorus.db-max-threads: 10
+
+# list of objects to audit, elements may be: '*' (enable everything), 'system' (system events), 'workflows' (workflow start & stop events), 'workflow-data' (events related to workflow order data processing), 'jobs' (job start & stop events), 'job-data' (events related to job instance processing), 'services' (service events), 'api' (audit api calls that make changes), 'api-read' (audit api calls that only return information), 'user-events' (audit user events), 'oload' (audit oload code loading events), 'alerts' (audit alert events), 'groups' (audit group status changes)
+# (default: none)
+#qorus.audit: *
+
+# maximum amount of threads a Qorus service can start
+# (default: 200)
+#qorus.max-service-threads: 200
+
+# turns on Qorus system debugging
+# (default: none)
+#qorus.debug-system: true
+
+# defines for Qorus user code
+# (default: none)
+#qorus.defines: DEBUG=1
+
+# allows workflow error definitions to be updated automatically based on the workflow's error definition function
+# (default: true)
+#qorus.auto-error-update: true
+
+# maximum number of transient alerts stored in Qorus
+# (default: 1000)
+#qorus.transient-alert-max: 1000
+
+# the connection name for the SMTP server for alert email delivery
+# (default: none)
+#qorus.alert-smtp-connection: smtp-alerts
+
+# email recipient 'To:' list for alerts
+# (default: none)
+#qorus.alert-smtp-to:
+
+# email recipient 'From:' value for alerts
+# (default: alert_noreply@$instance)
+#qorus.alert-smtp-from:
+
+# alert email coalescing interval in seconds
+# (default: 60)
+#qorus.alert-smtp-interval: 60
+
+# enable alert emails; this property is runtime changeable
+# (default: false)
+#qorus.alert-smtp-enable: false
+
+# raise an ongoing alert if a monitored filesystem is greater than the given percentage full
+# (default: 85)
+#qorus.alert-fs-full: 85
+
+# Size of the regular session recovery and workflow startup SQL batches
+# (default: 5000)
+#qorus.sql-default-blocksize: 5000
+
+# Size of the first workflow startup SQL batch for instant workflow instance processing as soon as possible
+# (default: 200)
+#qorus.sql-init-blocksize: 200
+
+# module names for externally-defined connection handling
+# (default: none)
+#qorus.connection-modules: MyConnection
+
+# the connection acquisition timeout threshold in milliseconds for raising transient alerts against DatasourcePool objects
+# (default: 5000)
+#qorus.dsp-warning-timeout: 5000
+
+# the connection acquisition timeout threshold in milliseconds for DatasourcePool objects for raising exceptions
+# (default: 120000)
+#qorus.dsp-error-timeout: 120000
+
+# start and stop interfaces depending on their connection status
+# (default: true)
+#qorus.manage-interfaces: true
+
+# the socket operation timeout threshold in milliseconds for raising transient alerts against socket-based connection objects
+# (default: 10000)
+#qorus.socket-warning-timeout: 10000
+
+# the minimum socket throughput in bytes/second below which a warning will be raised for socket-based connection objects
+# (default: 20480)
+#qorus.socket-min-throughput: 20480
+
+# the minimum time in milliseconds a socket transfer must take for it to be eligible for throughput warnings; transfers that take less time than this are ignored
+# (default: 1000)
+#qorus.socket-min-throughput-ms: 1000
+
+# allows workflows, services, and jobs to be started when the system starts
+# (default: true)
+#qorus.autostart-interfaces: true
+
+# enables SERVICE_METHOD_PERFORMANCE event emission on all service calls; note that enabling this option can cause service method call performance degredation
+# (default: false)
+#qorus.service-perf-events: false
+
+# enables WORKFLOW_STEP_PERFORMANCE event emission for all workflow steps; note that enabling this option can cause workflow step performance degredation
+# (default: false)
+#qorus.workflow-step-perf-events: false
+
+# module names for externally-defined data mapper classes
+# (default: none)
+#qorus.mapper-modules: MyMapper
+
+# module names for externally-defined data mapper classes
+# (default: false)
+#qorus.oracle-datasource-pool: false
+
+# Maximum size of a value map for it to be cached entirely on its first reference
+# (default: 100)
+#qorus.vmap-size-threshold: 100
+
+# sets the workflow synchronization event cache expiration delay in seconds
+# (default: 3600)
+#qorus.sync-delay: 3600
+
+# sets the file name for the sensitive data encryption key; must be exactly 32-bytes in size
+# note that this file is created automatically when the system is installed or upgraded and the
+# system option is also set automatically as well
+# (default: $OMQ_DIR/etc/sensitive_data.key)
+#qorus.sensitive-data-key: $OMQ_DIR/etc/sensitive_data.key
+
+# sets the file name for the sensitive value encryption key; must be from 4 to 56 bytes in size
+# note that this file is created automatically when the system is installed or upgraded and the
+# system option is also set automatically as well
+# (default: $OMQ_DIR/etc/sensitive_value.key)
+#qorus.sensitive-value-key: $OMQ_DIR/etc/sensitive_value.key
+
+# determines if sensitive data is deleted immediately when a workflow order goes to COMPLETE
+# (default: true)
+#qorus.purge-sensitive-data-complete: true
+
+# determines if sensitive data is deleted immediately when a workflow order goes to COMPLETE
+# (default: true)
+#qorus.purge-sensitive-data-canceled: true
+
+# monetary amount for a single recovered workflow order to estimate the cost
+# savings of automatic technical error recovery in Qorus
+# (default: 750)
+#qorus.recovery-amount: 750
+
+# currency for recovery-amount
+# (default: USD)
+#qorus.recovery-currency: USD
+

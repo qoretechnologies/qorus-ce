@@ -1,0 +1,91 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3621Test
+
+class Issue3621Test inherits Test {
+    constructor() : Test("Issue3621", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+
+        addTestCase("tag test", \tagTest());
+
+        set_return_value(main());
+    }
+
+    tagTest() {
+        # workflows
+        *list<auto> l = qrest.get("workflows?tags={TEST=issue-3594}");
+        assertEq(1, l.size());
+        assertEq("EXAMPLE-MAIN", l[0].name);
+
+        l = qrest.get("workflows?tag_case_insensitive=true;tags=TEST=ISSUE-3594");
+        assertEq(1, l.size());
+        assertEq("EXAMPLE-MAIN", l[0].name);
+
+        l = qrest.get("workflows?tags={TEST=issue-3594};short");
+        assertEq(1, l.size());
+        assertRegex("EXAMPLE-MAIN", l[0]);
+
+        l = qrest.get("workflows?tag_case_insensitive=true;tags=TEST=ISSUE-3594;short");
+        assertEq(1, l.size());
+        assertRegex("EXAMPLE-MAIN", l[0]);
+
+        # services
+        l = qrest.get("services?tags={TEST=issue-3534}");
+        assertEq(1, l.size());
+        assertEq("issue-3534", l[0].name);
+
+        l = qrest.get("services?tags={TEST=ISSUE-3534};tag_case_insensitive=true");
+        assertEq(1, l.size());
+        assertEq("issue-3534", l[0].name);
+
+        l = qrest.get("services?tags={TEST=issue-3534};short");
+        assertEq(1, l.size());
+        assertRegex("issue-3534", l[0]);
+
+        l = qrest.get("services?tags={TEST=ISSUE-3534};tag_case_insensitive=true;short");
+        assertEq(1, l.size());
+        assertRegex("issue-3534", l[0]);
+
+        # jobs
+        l = qrest.get("jobs?tags={TEST=issue-3485}");
+        assertEq(1, l.size());
+        assertEq("issue-3485-python-test", l[0].name);
+
+        l = qrest.get("jobs?tags={TEST=ISSUE-3485};tag_case_insensitive=true");
+        assertEq(1, l.size());
+        assertEq("issue-3485-python-test", l[0].name);
+
+        l = qrest.get("jobs?tags={TEST=issue-3485};short");
+        assertEq(1, l.size());
+        assertRegex("issue-3485-python-test", l[0]);
+
+        l = qrest.get("jobs?tags={TEST=ISSUE-3485};tag_case_insensitive=true;short");
+        assertEq(1, l.size());
+        assertRegex("issue-3485-python-test", l[0]);
+
+        # classes
+        l = qrest.get("classes?tags={TEST=issue-3485-class}");
+        assertEq(1, l.size());
+        assertEq("Issue3485PythonProcessor1", l[0].name);
+
+        l = qrest.get("classes?tags={TEST=ISSUE-3485-CLASS};tag_case_insensitive=true");
+        assertEq(1, l.size());
+        assertEq("Issue3485PythonProcessor1", l[0].name);
+
+        l = qrest.get("classes?tags={TEST=issue-3485-class};short");
+        assertEq(1, l.size());
+        assertRegex("Issue3485PythonProcessor1", l[0]);
+
+        l = qrest.get("classes?tags={TEST=ISSUE-3485-CLASS};tag_case_insensitive=true;short");
+        assertEq(1, l.size());
+        assertRegex("Issue3485PythonProcessor1", l[0]);
+    }
+}

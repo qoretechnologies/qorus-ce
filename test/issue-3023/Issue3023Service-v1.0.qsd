@@ -1,0 +1,78 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3023-service
+# serviceversion: 1.0
+# servicedesc: Service simple example
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue3023Service
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3023Service inherits QorusService {
+    # name: init
+    # desc: initializes the service
+    init() {
+        hash config_item_value = getConfigItemValue("issue-3023-service-config-2");
+        UserApi::logInfo("Service is initialized, config item value: %y", config_item_value);
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3023-service-config-1": <ConfigItemInfo>{
+                "type": "hash",
+                "default_value": {
+                    "service_test_1": 1,
+                    "service_test_2": (1, 2),
+                    "service_test_3": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "description": "This is an example configuration item of type hash",
+                "strictly_local": True,
+            },
+            "issue-3023-service-config-2": <ConfigItemInfo>{
+                "type": "hash",
+                "default_value": {
+                    "service_test_1": 1,
+                    "service_test_2": "asd",
+                    "service_test_3": (1, 2),
+                    "service_test_4": {
+                        "service_sub_test_1": "service_test_value_1"
+                    }
+                },
+                "description": "This is an example configuration item of type hash",
+            },
+            "issue-3023-service-config-3": <ConfigItemInfo>{
+                "type": "list",
+                "default_value": (
+                    "service_test_value_1",
+                    "service_test_value_2",
+                    "service_test_value_3"
+                ),
+                "description": "This is an example configuration item of type list",
+            },
+            "issue-3023-service-config-4": <ConfigItemInfo>{
+                "type": "*int",
+                "description": "This is an example configuration item of type *int",
+            },
+            "issue-3023-service-config-5": <ConfigItemInfo>{
+                "type": "*float",
+                "description": "This is an example configuration item of type *float",
+                "config_group": "testGroup"
+            },
+            "issue-3023-service-config-6": <ConfigItemInfo>{
+                "type": "*int",
+                "default_value": NOTHING,
+                "description": "This is an example configuration item of type *int",
+                "allowed_values": (2, 3, NOTHING)
+            },
+        };
+    }
+}

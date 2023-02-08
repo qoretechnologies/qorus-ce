@@ -1,0 +1,28 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3834Swagger inherits QorusService {
+    init() {
+    }
+
+    account_put() {
+    }
+
+    account_delete() {
+    }
+
+    hash<auto> accounts_get(hash<auto> arg) {
+        UserApi::logInfo("accounts_get() arg: %y", arg);
+        return {
+            "Name": "x",
+            "Type": "x",
+            "TaxId": "x",
+            "RequestId": arg.RequestId,
+        };
+    }
+
+    accounts_post() {
+    }
+}

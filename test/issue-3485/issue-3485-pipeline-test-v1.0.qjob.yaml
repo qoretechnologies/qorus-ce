@@ -1,0 +1,24 @@
+# This is a generated file, don't edit!
+type: job
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3485PipelineTest
+desc: "issue 3485 pipeline test job"
+groups:
+  - regression
+  - test
+name: issue-3485-pipeline-test
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+code: issue-3485-pipeline-test-v1.0.qjob
+fsm:
+  - name: fsm5
+    triggers:
+    - method: run

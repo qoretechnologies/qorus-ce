@@ -1,0 +1,29 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3768
+
+class Issue3768 inherits Test {
+    public {}
+
+    constructor() : Test("Issue3786", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("test", \test());
+
+        set_return_value(main());
+    }
+
+    private test() {
+        # create an order instance
+        hash<auto> h = qrest.post("workflows/ISSUE-3768-TEST/execSynchronous", {"staticdata": {}});
+        assertEq(OMQ::StatComplete, h.status);
+    }
+}

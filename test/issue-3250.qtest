@@ -1,0 +1,40 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue3250
+
+class QorusIssue3250 inherits Test {
+    constructor() : Test("Issue3250Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        qrest.put("services/issue-3250/load");
+        on_exit qrest.put("services/issue-3250/unload");
+
+        string url = UserApi::qorusGetLocalUrl();
+        HTTPClient hc({
+            "url": url + "/issue3250",
+        });
+        string body = hc.get("");
+        bool ok = (body =~ /Issue 3250 Test: [0-9]{4}-[0-9]{2}-[0-9]{2}/);
+        if (!ok) {
+            UserApi::logInfo("body error: %y", body);
+        }
+        assertEq(True, ok);
+    }
+}

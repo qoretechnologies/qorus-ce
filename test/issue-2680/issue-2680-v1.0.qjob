@@ -1,0 +1,47 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-2680
+# class-name: Issue2680
+# version: 1.0
+# desc: class-based test job
+# author: Qore Technologies, s.r.o.
+# single-instance: false
+# active: false
+# run-skipped: true
+# remote: true
+## schedule: once a year for 3 AM on Jan 1st
+## schedule: min hour day month dow
+# schedule: 0 3 1 1 *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# language: qore
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class Issue2680 inherits QorusJob {
+    run() {
+        # issue #2680: test handling jobs that will not stop
+        if (getConfigItemValue("deadlock")) {
+            logInfo("job is now deadlocking and will have to be killed; disable the \"deadlock\" "
+                "configuration item to avoid this behavior");
+            Counter cnt(1);
+            cnt.waitForZero();
+        } else {
+            logInfo("job terminating normally; deadlock flag not set");
+        }
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "deadlock": <ConfigItemInfo>{
+                "type": "bool",
+                "default_value": False,
+                "description": "determines if the job will deadlock or not",
+            },
+        };
+    }
+}
+# END

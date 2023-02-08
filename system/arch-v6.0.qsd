@@ -1,0 +1,1136 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus System Service Definitions
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+/**
+    @see @ref QorusSystemArchService for method information
+
+    This service provides a data management and purging (deleting) service for Qorus system database.
+    This service archives Qorus metadata and live/production data into an archiving database/datasource, and those
+    data are removed from the live instance as well. It also supports handling DB table space management.
+
+    The only supported way to setup an archiving schema is to use @ref schema-tool "schema-tool" as follows:
+
+    @verbatim
+prompt% schema-tool -V --arch=omqarch
+    @endverbatim
+
+    In the above example, \c omqarch is a special system datasource defined in @ref dsconn - the above command will
+    prepare the datasource for use as an archiving datasource by installing the system schema and setting internal
+    system configuration parameters.
+
+    The service's main method is QorusSystemArchService::archive().
+
+    The arch service handles all live data related to workflow instances (order data) in
+    @ref OMQ::StatComplete "COMPLETE" and @ref OMQ::StatCanceled "CANCELED" statuses.
+
+    Errors raised by this service are prefixed with "ARCH" string; see @ref archerrors
+
+    @section archconfig Configuration
+
+    The service supports the following config items:
+    |!Key|!Mand.|!Default|!Description
+    |\c datasource|Y|-|The archive datasource name. The datasource has to be specified in @ref dsconn
+    |\c day-interval|Y|-|A number of days to be kept in current Qorus instance DB. For example, set it to 365 to keep one year history in the live/production schema - older completed/canceled orders will be archived
+    |\c day-interval-workflows|N|-|A number of days to be kept in current Qorus instance DB for workflow instances. For example, set it to 365 to keep one year history in the live/production schema - older completed/canceled orders will be archived. If there is no value for \c day-interval-workflows set, the \c day-interval is used.
+    |\c day-interval-jobs|N|-|A number of days to be kept in current Qorus instance DB for job instances. For example, set it to 365 to keep one year history in the live/production schema - older completed jobs will be archived. If there is no value for \c day-interval-workflows set, the \c day-interval is used.
+    |\c batch-size|N|\c 1000|Size of single-batch transaction block. Its value can be sized to fit database UNDO/TEMP segment handling
+    |\c batch-sleep|N|\c 0|A sleep/delay between batch loops (if configured in \c max-loops or in direct calls) in seconds
+    |\c max-loops|N|\c 0|Set maximum loops (batch-size) related for archive/purge method. 0 means run until there is something to process.
+    |\c no-metadata|N|\c False|Do not archive metadata if it's set to \c True. Only live orders will be archived
+    |\c archive|N|\c True|Switch on/off archiving. The arch service does not do anything if it's set to \c False and the QorusSystemArchService::archive() method is called.
+    |\c purge|N|\c False|Switch on/off standalone purging. The arch service does not do anything if it's set to \c False and the QorusSystemArchService::purge() method is called. Standalone purge cannot be run if \c archive config is set to True.
+    |\c space-management|N|\c False|It can free database tables space if it is set to \c True
+    |\c filter|N|-|Optional data filter. See @ref archfiltering for description
+    |\c statistics|N|\c False|Allow to compute database statistics in the source schema
+    |\c statistics-options|N|-|A hash with optional settings for statistics computation. See @ref archdatabases-statistics
+    |\c shadow-datasources|N|-|Optional list of datasource names to be kept on the same DB schema version. This option is used only for upgrading via @ref schema-tool. Potential usage: rotating \c arch.datasource schema etc. Option's value \c datasource can be listed here too.
+
+    @note the \c "active" configuration item has been removed; to ensure that the service does not run, disable it
+    with <tt>qrest put services/arch/disable</tt>
+
+    @section archerrors List of Errors
+
+    |!Error|!Error Text|!Action Suggested
+    |\c ARCH-MISSING-FEATURE|This feature is not implemented for this DB server|This action is not available for currently used database platform. Contact Qore Technologies with new feature request
+    |\c ARCH-ERROR-CONFIG|Config item \c "datasource" is not set|Ensure that an archiving datasource is defined in the @ref dsconn and set it in the \c "datasource" config item; see @ref archconfig
+    |\c ARCH-ERROR-CONFIG|Qorus schema versions are different. Source: HASH Target: HASH|Source (live/production) schema version is different from target (archive) schema version. Update archive schema version to requested version with standard Qorus tools
+    |\c ARCH-ERROR-CONFIG|Config item \c "day-interval" is 0 but must be greater than 0|Requested time interval is not configured correctly; see @ref archconfig
+    |\c ARCH-ERROR-CONFIG|Archiving is disabled by config|Archiving is disabled by user request. Enable it in the config item; see @ref archconfig (\c "archive")
+    |\c ARCH-ERROR-CONFIG|Purging is disabled by config|Purging is disabled by user request. Enable it with the \c "purge" config item; see @ref archconfig (\c "purge")
+    |\c ARCH-ERROR-CONFIG|Unsupported cfg type: STRING|An unexpected error occurred. Contact Qore Technologies with a bug report at mailto:support@qoretechnologies.com
+    |\c ARCH-ERROR-CONFIG|Cannot run plain-purge when archive mode is configured|It's potentialy unsafe to run \c "purge" when the instance is configured to use \c "archive" (data cannot be removed without archiving)
+    |\c ARCH-ERROR-CONFIG|Space management is disabled by config|Tablespace management is disabled by user request; enable it with the \c "space-management" config item; see @ref archconfig (\c "space-management")
+    |\c ARCH-ERROR-CONFIG|Compute statistics disabled by config|Statistics management is disabled by user request; enable it in with the \c "statistics" config item; see @ref archconfig (\c "statistics")
+    |\c ARCH-ERROR-INTERRUPT|Run interrupted by user request|User can interrupt the currently running archive/purge action by calling the interrupt() method
+    |\c ARCH-ERROR-FILTER|Filter error|Some values provided to \c archive or \c purge filters are invalid. Fix the filter regarding the error message
+
+    @section archfiltering Archiving Filters
+
+    The archiving process can be set up with additional filters, for example, to allow handling of specified workflows only.
+
+    <b>Filter setup</b>
+
+    - globally for all archiving runs: use method QorusSystemArchService::set_filter()
+    - for the current run: use the \c $filter argument for QorusSystemArchService::archive() or QorusSystemArchService::purge(). Note that setting the filter in the method overrides any existing global filter set by QorusSystemArchService::set_filter().
+
+    @note All workflow instances are checked as a full tree. It means that filter can be skipped if the filtered out workflow instance is a sub-workflow for example.
+
+    <b>Filter structure</b>
+
+    Filters are set in a hash. Filters in the top-level hash are logically AND-ed;
+    filter values are logically OR-ed. See example below.
+
+    The allowed keys are:
+
+    |!Key|!Type|!Description|
+    |\c workflow_instanceid|\c list|a list with exact workflow instance IDs
+    |\c workflows|\c list|a list of hashes where the hash is created with workflow name : workflow version pair
+    |\c day-interval|\c integer|If set it overrides base configuration \c day-interval value
+    |\c day-interval-jobs|\c integer|If set it overrides base configuration \c day-interval-jobs value
+    |\c day-interval-workflows|\c integer|If set it overrides base configuration \c day-interval-workflows value
+    |\c batch-size|\c integer|If set it overrides base configuration \c batch-size value
+    |\c batch-sleep|\c integer|If set it overrides base configuration \c batch-sleep value
+    |\c no-metadata|c boolean|Do not archive metadata if it's set to \c True. Only live orders will be archived
+
+    <b>Filter example:</b>
+
+    @code{.py}
+# select WFIID 1 or 345 or 1200 but only when they are instances of
+# SIMPLETEST:1.0 or ARRAYTEST:2.0
+hash<auto> filter = {
+    "workflow_instanceid": (1, 345, 1200),
+    "workflows": {
+        "SIMPLETEST": "1.0",
+        "ARRAYTEST": "2.0"
+    },
+    "day-interval": 30,
+);
+    @endcode
+
+    @section archdatabases Database Related Information
+
+    The arch service uses its own datasources for production and archive DB instances.
+    There are no Qorus system datasources used at all. So for example brute force
+    session killing will affect only current \c arch runs.
+
+    @subsection archdatabases-statistics Database Statistics
+
+    @warning Statistics are critical part of any modern database platform. Please
+         be extreme careful when you play with it. In any doubt consult
+         your database administrator.
+
+    Qorus arch service uses Qore's SqlUtil DBA Tools for this area internally.
+    Please consult the documentation for various options - chapter: Database Statistics
+
+    @subsection archdatabases-oracle Oracle Session Instrumentation
+
+    Archiving DB sessions are specially marked in the DB layer if the Oracle
+    Database Server is used and if the \c omq datasource has privileges to \c DBMS_APPLICATION_INFO
+    package (usually available by default).
+
+    Sessions are marked in Oracle system catalogue views like \c v$sessions:
+
+    |!Column|!Value or Example|!Description
+    |\c MODULE|\c 'Qorus \c ARCH'|Always string 'Qorus ARCH'. It can be used as a quick reference for archiving
+    |\c ACTION|\c 'space \c management'|A string describing currently running step. For example: 'metadata archiving', 'instance archiving', etc.
+    |\c CLIENT_INFO|\c 'QORUS-ARCH: \c rimmer-1'|A string formed by 'QORUS-ARCH:' and Qorus option @ref instance-key
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+%requires SqlUtil
+%requires QorusSchema
+
+# Base class for all db platforms. As much as possible is shared (logic).
+# Only differences (like SQL dialects) are handled in inherited classes.
+class Archiving {
+    public {
+        const MODE_ARCHIVE = "ARCHIVE";
+        const MODE_PURGE = "PURGE";
+        const MODE_MAINTENANCE = "MAINTENANCE";
+
+        const UNLIMITED_LOOPS = 0;
+    }
+
+    private {
+        string m_mode;
+
+        QdspClient m_db;
+        QdspClient m_arch;
+
+        QorusSchema::QorusSchema m_schema;
+        SqlUtil::Tables m_tables;
+
+        *hash m_filter;
+
+        # now() from constructor to keep original datetime. Used in getDate()
+        date m_startupDate;
+        # when it run last time - without error
+        date m_lastRunDate;
+
+        int m_maxIter = UNLIMITED_LOOPS;
+
+        #! Result hash contains insert, update, and noop counts for each table.
+        hash m_result;
+
+        # enforce the arch stop whenever is it possible
+        static bool UserStop = False;
+
+        # the following config items can be zero
+        const ZeroOk = {
+            "day-interval": True,
+            "batch-sleep": True,
+            "max-loops": True,
+        };
+
+        const FILTERS_ALLOWED = (
+            "workflow_instanceid", "workflows",
+            "day-interval", "day-interval-workflows",
+            "day-interval-jobs",
+            "batch-size", "batch-sleep",
+            "no-metadata",
+        );
+
+        # getDate for workflow instance
+        const DATE_WORKFLOW = 0;
+        # getDate for jobs
+        const DATE_JOBS = 1;
+    }
+
+    constructor(string mode = MODE_MAINTENANCE, *int loops, *hash filter) {
+        m_db = omqp;
+
+        while (True) {
+            try {
+                on_success m_db.commit();
+                on_error m_db.rollback();
+
+                setDBClientInfo(m_db);
+
+                m_schema = new QorusSchema::QorusSchema(m_db);
+                m_tables = new SqlUtil::Tables(m_db, m_schema.getTables());
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+
+        # config item for the archive datasource must be set for archiving
+        *string archName = getParam("datasource");
+        if (archName) {
+            m_arch = UserApi::getDatasourcePool(archName);
+        }
+
+        # instance mode and env checking
+        m_mode = mode;
+        ServiceApi::logInfo("Running in mode %s", m_mode);
+
+        switch (m_mode) {
+            case MODE_ARCHIVE: {
+                if (!m_arch) {
+                    logThrow("ARCH-ERROR-CONFIG", "Property 'datasource' is not set");
+                }
+                break;
+            }
+            case MODE_PURGE: {
+                if (!getParam("purge")) {
+                    logThrow("ARCH-ERROR-CONFIG", "Purging is disabled by config ('purge' = false)");
+                }
+                if (getParam("archive")) {
+                    logThrow("ARCH-ERROR-CONFIG", "Cannot run plain-purge; archive mode is configured ('archive' = true)");
+                }
+                break;
+            }
+            case MODE_MAINTENANCE:
+                break;
+            default:
+                throw "ARCH-ERROR-CONFIG", sprintf("Unknown mode %y", m_mode);
+        }
+
+        # iteration count
+        m_maxIter = loops ?? getParam("max-loops");
+        ServiceApi::logInfo("Setting loop iteration count to %d (0 = infinite)", m_maxIter);
+
+        #  startupDate date
+        m_startupDate = now();
+        ServiceApi::logInfo("Startup date: %y", m_startupDate);
+
+        *date lrd = Qorus.props.get("arch", "last-run");
+        if (!exists lrd)
+            lrd = date();
+        m_lastRunDate = get_midnight(lrd);
+        ServiceApi::logInfo("Last successful run date: %y", m_lastRunDate);
+
+        # optional filter
+        m_filter = validateFilter(filter);
+        ServiceApi::logInfo("Filter set: %y", m_filter);
+    }
+
+    destructor() {
+        while (True) {
+            try {
+                on_success m_db.commit();
+                on_error m_db.rollback();
+
+                setDBModuleInfo(m_db);
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+        ServiceApi::logInfo("end of processing");
+    }
+
+    private checkUserStop() {
+        if (UserStop) {
+            logThrow("ARCH-ERROR-INTERRUPT", "Run interrupted by user request");
+        }
+    }
+
+    private date getDate(int type) {
+        *int d;
+
+        if (type == DATE_WORKFLOW) {
+            if (exists m_filter."day-interval-workflows")
+                d = m_filter."day-interval-workflows";
+            else if (exists getParam("day-interval-workflows"))
+                d = getParam("day-interval-workflows");
+        } else if (type == DATE_JOBS) {
+            if (exists m_filter."day-interval-jobs")
+                d = m_filter."day-interval-jobs";
+            else if (exists getParam("day-interval-jobs"))
+                d = getParam("day-interval-jobs");
+        } else if (exists m_filter."day-interval")
+            d = m_filter."day-interval";
+
+        if (!exists d) {
+            *softint conf = getParam("day-interval");
+            if (!conf || conf < 1) {
+                logThrow("ARCH-ERROR-CONFIG", "day-interval is 0 but it has to be set to any value greater than 0");
+            }
+            d = conf;
+        }
+
+        return m_startupDate - days(d);
+    }
+
+    private setLastArchDate() {
+        Qorus.props.update("arch", "last-run", m_startupDate);
+    }
+
+    static setUserStop(bool value = True) {
+        UserStop = value;
+    }
+
+    private checkInstances() {
+        hash<auto> sql = {
+            "columns" : ( "domain", "keyname", "value" ),
+            "where" : ( "domain" : "omq", "keyname" : "schema-version" ),
+            "orderby" : ( "domain", "keyname", "value" ),
+        };
+
+        hash<auto> src;
+        hash<auto> arc;
+        while (True) {
+            try {
+                on_error {
+                    m_db.rollback();
+                    m_arch.rollback();
+                }
+                setDBModuleInfo(m_db, "checking schema versions");
+
+                src = QorusSystemService::getSqlTableSystem(m_db, "system_properties").selectRow(sql);
+                arc = QorusSystemService::getSqlTableSystem(m_arch, "system_properties").selectRow(sql);
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+
+        if (src != arc) {
+            logThrow("ARCH-ERROR-CONFIG", "Qorus schema versions are different. Source: %y. Target: %y.", src, arc);
+        }
+    }
+
+    static hash<auto> getParams() {
+        return ServiceApi::getConfigItemHash();
+    }
+
+    static auto getParam(string key) {
+        return ServiceApi::getConfigItemValue(key);
+    }
+
+    int getFilteredParamInt(string key) {
+        if (exists m_filter{key})
+            return m_filter{key};
+        return validateFilterInteger(getParam(key), key);
+    }
+
+    bool getFilteredParamBool(string key) {
+        if (exists m_filter{key})
+            return m_filter{key};
+        return validateFilterBool(getParam(key), key);
+    }
+
+    auto setFilter(*hash<auto> filter) {
+        validateFilter(filter);
+        return UserApi::callRestApi("PUT", "service/arch/config/filter", {"value": filter});
+    }
+
+    # transaction recovery performed in the caller
+    private setDBClientInfo(AbstractDatasource ds) {
+        if (ds.getDriverName() != "oracle")
+            return;
+        try {
+            ds.exec("begin dbms_application_info.set_client_info(%v); end;",
+                    sprintf("QORUS-ARCH: %s", Qorus.options.getOptionInfoHash()."instance-key".value));
+        } catch (hash<ExceptionInfo> ex) {
+            # do not throw any error here. It's just an additional info
+            ServiceApi::logInfo("%s: %s: %s", ds == m_db ? "omq" : "arch", ex.err, ex.desc);
+        }
+    }
+
+    # transaction recovery performed in the caller
+    private setDBModuleInfo(AbstractDatasource ds, *string action) {
+        if (ds.getDriverName() != "oracle")
+            return;
+        try {
+            ds.exec("begin dbms_application_info.set_module(%v, %v); end;", "Qorus ARCH", action);
+        } catch (hash<ExceptionInfo> ex) {
+            # do not throw any error here. It's just an additional info
+            ServiceApi::logInfo("%s: %s: %s", ds == m_db ? "omq" : "arch", ex.err, ex.desc);
+        }
+    }
+
+    # Quick overview of potential WFI for archiving
+    hash<auto> estimatedCounts(*hash filter) {
+        SqlUtil::AbstractTable wf_live = QorusSystemService::getSqlTableSystem(m_db, "workflow_instance");
+        SqlUtil::AbstractTable wf_prep = QorusSystemService::getSqlTableSystem(m_db, "arch_wf_instances");
+        SqlUtil::AbstractTable job_live = QorusSystemService::getSqlTableSystem(m_db, "job_instance");
+        SqlUtil::AbstractTable job_prep = QorusSystemService::getSqlTableSystem(m_db, "arch_job_instances");
+
+        date wf_cutoff = getDate(DATE_WORKFLOW);
+        date job_cutoff = getDate(DATE_JOBS);
+        ServiceApi::logInfo("using workflow order cutoff: %y job cutoff: %y", wf_cutoff, job_cutoff);
+
+        hash<auto> rv = {
+            "workflow-prepared": wf_prep.selectRow({"columns": cop_as(cop_count(), "cnt")}).cnt,
+            "workflow-live": wf_live.selectRow({
+                "columns": cop_as(cop_count(), "cnt"),
+                "where": {
+                    "workflowstatus": op_in( "C", "X" ),
+                    "modified": op_lt(wf_cutoff),
+                },
+            }).cnt,
+            "job-prepared": job_prep.selectRow({"columns": cop_as(cop_count(), "cnt")}).cnt,
+            "job-live": job_live.selectRow({
+                "columns": cop_as(cop_count(), "cnt"),
+                "where": {
+                    "modified": op_lt(job_cutoff),
+                },
+            }).cnt,
+        };
+        ServiceApi::logInfo("estimatedCounts: %N", rv);
+        return rv;
+    }
+
+    private *hash validateFilter(*hash filter) {
+        hash ret;
+
+        # chack filter keys
+        HashIterator it(filter);
+        while (it.next()) {
+            if (!inlist(it.getKey(), FILTERS_ALLOWED)) {
+                logThrow("ARCH-ERROR-FILTER", "Arch filter key '%s' is not allowed", it.getKey());
+            }
+        }
+
+        # filter for workflow_instanceid - a list
+        if (exists filter.workflow_instanceid) {
+            if (filter.workflow_instanceid.typeCode() != NT_LIST) {
+                logThrow("ARCH-ERROR-FILTER", "Archive filter 'workflow_instanceid' has to be a list");
+            }
+            list wrongValues = select filter.workflow_instanceid, (int($1) == 0);
+            if (elements wrongValues) {
+                logThrow("ARCH-ERROR-FILTER", "Archive filter 'workflow_instanceid' has to contains only integers "
+                    "greater than 0. Wrong values are: %y", wrongValues);
+            }
+            ret.workflow_instanceid = QorusSystemService::compatDeprecatedMakeSelectListSingle(filter.workflow_instanceid);
+        }
+
+        # filter for workflow - a list of hashes ( (name : version), ... )
+        if (exists filter.workflows) {
+            if (filter.workflows.typeCode() != NT_LIST) {
+                logThrow("ARCH-ERROR-FILTER", "Archive filter 'workflows' has to be a list");
+            }
+            # map name/version to id
+            list wfids;
+            foreach auto wf in (filter.workflows) {
+                if (wf.typeCode() != NT_HASH) {
+                    logThrow("ARCH-ERROR-FILTER",
+                          "Archive filter 'workflows' has to be a list of hashes (workflow name:version). Got: %y", wf);
+                }
+                *hash meta = Qorus.qmm.lookupworkflow(wf.firstKey(), wf{wf.firstKey()});
+                if (!exists meta) {
+                    logThrow("ARCH-ERROR-FILTER", "Archive filter 'workflows' with values %y cannot find ID", wf);
+                }
+                push wfids, meta.workflowid;
+            }
+
+            ret.workflows = QorusSystemService::compatDeprecatedMakeSelectListSingle(wfids);
+        }
+
+        # integer only checks
+        list<string> intCheck = (
+            "day-interval",
+            "day-interval-workflows",
+            "day-interval-jobs",
+            "batch-size",
+            "batch-sleep",
+        );
+        foreach string i in (intCheck) {
+            if (exists filter{i})
+                ret{i} = validateFilterInteger(filter{i}, i);
+        }
+
+        # boolean checks
+        if (exists filter."no-metadata")
+            ret."no-metadata" = validateFilterBool(filter."no-metadata", "no-metadata");
+
+        return ret;
+    }
+
+    # validate filter for "int" based (how many days keep data - integer) keys.
+    # for example it needs to fail with NT_DATE etc. - so softint is not sufficient
+    private int validateFilterInteger(auto value, string name) {
+        if (!value.intp()) {
+            logThrow("ARCH-ERROR-FILTER", "Archive filter key %y expected integer, got: %s (%y) which cannot be cast to integer", name, type(value), value);
+        }
+        softint i = value;
+
+        # don't check default values as default values can be zero
+        if (value < 1 && !ZeroOk{name}) {
+            logThrow("ARCH-ERROR-FILTER", "Archive filter key %y must be an integer value greater than 0; got %y (%y)", name, i, value);
+        }
+
+        return i;
+    }
+
+    # validate filter for "bool" based (how many days keep data - integer) keys.
+    # for example it needs to fail with NT_DATE etc. - so softint is not sufficient
+    private bool validateFilterBool(auto value, string name) {
+        bool i;
+        switch (value.typeCode()) {
+            case == NT_BOOLEAN:
+                i = value;
+                break;
+            case == NT_INT:
+                i = (value != 0);
+                break;
+            default:
+                logThrow("ARCH-ERROR-FILTER", "Archive filter key %y expected bool, got: %s (%y)", name, type(value), value);
+        }
+
+        return i;
+    }
+
+    private hash prepareTempTable() {
+        int rowcount = getFilteredParamInt("batch-size");
+
+        hash ret;
+
+        while (True) {
+            try {
+                on_success m_db.commit();
+                # rollback is a must for pgsql to prevent "current transaction is aborted,
+                # commands ignored until end of transaction block" error
+                on_error m_db.rollback();
+
+                setDBModuleInfo(m_db, "temporary table preparation");
+                ServiceApi::logInfo("Archiving::prepareTempTable batch size: %y", rowcount - 1);
+                ServiceApi::logInfo("Archiving::prepareTempTable filter: %y", m_filter);
+
+                ServiceApi::logInfo("Archiving::prepareTempTable WF for date %y", getDate(DATE_WORKFLOW));
+
+                m_db.beginTransaction();
+
+                SqlUtil::AbstractTable arc = QorusSystemService::getSqlTableSystem(m_db, "arch_wf_instances");
+                SqlUtil::AbstractTable src = QorusSystemService::getSqlTableSystem(m_db, "workflow_instance");
+
+                arc.truncate();
+
+                ServiceApi::logInfo("Archiving::prepareTempTable WF creating WFI tree...");
+
+                hash sh = {
+                    # top level WFII
+                    "columns": (
+                        cop_as("workflow_instanceid", "top_parent"),
+                        "workflow_instanceid",
+                        "workflowstatus",
+                        cop_as(cop_value(1), "wf_level"),
+                    ),
+                    "where": {
+                        "modified": op_lt(getDate(DATE_WORKFLOW)),
+                        "parent_workflow_instanceid": op_eq(NULL),
+                        "workflowstatus": op_in("C", "X"),
+                    },
+                    "limit": rowcount,
+                };
+
+                # filters
+                # filter for workflow_instanceid - a list
+                if (exists m_filter.workflow_instanceid)
+                    sh."where".workflow_instanceid = op_in(m_filter.workflow_instanceid);
+                # filter for workflow - a list of hashes ( (name : version), ... )
+                if (exists m_filter.workflows)
+                    sh."where".workflowid = op_in(m_filter.workflows);
+
+                int count = arc.insertFromIterator(src.getRowIterator(sh));
+
+                ServiceApi::logInfo("Archiving::prepareTempTable WF 1st level count=%d. Building subtrees...", count);
+
+                count = 0;
+                int level = 2;
+                do {
+                    checkUserStop();
+                    sh = {
+                        "columns": (
+                            "arc.top_parent",
+                            "workflow_instanceid",
+                            "workflowstatus",
+                            cop_as(cop_value(level), "wf_level"),
+                        ),
+                        "join": join_inner(arc, "arc", {"parent_workflow_instanceid": "workflow_instanceid"}),
+                        "where": {"arc.wf_level": op_eq(level-1)},
+                    };
+                    #printf("SQL: %y\n", src.getSelectSql(sh));
+                    count = arc.insertFromIterator(src.getRowIterator(sh));
+                    level++;
+                } while (count != 0);
+
+                # remove workflows that have references outside the group
+                ServiceApi::logInfo("Archiving::prepareTempTable WF base tree created. Removing unfinished subtrees...");
+
+                checkUserStop();
+                # TODO/FIXME: there is no such support in SqlUtil yet
+                count = m_db.execRaw("delete from ARCH_WF_INSTANCES t
+                    where exists
+                        (select 1 from arch_wf_instances s
+                            where t.top_parent = s.top_parent
+                                and s.workflowstatus not in ('C', 'X')
+                        )");
+
+                ServiceApi::logInfo("Archiving::prepareTempTable WF unfinished subtree removed (rows)=%d", count);
+
+                ret.arch_wf_instances = arc.rowCount();
+
+                # jobs
+                ServiceApi::logInfo("Archiving::prepareTempTable JOB for date %y", getDate(DATE_JOBS));
+
+                SqlUtil::AbstractTable ji = QorusSystemService::getSqlTableSystem(m_db, "job_instance");
+                SqlUtil::AbstractTable ac = QorusSystemService::getSqlTableSystem(m_db, "arch_job_instances");
+
+                sh = {
+                    "columns": "job_instanceid",
+                    "where": {
+                        "jobstatus": op_ne("I"),
+                        "started": op_lt(getDate(DATE_JOBS)),
+                    },
+                    "limit": rowcount,
+                };
+
+                ac.truncate();
+                ret.arch_job_instances = ac.insertFromIterator(ji.getRowIterator(sh));
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+
+        # finals
+        ServiceApi::logInfo("Archiving::prepareTempTable final stats: %y", ret);
+        return ret;
+    }
+
+    computeStatistics(*hash customOptions) {
+        while (True) {
+            try {
+                on_error m_db.rollback();
+
+                setDBModuleInfo(m_db, "compute statistics");
+
+                SqlUtil::Database db(m_db);
+                *hash opts = customOptions ?? getParam("statistics-options");
+                db.computeStatistics(opts);
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+    }
+
+    spaceManagement() {
+        if (!parse_boolean(getParam("space-management"))) {
+            logThrow("ARCH-ERROR-CONFIG", "Space management is disabled by config");
+        }
+        while (True) {
+            try {
+                on_error m_db.rollback();
+
+                # here cannot go exec/execRaw because VACUUM cannot run in transaction
+                setDBModuleInfo(m_db, "space management");
+                SqlUtil::Database db(m_db);
+                db.reclaimSpace();
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+    }
+
+    # Performs all archive steps as defined by config items
+    # - archive metadata
+    # in a loop by batch-size:
+    # - prepare temp table (DB-specific), always performed
+    # - archive live data
+    # - purge data
+    # finalize:
+    # - DB space management (DB-specific), its own config item value check
+    # - DB indexes management
+    # Returns hash with results of all sub-modules.
+    *hash<auto> run() {
+        if (!inlist(m_mode,(MODE_ARCHIVE, MODE_PURGE))) {
+            throw "ARCH-INTERNAL-ERROR", sprintf("Archiving is not alowed for mode %y", m_mode);
+        }
+
+        checkUserStop();
+
+        if (m_mode == MODE_ARCHIVE) {
+            checkInstances();
+            implementationMetadata();
+        }
+
+        int iter = 1;
+
+        while (True) {
+            try {
+                # transaction block begins here. Here all has to be
+                # consistent: success or fail. No half-copied data allowed
+                on_error {
+                    m_db.rollback();
+                    if (m_arch)
+                        m_arch.rollback();
+                }
+                on_success {
+                    m_db.commit();
+                    if (m_arch)
+                        m_arch.commit();
+                    setLastArchDate();
+                }
+
+                checkUserStop();
+                ServiceApi::logInfo("Iteration %d (of %d) - Batch start", iter, m_maxIter);
+
+                hash<auto> prepTmp = prepareTempTable();
+                m_result += prepTmp;
+                if (prepTmp.arch_wf_instances == 0 && prepTmp.arch_job_instances == 0) {
+                    break;
+                }
+
+                # copy to arch
+                if (m_mode == MODE_ARCHIVE) {
+                    implementationArchive();
+                }
+
+                # purge - purge goes always!
+                implementationPurge();
+
+                ServiceApi::logInfo("Iteration %d (of %d) - Batch end", iter, m_maxIter);
+
+                iter++;
+
+                if (m_maxIter != UNLIMITED_LOOPS && iter > m_maxIter) {
+                    ServiceApi::logInfo("Requested loop count reached: %s. Exiting.", iter-1);
+                    break;
+                } else {
+                    # sleep for a while
+                    int sleep = getFilteredParamInt("batch-sleep");
+                    ServiceApi::logInfo("Sleeping for %d seconds", sleep);
+                    ServiceApi::sleep(sleep);
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+        } # end of transaction block / while
+
+        if (getParam("space-management")) {
+            spaceManagement();
+            m_result.space = "OK";
+        }
+
+        if (getParam("statistics")) {
+            computeStatistics();
+            m_result.stats = "OK";
+        }
+
+        ServiceApi::logInfo("archive result: %y", m_result);
+        return m_result;
+    }
+
+    # Archive Qorus "metadata" (WF definitions, statuses, etc.). See TAB_META list.
+    # Most of tables are compared by primary keys (type: T_UPSERT).
+    # Special tables (type: T_FULL) are transferred as delete/insert if it's required.
+    # Those tables are deleted and re-inserten by oload in the src side.
+    #
+    #    - deleted values from source are *not* promoted to target to keep history
+    private implementationMetadata() {
+        if (m_mode != MODE_ARCHIVE) {
+            logThrow("ARCH-INTERNAL-ERROR", "Metadata archiving is not alowed for mode %y", m_mode);
+        }
+
+        if (getFilteredParamBool("no-metadata")) {
+            ServiceApi::logInfo("Metadata archiving is disabled by 'no-metadata' filter / config item");
+            return;
+        }
+
+        while (True) {
+            try {
+                on_error {
+                    m_db.rollback();
+                    m_arch.rollback();
+                }
+                on_success {
+                    m_db.commit();
+                    m_arch.commit();
+                }
+
+                setDBModuleInfo(m_db, "metadata archiving");
+
+                foreach SqlUtil::AbstractTable i in (m_tables.dropIterator()) {
+                    hash t = m_schema.getRawTables(){i.getName()};
+                    if (t.arch.type == Arch::TYPE_META && t.arch.data == Arch::DATA_FULL) {
+                        ServiceApi::logInfo("Truncating archive table: %s", i.getName());
+                        SqlUtil::AbstractTable tgt = QorusSystemService::getSqlTableSystem(m_arch, i.getName());
+                        m_result{i.getName()}."delete" = tgt.del();
+                        ServiceApi::logInfo("done");
+                    }
+                }
+
+                foreach SqlUtil::AbstractTable i in (m_tables.createIterator()) {
+                    hash t = m_schema.getRawTables(){i.getName()};
+
+                    if (t.arch.type != Arch::TYPE_META)
+                        continue;
+
+                    ServiceApi::logInfo("Meta: %s - setup: %y", i.getName(), t.arch);
+                    on_success ServiceApi::logInfo("Meta: %s - OK (%y)", i.getName(), m_result{i.getName()});
+                    on_error ServiceApi::logInfo("Meta: %s - ERROR", i.getName());
+
+                    SqlUtil::AbstractTable src = QorusSystemService::getSqlTableSystem(m_db, i.getName());
+                    SqlUtil::AbstractTable tgt = QorusSystemService::getSqlTableSystem(m_arch, i.getName());
+
+                    switch (t.arch.data) {
+                        case Arch::DATA_FULL:
+                            tgt.del();
+                            m_result{i.getName()}."insert" = tgt.insertFromIterator(src.getRowIterator());
+                            break;
+                        case Arch::DATA_UPSERT:
+                            # we need to get rid of SESSIONID id it's not 0
+                            hash cols = src.describe().getHash();
+                            list sh_cols;
+                            if (cols.hasKey("sessionid")) {
+                                delete cols.sessionid;
+                                sh_cols = cols.keys();
+                                push sh_cols, cop_as(cop_value(0), "sessionid");
+                            } else {
+                                sh_cols = cols.keys();
+                            }
+
+                            hash sh = (
+                                    "columns" : sh_cols,
+                                );
+
+                            m_result{i.getName()}."upsert" = tgt.upsertFromIterator(src.getRowIterator(sh));
+                            break;
+                        default:
+                            logThrow("ARCH-META-ERROR", "wrong data type table: %y", i.getName());
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                # restart the transaction if necessary
+                if (sqlif.restartTransaction(ex))
+                    continue;
+                rethrow;
+            }
+            break;
+        }
+    } # implementationMetadata
+
+    # transaction recovery performed in the caller
+    private implementationArchive() {
+        if (m_mode != MODE_ARCHIVE) {
+            logThrow("ARCH-INTERNAL-ERROR", "Live archiving is not alowed in mode %y", m_mode);
+        }
+
+        setDBModuleInfo(m_db, "instances archiving");
+
+        foreach SqlUtil::AbstractTable i in (m_tables.createIterator()) {
+            checkUserStop();
+
+            hash t = m_schema.getRawTables(){i.getName()};
+
+            if (t.arch.type != Arch::TYPE_LIVE)
+                continue;
+
+            ServiceApi::logInfo("Live: %s - setup: %y", i.getName(), t.arch);
+            on_success ServiceApi::logInfo("Live: %s - OK", i.getName());
+            on_error ServiceApi::logInfo("Live: %s - ERROR", i.getName());
+
+            SqlUtil::AbstractTable src = QorusSystemService::getSqlTableSystem(m_db, i.getName());
+            SqlUtil::AbstractTable tgt = QorusSystemService::getSqlTableSystem(m_arch, i.getName());
+            list sh = list();
+
+            switch (t.arch.data) {
+                case Arch::DATA_FULL:
+                case Arch::DATA_UPSERT:
+                     throw "ARCH-LIVE-ERROR", sprintf("wrong data type table: %s", i.getName());
+                case Arch::DATA_DATE_UPSERT:
+                    push sh, {
+                        "where": {
+                            "modified": op_ge(m_lastRunDate),
+                        },
+                    };
+                    break;
+                case Arch::DATA_DATE:
+                    push sh, {
+                        "where": {
+                            "created": op_lt(getDate(DATE_WORKFLOW)),
+                        },
+                    };
+                    break;
+                case Arch::DATA_JOBID:
+                    push sh, {
+                        "columns": "t0.*",
+                        "join": join_inner("arch_job_instances", "arc", ("job_instanceid": "job_instanceid")),
+                        "alias": "t0",
+                    };
+                    break;
+                case Arch::DATA_WFIID:
+                    push sh, {
+                        "columns": "t0.*",
+                        "join": join_inner("arch_wf_instances", "arc", ("workflow_instanceid": "workflow_instanceid")),
+                        "orderby": ("arc.top_parent", "arc.wf_level"),
+                        "alias": "t0",
+                    };
+                    break;
+                case Arch::DATA_CUSTOM:
+                    sh += call_object_method(self, "archive_custom_" + i.getName().lwr());
+                    break;
+                default:
+                    logThrow("ARCH-MISSING-FEATURE", "Unsupported cfg type: %y", t.arch.data);
+            }
+
+            ListIterator it(sh);
+            while (it.next()) {
+                m_result{i.getName()}."upsert" += tgt.upsertFromIterator(src.getRowIterator(it.getValue()),
+                                                                         SqlUtil::AbstractTable::UpsertInsertFirst
+                                                                        );
+            }
+        }
+    } # implementationArchive
+
+    # transaction recovery performed in the caller
+    list archive_custom_audit_events() {
+        list ret = list();
+        # 1) handle JOBIID events
+        push ret, {
+            "columns": "t0.*",
+            "join": join_inner("arch_job_instances", "arc", ("job_instanceid": "job_instanceid")),
+            "alias": "t0",
+        };
+        # 2) handle WFIID events
+        push ret, {
+            "columns": "t0.*",
+            "join": join_inner("arch_wf_instances", "arc", ("workflow_instanceid": "workflow_instanceid")),
+            "orderby": ("arc.top_parent", "arc.wf_level"),
+            "alias": "t0",
+        };
+        # 3) handle system events
+        push ret, {
+            "columns": "*",
+            "where": {
+                "created": op_lt(getDate(DATE_WORKFLOW)),
+                "job_instanceid": NOTHING,
+                "workflow_instanceid": NOTHING,
+            },
+        };
+        return ret;
+    }
+
+    # transaction recovery performed in the caller
+    purge_custom_audit_events() {
+        string sql;
+        string tname = "audit_events";
+
+        sql = "delete from audit_events src
+                   where exists (select 1
+                       from arch_wf_instances arc
+                       where src.workflow_instanceid = arc.workflow_instanceid)";
+        m_result{tname}."delete" += m_db.exec(sql);
+
+        sql = "delete from audit_events src
+                    where exists (select 1
+                        from arch_job_instances arc
+                        where src.job_instanceid = arc.job_instanceid)";
+        m_result{tname}."delete" += m_db.exec(sql);
+
+        SqlUtil::AbstractTable t = QorusSystemService::getSqlTableSystem(m_db, tname);
+        hash<auto> dsh = {
+            "created" : op_lt(getDate(DATE_WORKFLOW)),
+            "job_instanceid" : NOTHING,
+            "workflow_instanceid" : NOTHING,
+        };
+        m_result{tname}."delete" += t.del(dsh, \sql );
+    }
+
+    # transaction recovery performed in the caller
+    private implementationPurge() {
+        if (m_mode == MODE_MAINTENANCE) {
+            logThrow("ARCH-INTERNAL-ERROR", "Purging is not alowed for mode %y", m_mode);
+        }
+
+        setDBModuleInfo(m_db, "instances purging");
+
+        foreach SqlUtil::AbstractTable i in (m_tables.dropIterator()) {
+            checkUserStop();
+
+            hash t = m_schema.getRawTables(){i.getName()};
+            if (t.arch.type != Arch::TYPE_LIVE)
+                continue;
+
+            ServiceApi::logInfo("Purging %s", i.getName());
+
+            string sql;
+            switch (t.arch.data) {
+                case Arch::DATA_WFIID:
+                    sql = sprintf("delete from %s src
+                                    where exists (select 1
+                                                    from arch_wf_instances arc
+                                                    where src.workflow_instanceid = arc.workflow_instanceid)",
+                                i.getName());
+                    m_result{i.getName()}."delete" += m_db.exec(sql);
+                    break;
+                case Arch::DATA_JOBID:
+                    sql = sprintf("delete from %s src
+                                    where exists (select 1
+                                                    from arch_job_instances arc
+                                                    where src.job_instanceid = arc.job_instanceid)",
+                                i.getName());
+                    m_result{i.getName()}."delete" += m_db.exec(sql);
+                    break;
+                case Arch::DATA_DATE:
+                    SqlUtil::AbstractTable t = QorusSystemService::getSqlTableSystem(m_db, i.getName());
+                    m_result{i.getName()}."delete" += t.del( ( "created" : op_lt(getDate(DATE_WORKFLOW)) ), \sql );
+                    break;
+                case Arch::DATA_DATE_UPSERT:
+                    #SqlUtil::AbstractTable t = QorusSystemService::getSqlTableSystem(m_db, i.getName());
+                    #m_result{i.getName()}."delete" +=  t.del( ( "modified" : op_ge(m_lastRunDate) ), \sql );
+                    ServiceApi::logInfo("Arch::DATA_DATE_UPSERT mode is not supported for purging. Table: %s", i.getName());
+                    break;
+                case Arch::DATA_CUSTOM:
+                    call_object_method(self, "purge_custom_" + i.getName().lwr());
+                    break;
+                default:
+                    logThrow("ARCH-MISSING-FEATURE", "Unsupported cfg type: %y", t.arch.data);
+            }
+            ServiceApi::logInfo("Purging %s: %d rows deleted", i.getName(), m_result{i.getName()}."delete");
+        }
+    } # implementationPurge
+
+    static logThrow(string err, string fmt) {
+        string msg = vsprintf(fmt, argv);
+        ServiceApi::logError(msg);
+        throw err, msg;
+    }
+} # class Archiving
+
+#! the main arch service class
+class QorusSystemArchService inherits QorusSystemService {
+    static hash<auto> estimated_counts(*hash filter) {
+        return new Archiving(Archiving::MODE_MAINTENANCE, 0, filter).estimatedCounts();
+    }
+
+    static hash<auto> info() {
+        return Archiving::getParams();
+    }
+
+    static *hash<auto> archive(*int loops, *hash filter) {
+        return new Archiving(Archiving::MODE_ARCHIVE, loops, filter).run();
+    }
+
+    static *hash<auto> purge(*int loops, *hash filter) {
+        return new Archiving(Archiving::MODE_PURGE, loops, filter).run();
+    }
+
+    static space_management() {
+        return new Archiving().spaceManagement();
+    }
+
+    static statistics(*hash customOptions) {
+        return new Archiving().computeStatistics(customOptions);
+    }
+
+    static interrupt() {
+        Archiving::setUserStop(True);
+    }
+
+    static *hash<auto> filter() {
+        return Archiving::getParam("filter");
+    }
+
+    static auto set_filter(*hash<auto> filter) {
+        return new Archiving().setFilter(filter);
+    }
+}

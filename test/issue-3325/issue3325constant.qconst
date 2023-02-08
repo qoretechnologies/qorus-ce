@@ -1,0 +1,7 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const Example1 = 1;
+const Example1_1 = "one";

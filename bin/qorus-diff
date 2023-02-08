@@ -1,0 +1,336 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%requires qore >= 1.0
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires RestClient
+
+%exec-class QorusCompare
+
+class QorusCompare { # inherits Compare
+    private {
+        hash options;
+        hash definition;
+        bool is_qorus_31;
+
+        const LEVEL_PREFIX = "  ";
+
+        const opts = (
+            "verbose"       : "v,verbose",
+            "help"          : "h,help",
+            "properties"    : "p,properties",
+        );
+
+        # how to detect Qorus 3.1 (URL,min_version)
+        const omq_version_detection = (
+            "url" : "system/omq-version-code",
+            "minversion" : 30100);
+
+        # here are the URLs to process (dump)
+        # The @name construct can be used to expect a LIST in the return of this URL
+        # and "name" is the key of the resulting hash to be considered the unique
+        # identifier of the list member.
+        # If there is multiple entried with the same prefix (up to some slash),
+        # the output is merged together.
+        const compare_definition = (
+            "system/instance-key",
+            "system/omq-version",
+            "system/omq-build",
+            "system/omq-version-code",
+            "system/qore-version",
+            "system/datamodel-version",
+            "system/modules/@name/desc",
+            "system/modules/@name/version",
+            #
+            "remote/user/@name/desc",
+            "remote/user/@name/url",
+            "remote/user/@name/type",
+            #
+            "workflows/@name/version",
+            "workflows/@name/stepinfo/@name/arraytype",
+            "workflows/@name/groups/@name",
+            "workflows/@name/keylist",
+            #
+            "functions/@name/body",
+            "functions/@name/source",
+            "functions/@name/offset",
+            "functions/@name/version",
+            "functions/@name/description",
+            "functions/@name/function_type",
+        );
+
+        # additional comparison definitions for Qorus 3.1 instances
+        const compare_definition_31 = (
+            "workflows/@name/mappers/@name/version",
+            "workflows/@name/vmaps/@name/throws_exception",
+            "workflows/@name/vmaps/@name/valuetype",
+            #
+            "mappers/@name/version",
+            "mappers/@name/desc",
+            "mappers/@name/groups/@name",
+            "mappers/@name/opts/output",
+            "mappers/@name/opts/input",
+            "mappers/@name/option_source",
+            #
+            "valuemaps/@name/description",
+            "valuemaps/@name/throws_exception",
+            "valuemaps/@name/valuetype",
+            "valuemaps/@name/mapsize",
+            "valuemaps/@name/groups/@name",
+            # FIXME how to compare the CONTENT of value maps?
+        );
+
+        const replace_regex = (
+            "source" : ("regex" : "^.*/user/(src/)?(.*)$",
+                        "group" : 1),
+        );
+    }
+
+    static private usage() {
+        stderr.printf(
+"usage:
+    %s [options] <url1>             ... dump info from one qorus instance to stdout
+  -p,--properties        dump also the system properties (default: off)
+  -v,--verbose           sets verbosity level (more v's = more info)
+  -h,--help              print this online help
+
+SAMPLE USAGE:
+%s http://localhost:8001/api http://localhost:8001/api
+", get_script_name(), get_script_name());
+    }
+
+    *list process_command_line() {
+        GetOpt g(opts);
+
+        options = g.parse3(\ARGV);
+
+        # ensure we have a value here...
+        if (!exists options.verbose)
+            options.verbose = 0;
+
+        return ARGV;
+    }
+
+    constructor() {
+        *list urls = process_command_line();
+        if (urls.size() < 1 || urls.size() > 1 || options.help) {
+            usage();
+            exit(1);
+        }
+
+        is_qorus_31 = detect_qorus(urls[0]);
+
+        parse_compare_definition();
+        verify_definition(definition);
+
+        dump_info(urls[0]);
+    }
+
+    bool detect_qorus(string url) {
+        any rc = new RestClient(("url" : url));
+        any ret = rc.get(omq_version_detection.url).body;
+        if (options.verbose)
+            stderr.printf("detected qorus version %y\n", ret);
+        return ret >= omq_version_detection.minversion;
+    }
+
+    hash create_hash(string url) {
+        list url_elements = split('/', url);
+        hash h = hash();
+        while (*string s = pop url_elements) {
+            hash b;
+            b{s} = h;
+            h = b;
+        }
+        return h;
+    }
+
+    nothing add_hash(reference d, hash h) {
+        foreach string k in (h.keyIterator()) {
+            if (exists d{k}) {
+                add_hash(\d{k}, h{k});
+            }
+            else {
+                d{k} = h{k};
+            }
+        }
+    }
+
+    nothing parse_compare_definition() {
+        definition = hash();
+        foreach string url in (compare_definition.iterator()) {
+            hash h = create_hash(url);
+            add_hash(\definition, h);
+        }
+        if (options.verbose)
+            stderr.printf("parsed definition:\n%N\n", definition);
+    }
+
+    nothing verify_definition(hash input) {
+        foreach hash h in (input.pairIterator()) {
+            if (expect_list(h.key)) {
+                if (input.size() != 1) {
+                    throw "ERROR", sprintf("invalid comparison definition near %y\n", input);
+                }
+            }
+            if (h.value.typeCode() != NT_HASH) {
+                throw "ERROR", sprintf("invalid comparison definition near %y\n", input);
+            }
+            verify_definition(h.value);
+        }
+    }
+
+    *string expect_list(string key) {
+        return key[0] == '@' ? substr(key,1) : NOTHING;
+    }
+
+    string make_url(string base, string append) {
+        if (append[0] == '/') {
+            return append;
+        } else {
+            return base + "/" + append;
+        }
+    }
+
+    any safe_query(RestClient rc, string url, string body_element) {
+        try {
+            return rc.get(url){body_element};
+        }
+        catch(hash ex) {
+            if (options.verbose)
+                stderr.printf("exception: %y\n", ex);
+            return NOTHING;
+        }
+    }
+
+    any fix_value(string key, any value) {
+        any val = value;
+        if (value.typeCode() == NT_LIST) {
+            val = sort(value);
+        }
+        else if(value.typeCode() == NT_STRING && exists replace_regex{key}) {
+            *list v = regex_extract(value, replace_regex{key}.regex);
+            if (exists v && exists v[replace_regex{key}.group]) {
+                val = v[replace_regex{key}.group];
+            }
+        }
+        return val;
+    }
+
+    dump_recursive(File f, RestClient rc, string url, hash def, string level, hash ctx) {
+        foreach hash el in (def.pairIterator()) {   # "system" : hash(...)
+            if (options.verbose)
+                stderr.printf("dumping %s --- %y, ctx %y\n", el.key, el.value, ctx);
+            if (*string hkey = expect_list(el.key)) {
+                if (options.verbose)
+                    stderr.printf("list: %s\n", url);
+                any elts = safe_query(rc,url,"body");
+                if (elts) {
+                    hash helts;
+                    if (elts.typeCode() == NT_LIST) {
+                        # create a hash based on @name
+                        helts = map {$1{hkey} : $1}, elts;
+                    }
+                    else if (elts.typeCode() == NT_HASH) {
+                        helts = elts;
+                    }
+                    else {
+                        throw "ERROR", sprintf("expecting list, got %y\n", elts);
+                    }
+                    if (options.verbose)
+                        stderr.printf("got hash: %y\n", helts);
+                    foreach string el2 in (sort(helts.keys())) {
+                        string suburl = make_url(url, el2);
+                        if (options.verbose)
+                            stderr.printf("suburl = %s\n", suburl);
+                        f.printf("%s%s\n", level, el2);
+                        /* NOTE: cannot use helts{el2} as the context since it may not contain
+                         * all the information (e.g. functions/<name>)
+                         */
+                        any elts2 = safe_query(rc,suburl,"body");
+                        hash cnt = hash();
+                        if (elts2.typeCode() == NT_HASH) {
+                            cnt = elts2;
+                        }
+                        dump_recursive(f, rc, suburl, el.value, level+LEVEL_PREFIX, cnt);
+                    }
+                }
+            }
+            else {
+                string suburl = make_url(url, el.key);
+                if (el.value.empty()) {
+                    any elts;
+                    if (exists ctx{el.key}) {
+                        elts = ctx{el.key};
+                        if (options.verbose)
+                            stderr.printf("terminal: %s = %y\n", suburl, elts);
+                    }
+                    else {
+                        if (options.verbose)
+                            stderr.printf("terminal: %s\n", suburl);
+                        elts = safe_query(rc,suburl,"body");
+                    }
+                    f.printf("%s%s = %y\n", level, el.key, fix_value(el.key, elts));
+                }
+                else {
+                    if (options.verbose)
+                        stderr.printf("non-terminal: %s\n", suburl);
+                    f.printf("%s%s\n", level, el.key);
+                    any elts = safe_query(rc,suburl,"body");
+                    hash cnt = hash();
+                    if (elts.typeCode() == NT_HASH) {
+                        cnt = elts;
+                    }
+                    dump_recursive(f, rc, suburl, el.value, level+LEVEL_PREFIX, cnt);
+                }
+            }
+        }
+    }
+
+    nothing dump_hash_sorted(File f, hash h, string level) {
+        foreach string el in (sort(h.keys())) {
+            if (h{el}.typeCode() == NT_HASH) {
+                f.printf("%s%s\n", level, el);
+                dump_hash_sorted(f, h{el}, level+LEVEL_PREFIX);
+            }
+            else {
+                any val = h{el};
+                if (val.typeCode() == NT_LIST) {
+                    val = sort(val);
+                }
+                f.printf("%s%s = %y\n", level, el, val);
+            }
+        }
+    }
+
+    nothing dump_properties(File f, RestClient rc) {
+        f.printf("system properties\n");
+        *hash h = rc.put("services/prop/get?action=call").body;
+        if (exists h) {
+            dump_hash_sorted(f, h, LEVEL_PREFIX);
+        }
+    }
+
+
+    dump_info(string url1) {
+        any rc1 = new RestClient(("url" : url1));
+        dump_recursive(stdout, rc1, "", definition, "", hash());
+        dump_properties(stdout, rc1);
+    }
+}
+

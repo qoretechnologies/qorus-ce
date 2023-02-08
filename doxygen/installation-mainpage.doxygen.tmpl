@@ -1,0 +1,1090 @@
+/** @page installation Installation Guide
+
+    @tableofcontents
+
+    @see @ref opensource
+
+    @section install_containers Installation in Containers, Docker, Kubernetes, OpenShift and With RPMs
+
+    This documentation covers the manual installation and configuration of Qorus.
+
+    For installation in <a href="https://www.docker.com/">Docker</a> and <a href="https://podman.io/">Podman</a>, see
+    - https://git.qoretechnologies.com/qorus/qorus-docker/-/tree/master/docker
+
+    For installation on Kubernetes or OpenShift, see:
+    - https://git.qoretechnologies.com/qorus/qorus-kubernetes/-/tree/master/kubernetes
+    - https://git.qoretechnologies.com/qorus/qorus-kubernetes/-/tree/master/openshift
+
+    For installation with RPMs on RHEL 7 and 8, the file <tt>/etc/yum.repos.d/qorus-5.0-stable</tt> can be created
+    with the following contents:
+    @verbatim
+[qorus-stable]
+name=Qorus Stable Repository
+baseurl=https://repos.qoretechnologies.com/qorus-5.0-stable/CentOS_$releasever/
+gpgkey=https://repos.qoretechnologies.com/qorus-5.0-stable/CentOS_$releasever/repodata/repomd.xml.key
+gpgcheck=1
+enabled=1
+    @endverbatim
+
+    @section install_overview Installation Overview
+
+    Qorus Integration Engine&reg; is a self-contained application that is relatively easy to install.  The most
+    complex part of the installation is the preparation of the database (covered in @ref dbconfigintro).
+
+    @subsection install_overview_sysreqs Minimum System Requirements
+
+    Qorus Installation Engine&reg; can be installed on a wide variety of UNIX/Linux systems as well as other operating
+    systems when using <a href="https://www.docker.com/">Docker</a> or <a href="https://podman.io/">Podman</a>
+    containers (see the preceding section for more information and links about installing Qorus in containers).
+
+    Minimum System Requirements:
+    - CPU: x86_64 (64-bit) CPU
+    - RAM: 2 GB RAM
+    - Disk: 250 MB
+    - Operating System: Linux or any operating system supporting <a href="https://www.docker.com/">Docker</a> or
+      or <a href="https://podman.io/">Podman</a>
+
+    The above minimum requirements are for a small installation with limited capabilities.  Large installations of
+    Qorus Integration Engine&reg; require significantly more RAM and disk space.  For example,
+    a very large Qorus Integration Engine&reg; installation might have 1TB of RAM spread over many containers, 10 GB
+    of disk space for logs, and 500 GB of disk space for the database.
+
+    @subsection install_java_sysreqs Java Requirements
+
+    For Java support, Qorus requires <a href="https://openjdk.java.net/">OpenJDK 11</a>, with the JDK installation
+    where \c javac is available in the \c PATH.
+
+    This is because Qorus interface code using Java is always delivered as source and is compiled when loaded into
+    the system.  This ensures that Qorus can provide full source code transparency while also taking advantage of
+    efficient Java byte code execution (as well as JIT).
+
+    Jar and class files used by Qorus interfaces can be delivered in compiled form and do not have to be delived in
+    source code form.
+
+    @see @ref javadevelopment for more information
+
+    @subsection install_overview_linuxreqs Linux Operating System Requirements
+
+    Qorus Integration Engine&reg; {qorus_version} has a distributed architecture and requires a large number of
+    descriptors for network communication and process entries for processes and threads.
+
+    @subsubsection install_overview_linuxkernelreqs Linux Kernel Settings
+
+    Ensure that the following kernel parameter is set to at least the following value (larger numbers are also OK):
+    - <tt>fs.file-max = 5242880</tt>
+
+    For Red Hat Enterprise Linux, CentOS, Oracle Linux, and other Red Hat-based distributions, create or edit an
+    appropriate file in \c /etc/sysctl.d with a line as above, and then run @verbatim /sbin/sysctl -p @endverbatim as
+    \c root.
+
+    For other Linuxes, create or edit \c /etc/sysctl.conf with a line as above, and then run
+    @verbatim /sbin/sysctl -p @endverbatim as \c root; if this file does not exist, see your distribution's
+    documentation about how to set kernel parameters.
+
+    The recommended value for the kernel's maximum PID value is as follows (larger numbers are also OK):
+    - <tt>kernel.pid_max = 131072</tt>
+
+    If this value is too low, it can be changed as per the above instructions.
+
+    @note
+    - For Linux kernel 3+ the limit on the number of descriptors can be checked by typing:
+      @verbatim cat /proc/sys/fs/file-max @endverbatim
+      and the current number of descriptors in use can be checked by typing:
+      @verbatim cat /proc/sys/fs/file-nr @endverbatim
+      this command returns three numbers: allocated file descriptors, free allocated file descriptors, and maximum
+      file descriptors
+    - For Linux kernel 3+ the limit on the number of processes can be checked by typing:
+      @verbatim cat /proc/sys/kernel/pid_max @endverbatim
+
+    @subsection install_overview_linuxuserreqs Linux User Limit Settings
+
+    The user running Qorus Integration Engine&reg; {qorus_version} must have minimum hard and soft limits for the
+    number of descriptors available (\c nofile) and the number of processes and threads (\c nproc).
+
+    The minimum recommended soft limit values for each parameter are as follows:
+    - <tt>nofile: 8192</tt>
+    - <tt>nproc: 8192</tt>
+
+    For Red Hat Enterprise Linux, CentOS, Oracle Linux, and other Red Hat-based distributions, create or edit an
+    appropriate file in \c /etc/security/limits.d as in the following examples:
+
+    @par /etc/security/limits.d/20-nproc.conf
+    @verbatim
+* soft nproc 8192
+root soft nproc unlimited
+    @endverbatim
+
+    @par /etc/security/limits.d/25-nofile.conf
+    @verbatim
+* soft nofile 8192
+* hard nofile 16384
+    @endverbatim
+
+    Substitute \c "*" in the lines above with the application user name to set these limits for the Qorus user only.
+
+    @note
+    - If descriptors are not available, Qorus will not work properly; in the best case a deadlock will occur; it's
+      critical to ensure that sufficient descriptors are available
+    - \c nproc applies to processes and threads together, and each Qorus Integration Engine&reg; {qorus_version}
+      process is multithreaded, therefore the \c nproc number must be significantly higher than the maximum number of
+      Qorus processes running at any one time.
+    - To check the hard limits for the number of descriptors (\c nofile) and the number of processes and threads
+      (\c nproc) for your user, type:
+      @verbatim ulimit -Hn -Hu @endverbatim
+    - If multiple installations of Qorus Integration Engine&reg; {qorus_version} will be used on a single machine with
+      a single Linux user, the above per-user limits should be raised accordingly
+    - Qorus will start with lower limits, but when runtime limits exceed 80% of the system-defined limits, ongoing
+      alerts are raised, and after this as the limit approaches the maximum value, Qorus will refuse to start
+      interfaces.
+
+    @subsection install_overview_linuxcgroupreqs Linux Control Group Settings
+
+    For recent Linux distributions using <a href="https://en.wikipedia.org/wiki/Systemd">systemd</a> (including RedHat
+    Enterprise Linux 8+ among others), the <a href="https://en.wikipedia.org/wiki/Cgroups">control group</a>
+    \c TasksMax setting for the Qorus user must be set to a high enough number to allow for Qorus to run properly.
+
+    This is particularly important on systems where Qorus is the primary application and will use the majority of the
+    system's resources.
+
+    The recommended number is <b><tt>65535</tt></b>.
+
+    To set this, execute the following command as root:
+    @verbatim systemctl set-property user-1000.slice TasksMax=65535 @endverbatim
+
+    Substitute <b><tt>1000</tt></b> for the uid of the Qorus user; to find the uid; execute:
+    @verbatim id qorus|cut -f2 -d=|cut -f1 -d\( @endverbatim
+
+    Substitute <b><tt>qorus</tt></b> with the username of the qorus user.
+
+    @subsection installdbreqs Database Requirements
+
+    Qorus Integration Engine&reg; {qorus_version} requires a database for persistent storage.  The database server
+    must be installed and configured separately to Qorus Integration Engine&reg; installation; this manual does not
+    explain how to install and configure the database server in detail, but rather explains how to install and
+    configure the Qorus system schema in an already-running database server.
+
+    Qorus Integration Engine&reg; can use an Oracle, MySQL/MariaDB, or PostgreSQL database to store its system schema
+    containing all user object (workflow, service, class definitions, etc) metadata and workflow state information.
+    Instructions on how to install the database schema (once the database server software itself has been installed
+    and configured) for Qorus on each supported database type are given in @ref schemapreparation.
+
+    See the following sections for detailed requirements: @ref installoraclereqs "Oracle Requirements",
+    @ref installmysqlreqs "MySQL/MariaDB Requirements", @ref installpgsqlreqs "PostgreSQL Requirements".
+
+    @subsubsection installoraclereqs Oracle Requirements
+    <i>Oracle Server Requirements</i>\n
+    The Oracle database server must be 11.2 or higher.  Please note that Oracle Express Edition, available as a free
+    of charge download from Oracle, and freely licensed for commercial use, is also supported for the database server.
+
+    <i>Oracle Client Libraries</i>\n
+    Oracle 11.2 or newer client shared libraries are required for Oracle functionality.  Qorus Integration
+    Engine&reg;’s oracle module is dynamically linked with the Oracle client libraries, therefore earlier unsupported
+    versions will not work.
+
+    Oracle Instant Client (available as a free of charge for download from Oracle), Oracle client libraries from a
+    11.2 or newer server installation, or Oracle client libraries from an Oracle Express Edition installation can be
+    used.
+
+    If Oracle Instant Client libraries are to be used, the following Oracle Instant Client package is required at a
+    minimum:
+
+    - \c instantclient-basic
+
+    @note You must have the client installed for the same architecture as the Qorus server; for example, using Qorus
+    x86_64 binaries requires x86_64 Oracle client libraries.  In general, 64-bit versions of Qorus cannot function
+    with 32-bit Oracle client libraries.
+
+    @subsubsection installmysqlreqs MySQL/MariaDB Requirements
+    <i>MariaDB Server Requirements</i>\n
+    The minimum supported version for the MySQL/MariaDB server is 5.1.  You cannot install Qorus {qorus_version} on
+    earlier MySQL/MariaDB versions.
+
+    <i>MariaDB Client Libraries</i>\n
+    Support for MySQL/MariaDB is statically linked using MariaDB client libraries to the mysql module provided with
+    Qorus Integration Engine&reg;.  MariaDB client support is provided under an open source license; no additional
+    licenses are required.
+
+    @subsubsection installpgsqlreqs PostgreSQL Requirements
+    <i>PostgreSQL Server Requirements</i>\n
+    The minimum supported version for the PostgreSQL server is 9.0.0.  You cannot install Qorus {qorus_version} on
+    earlier PostgreSQL versions.
+
+    <i>PostgreSQL Client Libraries</i>\n
+    PostgreSQL client libraries are required to communicate with PostgreSQL servers; normally the same or newer
+    version than the server should be used.
+
+    @subsubsection installsybasereqs SAP / Sybase ASE Requirements
+
+    SAP / Sybase Adaptive Server Enterprise is not currently supported for the Qorus Integration Engine&reg; system
+    schema.  You cannot install the Qorus Integration Engine&reg; system schema on a SAP ASE database; you can only
+    communicate with SAP ASE databases from Qorus user code.
+
+    SAP ASE Open Client 15 client libraries are required to communicate with SAP ASE servers using the \c "sybase"
+    driver.  Qorus Integration Engine&reg;’s sybase module is dynamically linked with the SAP ASE Open Client 15
+    client libraries, therefore no previous version will work.
+
+    @note Sybase / SAP ASE databases can also be accessed using the @ref sybaseintro "freetds" driver included with
+    Qorus (which also has the advantage of providing access to MS SQL Server DBs as well).
+
+    @subsection first_time_installation_tasks First Time Installation Tasks
+
+    It is recommended to setup the @link ##arch system.arch @endlink service and the \c qorus-archiver job to keep the
+    live DB schema as small as possible as well as activating and configuring the \c qorus-log-rotator job to rotate
+    and archive log files.
+
+    To set up basic configuration with a 90-day data retention period and DB purging of older data as well as daily
+    log rotation; \c bz2 archiving in the \c arch subdirectory, and 90-day log file retention, run the
+    \c first_time_install.sh script in <tt>$OMQ_DIR/bin</tt>.
+
+    From a Docker host this can be run as follows:
+    @verbatim docker exec qorus bash --login -c first_time_install.sh @endverbatim
+
+    From Kubernetes this can be run as follows:
+    @verbatim kubectl exec deploy/qorus-core -- bash -l -c first_time_install.sh @endverbatim
+
+    @note
+    - These tasks are performed automatically when Qorus 6.0+ is installed for the first time in a new database
+      schema; the \c first_time_install.sh script can be run after upgrading a Qorus installation to ensure that
+      DB archiving and log rotation are enabled
+    - The \c first_time_install.sh script runs <tt>schema-tool -m</tt> to do the setup work
+
+    @section schemapreparation Database and Schema Preparation
+
+    @subsection dbconfigintro Database Configuration Overview
+
+    Regardless of the installation type (LSB or @ref tar), a database must be prepared to hold the Qorus system
+    schema before the Qorus server can be started.
+
+    Qorus Integration Engine&reg; requires at least the \c omq database schemas to operate, and also it's recommended
+    to create the \c omquser schema as given in the following table.
+
+    <b>Qorus Integration Engine&reg; System Schemas (Datasources)</b>
+    |!%Schema|!Type|!Description
+    |\c omq|Required|System schema, system and user metadata, workflow data will be installed here
+    |\c omquser|Recommended|User-modifiable schema containing custom user objects; for initial installs, this schema \
+        will be empty
+
+    The system and user schemas can be created in different databases; they can even be of different database types.
+
+    Each schema will be accessed through a datasource (see @ref dsconn), which represents a connection to a schema on
+    a particular database server, using a particular username and password, as well as other optional information.
+
+    The \c omq datasource must point to an Oracle, MySQL/MariaDB/Percona, or PostgreSQL database, but the \c omquser
+    datasource has no restrictions on the database driver.
+
+    Note that the database server does not necessarily have to be located on the same system as the Qorus Integration
+    Engine&reg; server, however, for performance reasons, a fast network connection is required between the two
+    systems at the minimum.
+
+    @note Note that it is highly recommended that any Qorus Integration Engine&reg; database instance destined for
+    production use should be in a clustered configuration to ensure the highest possible reliability.  Additionally,
+    regular backups/dumps of the database should be made in case of a catastrophic database error.  All Qorus data,
+    metadata, configuration and states, order data, etc, is stored in the system schema.  If the system schema becomes
+    corrupted, Qorus will not function.
+
+    Note that no changes can be made by the user to the Qorus system schema or Qorus may no longer function.  The
+    optional user schema may be used in any way desired.
+
+    The following sections will describe how to set up the system and user schemas for @ref oracleconfig "Oracle",
+    @ref pgsqlconfig "PostgreSQL", and @ref mysqlconfig "MySQL/MariaDB/Percona" databases.
+
+    @subsection install_dbsizing Database Sizing General Information
+
+    Qorus database/tablespace sizing is highly dependent on the application architecture, the amount of workflow order
+    instance data stored, the type and volume of data stored workflows and jobs, and the archiving frequency.
+
+    @subsubsection install_archiving_best_practices Best Practices for Archiving
+
+    - Setup the @link ##arch system.arch @endlink service and the \c qorus-archiver job to keep the live DB schema as
+      small as possible.
+    - Proactively resolve all workflow order instances with @ref OMQ::StatError "ERROR" statuses to ensure efficient
+      archiving runs
+    - Execute standard DBA tasks regularly (update statistics, vacuum on PostgreSQL, etc.)
+    - Monitor usage of table segments and assign appropriate storage parameters to table(s) as necessary
+
+    @note An archiving plan is a must for any Qorus instance; Qorus performance will suffer with very large databases
+    caused by lack of archiving.
+
+    @subsubsection install_dbsizing_formula Datbase Sizing Formula
+
+    The following is a rough formula for determining the tablespace sizing for an initial install, assuming a
+    conservatively large workflow order instance data size and data to index ratio:
+
+    <tt>omq_data tablespace size = </tt><i>max. workflow order instances</i><tt> * 25 KB</tt>
+    + <tt><i>max. job history records</i> * 10 KB</tt>\n
+    <tt>omq_index tablespace size = </tt><i>omq_data tablespace size</i><tt> / 3</tt>
+
+    The minumum recommended tablespace sizes for a test or evaluation instance are:
+
+    <tt>omq_data: 256 MB</tt>\n
+    <tt>omq_index: 128 MB</tt>
+
+    The space used by system tables is different for each table depending on its function. See @ref datamodel
+    - List of values (lookup) tables.
+      - Static storage
+      - Very small
+    - Metadata tables
+      - Tables containing metadata and source code for Qorus objects (workflows, jobs, instances)
+      - Static storage most of the time
+      - Small to medium
+    - Instance tables
+      - Tables containing order/instance data for each processing
+      - OLTP
+      - Large
+
+    @subsubsection install_dbsizing_special_tables Database Planning for Special Tables
+
+    This is a list if tables which may require special care by DBAs in very large installations with the most
+    important tables listed first.
+
+    The most critical table is the table holding workflow order data with columns \c staticdata and \c dynamicdata
+    stored as large character objects (\c CLOB, \c TEXT depending on the DB server for the system schema):
+    - \c ORDER_INSTANCE
+
+    The following tables grow quickly in some circumstances as well:
+    - \c WORKFLOW_INSTANCE
+    - \c JOB_INSTANCE
+    - \c ERROR_INSTANCE
+    - \c SENSITIVE_ORDER_DATA (LOB)
+    - \c ORDER_INSTANCE_KEYS
+    - \c SENSITIVE_ORDER_DATA_KEYS
+
+    Depending on the processing volume, the system may benefit from a custom storage setup for particular tables and
+    data; while monitoring the system database, to optimize application performance, DBAs can consider establishing
+    the following:
+    - dedicated tablespace(s) for tables listed above
+    - dedicated dedicated tablespace(s) for large objects
+    - dedicated tablespace(s) for indexes
+
+    @subsubsection install_dbsizing_example Database Sizing Example
+
+    Consider a real life example of a system where there are many workflows used with large
+    @ref staticdata "staticdata", @ref dynamicdata "dynamicdata", and @ref order_sensitive_data "sensitivedata":
+    - workflow count: 360
+    - overall DB size: 1 TB
+    - \c ORDER_INSTANCE table size: 9 GB
+      - \c dynamicdata LOB storage: 481 GB
+      - \c staticdata LOB storage: 201 GB
+    - archive DB size: 12 TB
+    - retention period in the live schema: 1 month
+    - retention period for the archive schema: 2 years
+
+    @note Keeping data archived for 2 years as in the above example will have a large adverse impact on any queries
+    that also search archived data due to the very large DB size required to store the data.  Additionally, every
+    organization should review its data retention policies regarding sensitive data, as legal and regulatory
+    requirements may impact the data archiving plan.  It is generally recommended to keep data in the live and archive
+    schemas for as little time as possible for performance reasons.
+
+    @subsection oracleconfig Oracle Configuration
+
+    This step describes how to set up Oracle database schemas and tablespaces for use with Qorus Integration
+    Engine&reg; on an Oracle 11.2 database server or later.  The creation of an Oracle instance is outside the scope
+    of this documentation.  Use the \c dbca tool or see your Oracle documentation for more information.   However,
+    %Qore Technologies highly recommends that any Qorus Integration Engine&reg; database instance destined for
+    production use should be in a clustered configuration to ensure the highest possible reliability.
+
+    The Qorus system datasources to be defined in the next step that will point to the schemas described here are
+    \c omq (for the Qorus system schema) and optionally \c omquser (for the optional user schema).  The \c omq system
+    schema is necessary for the operation of the system.
+
+    @subsection oracleprivileges Oracle Privileges
+
+    The priviledges described here apply to the system schema user (\c omq).  Example scripts for creating tablespaces
+    and schema users follow in @ref exampleorauser.
+
+    |!Name|!Mandatory|!Qorus Module|!Description
+    |\c CREATE \c SESSION|Yes|Core|allows the user to connect to the database
+    |\c CREATE \c PROCEDURE|Yes|Core|allows the user to create procedures
+    |\c CREATE \c SEQUENCE|Yes|Core|allows the user to create sequences
+    |\c CREATE \c TABLE|Yes|Core|allows the user to create tables
+    |\c CREATE \c TRIGGER|Yes|Core|allows the user to create triggers
+    |\c CREATE \c TYPE|Yes|Core|allows the user to create types
+    |\c CREATE \c VIEW|Yes|Core|allows the user to create views
+    |\c EXECUTE \c DBMS_STATS|No|@ref schema-tool, @ref archiving|This package is used for gathering statistics, but \
+        it can also be performed manually by a DBA
+    |\c EXECUTE \c DBMS_OUTPUT|No|Debug|Used in the debugging code of the @link ##info system info service @endlink
+    |\c EXECUTE \c DBMS_APPLICATION_INFO|No|@ref archiving|Used for logging while @ref archiving "archiving"
+    |\c SELECT \c V$BUFFER_POOL_STATISTICS|No|@ref schema-tool|@ref schema-tool uses it for index tree analysis, but \
+        it can also be handled by manually by a DBA
+
+    @note
+    - Oracle suggests using roles rather than raw GRANTs in its documentation; please consult your DBA when setting up
+      new Oracle schemas
+    - The names and passwords of the schemas can be set per installation; any valid Oracle name can be used.  In this
+      document, the names \c omq and \c omquser will be used to refer to these schemas.  In the next step, the
+      datasources \c omq and \c omquser will be set up to point to these schemas as well.
+
+    @subsection oracletablespaces Oracle Tablespaces
+
+    Each schema requires two tablespaces, one for data and one for indexes.  Tablespace names are flexible and do not
+    necessarily have to be as described in the table below; tablespace names can be overridden with the \c –-data-ts
+    and \c --index-ts options to the @ref oload "oload" and @ref schema-tool "schema-tool" programs and by default in
+    the @ref options "options file" with the \c qorus-client.omq-data-tablespace and
+    \c qorus-client.omq-index-tablespace options.  However, for the rest of this document, the names will appear as
+    given below.
+
+    |!%Schema|!Tablespace|!Type|!Description
+    |\c omq|\c omq_data|Required|All system data is stored in the tablespace; this should be the default tablespace \
+        for the \c omq user/schema, and the user must have permissions to write to this tablespace \
+        (ie <tt>UNLIMITED TABLESPACE</tt> or a quota on this tablespace)
+    |\c omq|\c omq_index|Required|All system index are stored here.
+    |\c omquser|\c omquser_data|Optional|All data in the user schema is stored in this tablespace; this should be \
+        the default tablespace for the \c omquser user/schema, and the user must have permissions to write to this \
+        tablespace (ie <tt>UNLIMITED TABLESPACE</tt> or a quota on this tablespace)
+    |\c omquser|\c omquser_index|Optional|All user indexes are stored here.
+
+    @note If you use alternate tablespace names, you must define the tablespace names in the
+    @ref options "options file" with the \c qorus-client.omq-data-tablespace and \
+    \c qorus-client.omq-index-tablespace options so that automatic schema management will work properly
+
+    @subsubsection oracletablespacesizing Oracle Tablespace Sizing
+
+    See @ref install_dbsizing as an initial reference
+
+    The optional \c omquser schema will be solely populated with user objects therefore the storage characteristics
+    are installation-dependent and therefore no sizing information can be given here.  The Qorus development team and
+    Oracle DBAs should confer and agree on sizing during the design and development process of workflows and services.
+
+    To create the two required Oracle schemas and the tablespaces, SQL similar to that found in the
+    \c $OMQ_DIR/templates/omq-db.sql and \c $OMQ_DIR/templates/omquser-db.sql can be used.  Note that the directory
+    paths and file names should match your installation, and of course the tablespace sizes should match your
+    planning.  These files are only given as examples and should not be used without modification for your environment
+    and ideally should be verified by a DBA prior to execution.
+
+    Oracle cluster configuration is outside the scope of this document (see your Oracle documentation instead), but a
+    clustered database is recommended for production instances.
+
+    Once the schemas and tablespaces have been created, verify the connectivity using \c $ORACLE_HOME/bin/sqlplus.
+
+    @note As mentioned before, ensure that load balancing is not enabled in the \c tnsnames.ora file for the Qorus
+    system schema.  The Qorus server must make all connections to the same physical database server as the Oracle
+    cluster synchronization delay will cause problems with synchronized transaction management within the Qorus
+    server.
+
+    @subsubsection exampleorauser Example Tablespace and User Creation Scripts
+
+    These files are provided as examples only, paths and passwords at least should be modified to correspond to your
+    Oracle installation.  This example file can be found in \c $OMQ_DIR/templates/oracle-omq-db.sql
+
+    @verbatim
+create tablespace omq_data
+        datafile '/opt/oradata/XBOX_MASTER/datafile/omq_data01.dbf' size 512M reuse
+        autoextend on next 256M
+        default storage (initial 1M next 1M minextents 1 maxextents 1000
+        pctincrease 0);
+
+create tablespace omq_index
+        datafile '/opt/oradata/XBOX_MASTER/datafile/omq_index01.dbf' size 256M reuse
+        autoextend on next 128M
+        default storage (initial 1M next 1M minextents 1 maxextents 1000
+        pctincrease 0);
+
+create user omq identified by omq default tablespace omq_data temporary tablespace temp;
+
+grant create session, create procedure, create sequence, create table, create trigger, create type, create view,
+    unlimited tablespace to omq;
+    @endverbatim
+
+    This example file can be found in \c $OMQ_DIR/templates/oracle-omquser-db.sql
+
+    @verbatim
+create tablespace omquser_data
+        datafile '/opt/oradata/XBOX_MASTER/datafile/omquser_data01.dbf' size 128M reuse
+        autoextend on next 64M
+        default storage (initial 1M next 1M minextents 1 maxextents 1000
+        pctincrease 0);
+
+create tablespace omquser_index
+        datafile '/opt/oradata/XBOX_MASTER/datafile/omquser_index01.dbf' size 64M reuse
+        autoextend on next 32M
+        default storage (initial 500k next 500k minextents 1 maxextents 1000
+        pctincrease 0);
+
+create user omquser identified by omquser default tablespace omquser_data temporary tablespace temp;
+
+grant create session, create procedure, create sequence, create table, create trigger, create type, create view,
+    create synonym, unlimited tablespace to omquser;
+    @endverbatim
+
+    @note
+    - Do not forget to change the passwords to match your organization's security requirements.
+    - It's not recommended to use \c "grant unlimited tablespace" in real deployments; assign specific tablespace
+      permissions according to the users' needs
+
+    @subsection pgsqlconfig PostgreSQL Configuration
+
+    This step describes how to set up PostgreSQL database schemas for use with Qorus Integration Engine&reg; on
+    PostgreSQL server 9.0.0 or later.
+
+    PostgreSQL installation and connectivity configuration (\c postgresql.conf, \c pg_hba.conf, etc configuration) is
+    outside the scope of this documentation (however some basic information and examples are provided in the following
+    section).  See your PostgreSQL documentation for detailed instructions on how to install the PostgreSQL database
+    server.
+
+    If the Qorus server and PostgreSQL servers are not located on the same machine, PostgreSQL must be configured to
+    accept connections on a network interface so Qorus can communicate with the server.
+
+    Once PostgreSQL has been installed and configured on the target system, Qorus databases, tablespaces, and users
+    can be created.
+
+    It is recommended to use UTF-8 character encoding in all PostgreSQL databases where international characters may
+    be used with Qorus.
+
+    Each schema requires two tablespaces, one for data and one for indexes.
+
+    See @ref install_dbsizing
+
+    Tablespace names are flexible and do not necessarily have to be as described in the table below; tablespace names
+    can be overridden with the \c –-data-ts and \c --index-ts options to the @ref oload "oload" and
+    @ref schema-tool "schema-tool" programs and by default in the @ref options "options file" with the
+    \c qorus-client.omq-data-tablespace and \c qorus-client.omq-index-tablespace options.  However, for the rest of
+    this document, the names will appear as given below.
+
+    @note If you use alternate tablespace names, you must define the tablespace names in the
+    @ref options "options file" with the \c qorus-client.omq-data-tablespace and
+    \c qorus-client.omq-index-tablespace options so that automatic schema management will work properly
+
+    <b>Required PostgreSQL Tablespaces</b>
+    |!%Schema|!Tablespace|!Type|!Description
+    |\c omq|\c omq_data|Mandatory|All system data is stored in the tablespace
+    |\c omq|\c omq_index|Mandatory|All system index are stored here
+    |\c omquser|\c omquser_data|Optional|All data in the user schema is stored in this tablespace
+    |\c omquser|\c omquser_index|Optional|All user indexes are stored here
+
+    <i>Example Database, Tablespace and User Creation Scripts</i>
+
+    These files are provided as examples only; paths and passwords at least should be changed for security reasons.
+    This example file can be found in \c $OMQ_DIR/templates/pgsql-omq-db.sql
+
+    @verbatim
+create database omq encoding = 'utf8';
+\connect omq;
+create tablespace omq_data location '/opt/postgresql90/db/omq_data';
+create tablespace omq_index location '/opt/postgresql90/db/omq_index';
+create user omq password 'omq';
+grant create, connect, temp on database omq to omq;
+grant create on tablespace omq_data to omq;
+grant create on tablespace omq_index to omq;
+grant select on all tables in schema pg_catalog to omq;
+    @endverbatim
+
+    This example file can be found in \c $OMQ_DIR/templates/pgsql-omquser-db.sql
+
+    @verbatim
+create database omquser encoding = 'utf8';
+\connect omquser;
+create tablespace omquser_data location '/opt/postgresql90/db/omquser_data';
+create tablespace omquser_index location '/opt/postgresql90/db/omquser_index';
+create user omquser password 'omquser';
+grant create, connect, temp on database omquser to omquser;
+grant create on tablespace omquser_data to omquser;
+grant create on tablespace omquser_index to omquser;
+grant select on all tables in schema pg_catalog to omquser;
+    @endverbatim
+
+    @note Do not forget to change the passwords to match your organization's security requirements.
+
+    These files can be installed with the \c psql command as follows (use the appropriate user and password for your
+    installation, the following are only examples):
+
+    @verbatim
+prompt$ psql –Upostgres < $OMQ_DIR/templates/pgsql-omq-db.sql
+prompt$ psql –Upostgres < $OMQ_DIR/templates/pgsql-omquser-db.sql @endverbatim
+
+    <i>Basic PostgreSQL Connectivity Configuration</i>
+
+    Example pg_hba.conf File
+
+    The following file allows connections to all databases and all users without a password for local users, and
+    requires a username and password from all network users.  Do not use this file if local security is a concern:
+
+    @verbatim
+# CAUTION: Configuring the system for local "trust" authentication allows
+# any local user to connect as any PostgreSQL user, including the database
+# superuser. If you do not trust all your local users, use another
+# authentication method.
+
+# TYPE  DATABASE    USER        CIDR-ADDRESS          METHOD
+# "local" is for Unix domain socket connections only
+local   all         all                               trust
+# IPv4 local connections:
+host    all         all         127.0.0.1/32          trust
+# IPv6 local connections:
+host    all         all         ::1/128               trust
+# require a password from network users
+host    all         all         0.0.0.0/0             md5
+host	all         all         ::/0                  md5 @endverbatim
+
+    If you need to connect to your PostgreSQL databases from other machines on the network, set the following in your
+    \c postgresql.conf file to configure the server to listen on all network interfaces:
+
+    @verbatim
+listen_addresses = '*' @endverbatim
+
+    For more information on these files, or on PostgreSQL security or configuration, see your PostgreSQL
+    documentation.
+
+    @subsection mysqlconfig MySQL/MariaDB/Percona Configuration
+
+    Because MariaDB and Percona are a drop-in replacements for MySQL, references to MariaDB below are also valid for
+    MySQL (which is an Oracle property; %Qore Technologies is not affiliated with Oracle) and Percona.  Any
+    differences between MySQL, MariaDB, and Percona will be highlighted below.
+
+    This step describes how to set up MariaDB database schemas for use with Qorus Integration Engine&reg; on MariaDB
+    server 5.1 or later.  MariaDB installation is outside the scope of this documentation.  See your MariaDB
+    documentation for detailed instructions on how to install the MariaDB database server.  Once MariaDB has been
+    installed on the target system, Qorus databases and users can be created.
+
+    It is recommended to use UTF-8 character encoding in all MariaDB databases where international characters may be
+    used with Qorus.
+
+    A case-sensitive collation must be used when creating the Qorus schema; the collation can be set as using the
+    \c "collation" connection option as follows:
+
+    @verbatim mysql:user/password@db(utf8)%hostname{collation=utf8_bin} @endverbatim
+
+    @note
+    - Both the DB encoding (used as <tt>character set</tt> when creating tables) and the collation must be given
+      explicitly in the @ref systemdb option in the @ref options in order to ensure that tables are created correctly
+      and that client connections will use the same encoding and collation, otherwise Qorus will not run properly
+    - All MariaDB tables used in the Qorus Integration Engine&reg; system schema use the XtraDB (InnoDB for MySQL)
+      engine for transaction management and row-level locking.
+
+    Qorus imposes no restrictions on the database or user names used for either the system or user schemas when using
+    MariaDB as a database server.
+
+    <i>Example Database and User Creation Scripts</i>
+
+    These files are provided as examples only, at least the passwords should be changed for security reasons.  This
+    example file can be found in \c $OMQ_DIR/templates/mysql-omq-db.sql
+
+    @verbatim
+create user 'omq'@'%' identified by 'omq';
+grant super on *.* to 'omq'@'%';
+create user 'omq'@'localhost' identified by 'omq';
+grant super on *.* to 'omq'@'localhost';
+
+create database omq character set 'utf8';
+grant all on omq.* to 'omq'@'%';
+grant all on omq.* to 'omq'@'localhost'; @endverbatim
+
+    This example file can be found in \c $OMQ_DIR/templates/mysql-omquser-db.sql
+
+    @verbatim
+create user 'omquser'@'%' identified by 'omquser';
+grant super on *.* to 'omquser'@'%';
+create user 'omquser'@'localhost' identified by 'omquser';
+grant super on *.* to 'omquser'@'localhost';
+
+create database omquser character set 'utf8';
+grant all on omquser.* to 'omquser'@'%';
+grant all on omquser.* to 'omquser'@'localhost'; @endverbatim
+
+    @note Do not forget to change the passwords to match your organization's security requirements
+
+    These files can be installed with the \c mysql command as follows (use the appropriate user and password, the
+    following are only examples):
+
+    @verbatim
+prompt$ mysql –uroot < $OMQ_DIR/templates/mysql-omq-db.sql
+prompt$ mysql –uroot < $OMQ_DIR/templates/mysql-omquser-db.sql @endverbatim
+
+    @section installupgradetar Installing or Upgrading from TAR.GZ Packages
+
+    @subsection installtar Installing From TAR.GZ Packages
+
+    A first-time installation of Qorus Integration Engine&reg; from a tar.gz package involves preparing the file
+    system and installing the system files.  Either preceding or following this, the
+    @ref schemapreparation "system database schema must be prepared and populated".  This last topic is covered in
+    @ref schemapreparation.
+
+    From a high-level, the installation goes as follows:
+    - create the application user (for UNIX/Linux systems)
+    - create the application filesystem including log file directory
+    - set up the user environment
+    - do a partial install of the application to install templates for the configuration files
+    - create/edit application configuration files
+
+    Then the system database schema will be prepared and populated as follows:
+    - prepare the system database schema (create database, users, covered in @ref schemapreparation)
+    - install the system schema and system services (covered in @ref installtarinstall)
+
+    @note Qorus Integration Engine&reg; as of version {qorus_version} supports load balancing and failover in
+    Kubernetes and OpenShift and similar installations.
+
+    @subsubsection installtaroverview Overview
+
+    Before starting the system installation, ensure that you have the appropriate file from the following list
+    containing binary support for your platform for Qorus Integration Engine&reg;.  Examples of compatible Linux
+    distributions are: Fedora, Red Hat Enterprise Linux, OpenSUSE, Novell SUSE Linux Enterprise Server.
+
+    The release file, when unpacked, will create the files described in the following table in the subdirectory:
+    - \c qorus-{qorus_version}/
+
+    <b>Qorus Integration Engine&reg; TAR.GZ Release Manifest</b>
+    |!File|!Description
+    |\c install.sh|Installation script
+    |\c qorus-{qorus_version}-Linux2.6-x86_64-binary.tar.gz|x86_64 Linux (kernel 2.6+) binaries
+    |\c qorus-{qorus_version}-noarch.tar.gz|Common files
+    |\c releases/qorus-{qorus_version}.qrf|System service load file
+
+    Note that depending on the release package, only one of the above binary packages may be present in the release
+    file.
+
+    On UNIX/Linux systems, it is highly recommended that a new user be created for this installation.  The name for
+    the user used in this documentation is \c qorus.
+
+    @subsubsection installtarsysparams System Parameters
+    Qorus can use many file descriptors, depending on the size of the installation.
+
+    See @ref install_overview_linuxkernelreqs for information on Linux settings required for the proper operation
+    of Qorus Integration Engine&reg;
+
+    @subsubsection installtarprepareschema Prepare the System Schema
+
+    <hr>
+    <b>Step 1: Prepare Database User and Empty System %Schema</b>\n
+    Prepare the system schema as described in @ref schemapreparation.
+
+    Make sure and test the connection and have the connection parameters ready for use in
+    @ref installtarinstall "Step 3: Install Qorus Application and Populate System Schema".
+
+    <hr>
+    <b>Step 2: Setup User and File System</b>\n
+    The Qorus application itself takes less than 20 MB of disk space.
+
+    Space must be planned for log directories that can fill up fast with busy systems, and for user code (workflow,
+    service definitions, other Qorus user configuration files).
+
+    50 MB is recommended for the Qorus Integration Engine&reg; application directory, and a minimum of 500 MB for the
+    log directory, larger sizes can be necessary for larger installations, depending on the frequency of log rotation
+    and the amount of logging done by the workflows and services running.
+
+    The log directory can appear anywhere on the file system and does not have to be a subdirectory of the Qorus
+    application directory, although the default log directory location is \c $OMQ_DIR/log.
+
+    On UNIX/Linux system, a dedicated user is not required for the system, but it is highly recommended.  The username
+    can be any valid user name, for the purposes of this document, the username \c qorus will be assumed.  The
+    application directory could be the Qorus user’s home directory or any other directory (for example: the mount
+    point of a mounted filesystem) on the system.  In the examples in this document, the Qorus user \c qorus will have
+    an application directory located in \c /opt/qorus.
+
+    @note On all platforms the user running Qorus must have read and write access to the application directory and log
+    directory trees.
+
+    @subsubsection installtarenvvars Configure Environment Variables
+
+    The following environment variables have to be set for the system to function properly.
+
+    <b>Qorus System Environment Variables</b>
+    |!Variable|!Description
+    |\c OMQ_DIR|The main application directory
+    |\c PATH|\c $OMQ_DIR/bin must appear in the path
+    |\c PYTHONPATH|<tt>$OMQ_DIR/python:$OMQ_DIR/user/python:$OMQ_DIR/user/python/lib/python</tt><i>ver</i><tt>/site-packages</tt>
+    |\c QORE_CONNECTION_PROVIDERS|Must be set to \c "QorusConnectionProvider" in your system environment to take \
+        advantage of the @ref qorusconnectionproviderintro "QorusConnectionProvider" module as a connection provider \
+        to command-line programs so that Qorus @ref userconn "user connection" or \
+        @ref remoteconn "remote connection" identifiers can be used instead of URL strings in %Qore programs like \
+        \c rest and \c sfrest, etc
+    |\c QORE_DATA_PROVIDERS|Must be set to \c "QorusDataProviders" in your system environment to use Qorus data \
+        providers with the \c qdp program for command-line introspection and manipulation of data providers
+    |\c QORE_DATASOURCE_PROVIDERS|Must be set to \c "QorusDatasourceProvider" in your system environment to take \
+        advantage of the @ref qorusdatasourceproviderintro "QorusDatasourceProvider" module as a datasource provider \
+        to command-line programs so that Qorus @ref dsconn "datasource" names can be used instead of full datasource \
+        connection strings in %Qore programs like \c sqlutil, \c schema, and \c schema-reverse
+    |\c QORE_FILE_LOCATION_HANDLERS|Must be set to \c "QorusResourceFileLocationHandle" to use the \c resource:// \
+        scheme with Qorus service resources (for example with \c qdp)
+    |\c QORE_LIBRARY|Must be set to the absolute path to the native Qore library on the system for Java programs to \
+        use Qore functionality (ex: \c $OMQ_DIR/lib/libqore.so)
+    |\c QORE_MODULE_DIR|For non-LSB, non-RPM-based installs, must be set to \
+        <tt>$OMQ_DIR/qlib:$OMQ_DIR/lib/modules:$OMQ_DIR/user/modules</tt> for the proper operation of the system so \
+        that system user modules can be found; this is needed by the running server and for client programs.  \
+        Multiple directories can be given separated by colons (\c ':')
+    |\c QORUS_RELEASE_DIR|The directory for creating release packages with @ref make-release "make-release"; \
+        defaults to \c $HOME/releases if not set
+
+    If using the @ref oracleintro "oracle" driver for connectivity to Oracle databases, one of the following
+    environment variables should be set depending on the Oracle client library used.
+
+    <b>Environment Variables For Oracle Connectivity</b>
+    |!Variable|!Description
+    |\c ORACLE_HOME|For full Oracle installations, this variable must be set to the Oracle installation’s home \
+        directory.  This variable is not required for Oracle Instant Client installations.
+    |\c TNS_ADMIN|With Oracle Instant Client only: set to the directory where the \c tnsnames.ora file is located.
+
+    <b>Environment Variables MS SQL Server and SAP / Sybase ASE Connectivity Through FreeTDS
+    (@ref sybaseintro "freetds")</b>
+    |!Variable|!Description
+    |\c FREETDSCONF|On UNIX/Linux: must point to the @ref sybaseintro "freetds" configuration file (for example: \
+        \c $OMQ_DIR/etc/freetds.conf)
+
+    The following environment variable must be set to use the @ref sybaseintro "sybase" driver with SAP/Sybase
+    databases.
+
+    <b>Qorus Environment Variables For Native SAP / Sybase ASE Connectivity</b>
+    |!Variable|!Description
+    |\c SYBASE|Must point to the directory containing the \c interfaces file, where connection information for SAP \
+        ASE databases is specified.
+
+    <b>Qorus Environment Variables on All Other UNIX/Linux Platforms</b>
+    |!Variable|!Description
+    |\c LD_LIBRARY_PATH|Must have \c $OMQ_DIR/lib as well as optionally Oracle, MariaDB, PostgreSQL, SAP ASE, or \
+        other third-party library directories.
+
+    Set up the environment so that it is configured automatically at login time using \c .profile (for Bourne-type
+    shells), \c .bash_profile for bash, the Bourne-Again Shell, or \c .cshrc (for csh-type shells).
+
+    @subsubsection installtar_unix_env_var_example UNIX/Linux Environment Variable Examples
+
+    <i>Bourne-Compatible Shell Example</i>\n
+    Replace the application directories in the following example with the correct directories in your installation.
+
+    @verbatim
+# set OMQ_DIR to Qorus Integration Engine&reg; application directory
+OMQ_DIR=/opt/qorus
+
+# add Qorus library directory to LD_LIBRARY_PATH
+LD_LIBRARY_PATH="$OMQ_DIR/lib:$LD_LIBRARY_PATH"
+
+# add Qorus bin directories to path
+PATH="$OMQ_DIR/bin:$PATH"
+
+# add Qorus qore language client library module dir to QORE_MODULE_DIR
+QORE_MODULE_DIR="$OMQ_DIR/qlib:$QORE_MODULE_DIR"
+
+# export all the changes made above
+export OMQ_DIR LD_LIBRARY_PATH PATH QORE_MODULE_DIR
+    @endverbatim
+
+    @note Make sure that your Qorus’ user’s environment is configured to use the qore libraries shipped with or
+    recommended for use with this version of Qorus Integration Engine&reg;.  This is particularly important if you
+    have the open-source version of qore installed elsewhere on your system.  This can be accomplished by ensuring
+    that \c $OMQ_DIR/lib appears first in your \c LD_LIBRARY_PATH.   Be sure to use the version of %Qore either
+    shipped with Qorus or recommended for use with this version of Qorus, otherwise problems may result.
+
+    <i>CSH-Compatible Example</i>\n
+Replace the application directories in the following example with the correct directories in your installation.
+
+    @verbatim
+# set OMQ_DIR to Qorus Integration Engine&reg; application directory
+setenv OMQ_DIR /opt/qorus
+
+# add Qorus library directory to LD_LIBRARY_PATH
+setenv LD_LIBRARY_PATH "$OMQ_DIR/lib:$LD_LIBRARY_PATH"
+
+# add Qorus and Oracle bin directories to path
+setenv PATH "$OMQ_DIR/bin:$PATH"
+
+# add Qorus qore language client module include dir to QORE_MODULE_DIR
+setenv QORE_MODULE_DIR "$OMQ_DIR/qlib:$QORE_MODULE_DIR"
+    @endverbatim
+
+    @subsubsection installtarinstall Install Qorus Application and Populate System Schema
+
+    <hr>
+    <b>Step 3: Install Qorus Application and Populate System Schema</b>\n
+    Once the @ref schemapreparation "Qorus system database user and empty schema" have been prepared, the application
+    user (if applicable) and application and log directories have been created and the environment has been properly
+    set up for the application user, the application files can be installed and the system schema populated as
+    described in this section.
+
+    Log in as the Qorus user and make sure the environment is properly configured.  For example, execute:
+
+    <b><i>UNIX/Linux Shell</i></b>
+    @verbatim prompt% echo $OMQ_DIR @endverbatim
+
+    @note environment variables are case-sensitive on UNIX/Linux
+
+    The application directory should be output to your console.  If not, check your environment settings and try
+    again.
+
+    @note If the environment is not set up properly the installation may fail.  The application directory \c $OMQ_DIR
+    must exist and be writable by the Qorus user.  Normally the Qorus user will be the owner of this directory, but
+    regardless of ownership, the user running Qorus must have read/write access to the application and log directories.
+
+    If all the prerequisites documented above are met, change directory to the location of the Qorus installation
+    file, and uncompress the archive as follows:
+
+    <b><i>UNIX/Linux Shell</i></b>
+    @verbatim prompt% gunzip –dc qorus-{qorus_version}.tar.gz | tar xvf - @endverbatim
+
+    This will create a subdirectory called qorus-{qorus_version} with contents as described in the manifest in the
+    introduction to this manual.
+
+    Change the current directory to the new directory extracted in the previous command:
+
+    <b><i>UNIX/Linux Shell</i></b>
+    @verbatim prompt% cd qorus-{qorus_version} @endverbatim
+
+    In order to install the application file system in \c $OMQ_DIR and populate the system schema, the install script
+    must be run with an option describing the initial connection to the system database.  Use the connection
+    parameters for the system schema to substitute in the following command; note that arguments enclosed by square
+    brackets are optional.  See the following table for the meaning of the required parameters in angle brackets.
+
+    <b>Qorus Integration Engine&reg; Datasource Parameters</b>
+    |!Parameter|!Description
+    |\c driver|The driver to use for the connection, i.e. \c oracle, \c mysql, or \c pgsql
+    |\c user|The username for the connection
+    |\c pass|The password corresponding to the username
+    |\c db|The database name
+    |\c enc|The optional encoding to use for the connection in the format expected by the driver (i.e. \c AL32UTF8 \
+        for \c UTF-8 with the oracle driver)
+    |\c host|The optional hostname to use for the connection
+    |\c port|The optional port number to use for the connection
+
+    Note that if the data and index tablespace names for the system schema are not named \c omq_data and \c omq_index
+    respectively, then the <tt>--data-ts=</tt><i>data_tablespace_name</i> and
+    <tt>--index-ts=</tt><i>index_tablespace_name</i> options must be given as well.
+
+    Install the files and populate the initial database schema by executing the following command:
+
+    <b><i>Install.sh Arguments</i></b>
+    <tt>./install.sh [<i>oload args...</i>]</tt>
+
+    If the environment is properly configured, output will appear as follows:
+
+    @verbatim
+checks are OK, installing from /Users/david/src/Qorus/releases/qorus-{qorus_version}
+installing Qorus architecture-independent files from: qorus-{qorus_version}-noarch.tar.gz
+installing release files: done
+schema status is EMPTY
+system schema database driver is pgsql
+pgsql:omq@omq%localhost:5432: creating Qorus {qorus_version} schema {datamodel_version}
+CCCCCCCCCCCCCCCCCCCCCAACACACACAAAACACACACAAAAACACAAAACACAAACACAAAACACAAACACAAAACACACACACACACAAAACACAAAACACAAAAACACAAAACACACAAAAACACAAAAACACAAAACACAAACACAAAACACACACACACAAAAAAAAAAAAAAAAAACACACAAAACACAAAAAAAAAACACAAAACACACACACAAAAACACAAAAAAAAAACACAAACACAACACAAACAAAAAAAACACAACACAAAAAACACAAAAAACACAAAACAACACAAACACACACAAAAAACACACAAAAAAAACACAACACAAAAAACACAAAAAACACAAAACACAAAAAAAAAAAAAAACACAAAACACAAACAAACAAAAACACAAAAAAACACAAAAACACACACAAAAAAAAAAAAAAAAAACACACACAAACACAACACACACAAACACACACAAAAACACAAAAACACAAACACAAAAACACAAAAACACAAAAACACAAAAACACACACCCCCCCCCCCCCCCCCCCCCCCCC
+560 changes made; schema is now at version {datamodel_version}
+verifying reference data: IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIVIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII
+reference data: inserted: 232, verified: 1
+running system release load script
+pgsql:omq@omq%localhost: system schema "omq" is at version {datamodel_version}
+executing schema release loader files
+done executing release files
+installation complete!
+    @endverbatim
+
+    Errors in the user's environment will be flagged in the output of the script and must be repaired by hand after
+    the installation script executed.  For example, if the following text appears:
+
+    @verbatim
+**********************************************************
+ATTENTION: MANUAL STEPS NECESSARY TO COMPLETE INSTALLATION
+**********************************************************
+
+*** this script made changes to your environment in order to install
+*** Qorus Integration Engine&reg;.  You must make these changes permanent
+*** in order to run Qorus Integration Engine&reg;.  List of changes:
+
+   +++ put /opt/qorus/lib first in the LD_LIBRARY_PATH @endverbatim
+
+    Follow the instructions given to ensure that the environment is properly configured each time the Qorus user logs
+    in.  In this case, the \c LD_LIBRARY_PATH variable must be updated.
+
+    After successfully running \c install.sh, the Qorus Integration Engine&reg; directory layout is installed as
+    described in @ref tar "tar".
+
+    @subsection upgradetar Upgrading a TAR.GZ Installation
+
+    This section describes upgrading a Qorus Integration Engine&reg; installation from tar.gz files.
+
+    @subsubsection upgradetarprereqs Prerequisites
+
+    Upgrading a Qorus Integration Engine&reg; installation to version {qorus_version} is supported from any publicly
+    released version of Qorus.  Furthermore, it is assumed that the Qorus user’s environment is already properly set
+    up, as it should be for an existing installation.
+
+    @note When upgrading the system must be shut down prior to the upgrade because the system schema will be upgraded
+    to v{datamodel_version}, and this cannot be performed while the system is running.
+
+    @subsubsection upgradetarupgrade Perform Upgrade
+
+    To upgrade Qorus Integration Engine&reg; to {qorus_version}, change directory to the location of the Qorus
+    Integration Engine&reg; {qorus_version} installation file, and uncompress the archive as follows:
+
+    <b><i>UNIX/Linux Shell</i></b>
+    @verbatim prompt% gunzip –dc qorus-{qorus_version}.tar.gz | tar xvf - @endverbatim
+
+    This will create a subdirectory called qorus-{qorus_version} with contents as described in the manifest in the
+    introduction to this manual.
+
+    To create the application file system in \c $OMQ_DIR, execute the following commands:
+
+    <b><i>UNIX/Linux Shell Example</i></b>
+    @verbatim
+prompt% cd qorus-{qorus_version}
+prompt% ./install.sh
+    @endverbatim
+
+    If the environment is properly configured, output will appear as follows (exact messages will differ depending on
+    your system, system database server type, users in the @ref options "options file", starting version for upgrade,
+    etc - this example shows an upgrade from Qorus 3.1.0:
+
+    @verbatim
+checks are OK, installing from /Users/david/src/Qorus/releases/qorus-{qorus_version}
+installing Qorus architecture-independent files from: qorus-{qorus_version}-noarch.tar.gz
+installing release files: done
+schema status is 3.1.0
+system schema database driver is pgsql
+pgsql:omq@omq%localhost:5432: schema is at version 3.1.0 (targeting {datamodel_version}): running schema alignment
+............................N........................N.....................N..................................N........................N.........................CACAAAAACAN....................N...........................N...................................................AAA.....M...............................................................................................................................................................................................................................................................N..................A..................................................................................MMM...............................................................................N.............................................CACA.........................
+32 changes made; schema is now at version {datamodel_version}
+Uverifying reference data: VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVIIIIIIIIVVVVVVVVVVIIIIIIIIIIIIIIIIVVVIIIIIVVVVVIIIIIIIIIIVVVVIIIIIIIVIIIIVVIIIIIIVIIIIIIIII
+reference data: verified: 101, inserted: 65
+running system release load script
+pgsql:omq@omq%localhost: system schema "omq" is at version {datamodel_version}
+executing schema release loader files
+done executing release files
+installation complete!
+    @endverbatim
+
+    @subsubsection upgradetarverify Verify the Upgrade
+    After the successful upgrade, restart the Qorus Integration Engine&reg; server.  Then execute
+    @ref ostatus "ostatus" as follows:
+
+    <b><i>UNIX/Linux Shell</i></b>
+    @verbatim prompt% ostatus @endverbatim
+
+    which should then output:
+
+    @verbatim
+Qorus {qorus_version} <your-instance-key> sessionid 1 @endverbatim
+
+    If so, the installation is complete.
+*/
+
+/** @page opensource Open-Source References and Components
+
+    Qorus Integration Engine&reg; depends on the %Qore Programming Language (http://qore.org), an open-source
+    programming language designed for dynamically embedding in interfacing systems.
+
+    Additionally, the %Qore Programming Language depends on the following open-source projects, some of which
+    (depending on the platform), may be delivered in binary form with Qorus Integration Engine&reg;:
+
+    <b>Open-Source Components</b>
+    |!Package|!License|!Web Site|!Notes
+    |bzip2|BSD-style|http://www.bzip.org/|Provides bzip2 compression and decompression
+    |freetds|LGPL v2|http://www.freetds.org|Provides TDS protocol support (communication with Sybase / SAP ASE and \
+        MS SQL Server databases)
+    |gmp|LGPL v3|http://gmplib.org/|Provides an API for arbitrary precision arithmetic, operating on signed \
+        integers, rational numbers, and floating-point numbers
+    |libiconv|LGPL v2|http://www.gnu.org/software/libiconv|Provides character encoding support
+    |libmagic|BSD|http://www.darwinsys.com/file|Provides a file type recognition API
+    |libssh2|BSD|http://www.libssh2.org|Provides APIs for establishing SSH sessions and making connections to SFTP \
+        servers
+    |libxml2|LIBXML2 license|http://www.xmlsoft.org|Provides XML integration
+    |mariadb client|LGPL 2.1|http://mariadb.org|Provides a MySQL-compatible client library
+    |mpfr|LGPL v3|http://www.mpfr.org|Provides an API for multiple-precision floating-point computations
+    |mpir|LGPL v3|http://mpir.org/|Provides an API for arbitrary-precision arithmetic
+    |ocilib|LGPL 2.1|http://orclib.sourceforge.net|Provides a convience library for the Oracle OCI API
+    |openldap|BSD-style|http://openldap.org|Provides an LDAP client API
+    |openssl|OpenSSL and SSLeay licenses|http://www.openssl.org|Provides TLS/SSL and digest functionality
+    |PCRE|BSD|http://www.pcre.org|Provides perl5 regular expression handling
+    |PostgreSQL|BSD|http://www.postgresql.org|Provides PostgreSQL support
+    |sqlite3|public domain|http://www.sqlite.org|Provides access to SQLite3 databases
+    |xmlsec|BSD-style|http://www.aleksey.com/xmlsec/|Provides xmlenc and xmldsig support
+    |xxHash|BSD|https://code.google.com/p/xxhash/|Provides a fast hashing algorithm
+    |zlib|zlib license|http://www.zlib.net|Provides compression support
+
+    For more information on these projects or their licenses, please see the file \c THIRD-PARTY-README delivered
+    with Qorus Integration Engine&reg;, or visit the projects’ web sites listed above.
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine&reg;"
+*/

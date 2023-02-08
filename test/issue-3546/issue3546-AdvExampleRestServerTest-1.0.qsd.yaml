@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: service
+name: Issue3546AdvExampleRestServerTest
+desc: Creates REST server service
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3546AdvExampleRestServerTest
+lang: qore
+resource:
+  - issue3546-example.yaml
+autostart: false
+version: "1.0"
+servicetype: USER
+code: issue3546-AdvExampleRestServerTest-1.0.qsd
+methods:
+  - name: init
+    desc: initializes the service

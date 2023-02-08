@@ -1,0 +1,7 @@
+type: connection
+name: issue3102connection
+desc: "testing connection availability"
+url: "http://localhost:1"
+options:
+  connect_timeout: 2000
+  timeout: 2000

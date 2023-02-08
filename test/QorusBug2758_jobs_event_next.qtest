@@ -1,0 +1,53 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+
+class Main inherits QUnit::Test {
+
+    private {
+        int m_wfiid;
+    }
+
+    constructor() : Test("QorusBug2758_jobs_event_next", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("check next key presence", \checkNextKeyPresenceTest());
+
+        set_return_value(main());
+    }
+
+    private checkNextKeyPresenceTest() {
+        # just to be sure there it at least one job related event
+        qrest.put("jobs/test-shortrun/run");
+
+        list<hash<auto>> condlist = (
+            {"classstr": "JOB",},
+            {"eventstr": "JOB_INSTANCE_STOP",},
+        );
+        hash<auto> event_hash = omqapi."wait-for-events-and"(1, condlist, 2m);
+        if (event_hash.shutdown) {
+            return;
+        }
+        assertEq(True, event_hash.hasKey("events"));
+        assertEq(True, event_hash.events.size() > 0);
+
+        hash<auto> one_event = event_hash.events[0];
+        {
+            on_error printf("one_event: %N\n", one_event);
+            assertEq("JOB_INSTANCE_STOP", one_event.eventstr);
+            assertEq(True, one_event.info.hasKey("next"), "event hash must contain a 'next' key");
+        }
+    }
+
+} # class Main
+

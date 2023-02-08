@@ -1,0 +1,19 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = (
+    "runlongjob:1.0",
+);
+
+$workflows."RUN_LONG"."1.0" = (
+    "desc"          : "workflow starting run job",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : $steps,
+    "groups"        : "test",
+    );

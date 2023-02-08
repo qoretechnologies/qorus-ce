@@ -1,0 +1,26 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = (
+          "ds_test_step1:1.0",
+          "ds_test_step2:1.0"
+         );
+
+$workflows."DS-TEST"."1.0" = (
+    "desc"          : "datasource test",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : $steps,
+    #"attach"        : "test_init:1.0",
+    #"detach"        : "detach_test:1.0",
+    #"onetimeinit"   : "test_onetimeinitialization:1.0",
+    "functions"     : ("ds_test_lock_table"),
+    "options"       : $options,
+    #"errorfunction" : "test_errors:2.0",
+    "groups"        : "test",
+ );

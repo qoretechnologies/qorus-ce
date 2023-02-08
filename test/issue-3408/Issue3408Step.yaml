@@ -1,0 +1,10 @@
+type: step
+class-name: Issue3408Step
+base-class-name: QorusNormalStep
+desc: test step
+lang: java
+name: Issue3408Step
+version: "1.0"
+code: Issue3408Step.java
+classes:
+  - JavaTest

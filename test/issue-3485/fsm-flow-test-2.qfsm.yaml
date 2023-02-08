@@ -1,0 +1,84 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-flow-test-2
+desc: FSM flow test 2
+groups:
+  - regression
+  - test
+states:
+    '2':
+        block-config:
+            condition:
+                type: string
+                value: '$var:val > 0'
+            init:
+                type: string
+                value: '2'
+            init_var:
+                type: string
+                value: val
+            update:
+                type: string
+                value: '$var:val - 1'
+            update_var:
+                type: string
+                value: val
+        block-type: for
+        id: block1
+        name: block1
+        position:
+            x: 337.125
+            'y': 59.17578125
+        type: block
+        initial: false
+        states:
+            '1':
+                action:
+                    type: connector
+                    value:
+                        class: FsmDepTest
+                        connector: writeValue
+                id: block1_state1
+                initial: true
+                name: block1.state1
+                position:
+                    x: 108.125
+                    'y': 39.17578125
+                type: state
+                execution_order: 1
+                config-items:
+                  - name: fsm-connector-test-write-value
+                    value:
+                        '$pstate:{state.block1\.state1}': true
+                        '$transient:cnt': '$qore-expr:{$transient:cnt + 1}'
+                        '$pstate:{cnt}': '$qore-expr:{$transient:cnt + 1}'
+                    parent:
+                        interface-name: FsmDepTest
+                        interface-type: class
+                        interface-version: "1.0"
+    '1':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state1
+        initial: true
+        name: state1
+        position:
+            x: 77.125
+            'y': 59.17578125
+        transitions:
+            -
+                state: '2'
+        execution_order: 1
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$pstate:{state.fsm-flow-test-2.state1}': true
+                '$transient:cnt': 0
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"

@@ -1,0 +1,64 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-3250
+# serviceversion: 1.0
+# servicedesc: qhtml test
+# serviceauthor: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# class-name: Issue3250
+# autostart: false
+# resource: index.qhtml
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class MyHttpHandler inherits AbstractServiceHttpHandler {
+    public {
+    }
+
+    constructor(string url) : AbstractServiceHttpHandler(url, MimeTypeHtml, NOTHING, NOTHING, False) {
+        # set the default resource as the main template
+        setDefaultResource("index.qhtml");
+    }
+} # class
+
+class Issue3250 inherits QorusService {
+    # name: init
+    # desc: init method
+    init() {
+        # get default root URI path
+        string uri_root = getConfigItemValue("uri_root");
+        # create custom request handler
+        MyHttpHandler lh(uri_root);
+        # add index information for UI
+        lh.setUserIndexInfo("Test", "Issue 3250 Test Page", uri_root);
+        # set handler on global listeners
+        bindHttp(lh);
+    }
+
+    # name: getTextResource
+    # desc: resource test
+    string getTextResource(string loc) {
+        return getTextFileFromLocation(loc);
+    }
+
+    # name: getBinaryResource
+    # desc: resource test
+    binary getBinaryResource(string loc) {
+        return getBinaryFileFromLocation(loc);
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "uri_root": <ConfigItemInfo>{
+                "default_value": "issue3250",
+                "description": "root URI path for this test",
+            },
+        };
+    }
+}

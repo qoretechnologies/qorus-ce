@@ -1,0 +1,2366 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusInterfaceTest.qm Qore user module for implementing interface tests based on the QUnit module
+
+/*  QorusInterfaceTest.qm Copyright 2015 - 2023 Qore Technologies, s.r.o.
+*/
+
+# minimum required Qore version
+%requires qore >= 1.0
+
+module QorusInterfaceTest {
+    version = "5.1";
+    desc    = "user module for testing Qorus interfaces";
+    author  = "Jiri Vaclavik <jiri.vaclavik@qoretechnologies.com>, David Nichols <david.nichols@qoretechnologies.com>";
+    url     = "http://qoretechnologies.com";
+    init    = \QorusClient::init();
+}
+
+%new-style
+%require-types
+%enable-all-warnings
+
+%requires(reexport) QUnit
+%requires(reexport) QorusClientCore
+%requires(reexport) SqlUtil
+%requires CsvUtil
+%requires SoapClient
+%requires Util
+%requires WebSocketClient
+
+/* see release notes below for version history
+*/
+
+/** @page qorusinterfacetest_module QorusInterfaceTest Module
+
+    @tableofcontents
+
+    @section qorusinterfacetestintro Introduction to the QorusInterfaceTest Module
+
+    The %QorusInterfaceTest module provides functionality for automatic testing; it is based on the @ref qunitintro "QUnit" module from %Qore.
+
+    Currently the module provides the following test classes:
+    - @ref QorusInterfaceTest::QorusInterfaceTest "QorusInterfaceTest": extension of the %Qore @ref qunitintro "QUnit" module with functions testing Qorus-specific interfaces (abstract class)
+      - @ref QorusInterfaceTest::QorusJobTest "QorusJobTest": base class for testing jobs
+      - @ref QorusInterfaceTest::QorusPassiveWorkflowTest "QorusPassiveWorkflowTest": class for testing workflows without starting execution instances (for example, for testing synchronous workflow orders, etc)
+      - @ref QorusInterfaceTest::QorusServiceTest "QorusServiceTest": base class for testing services
+      - @ref QorusInterfaceTest::QorusWorkflowTest "QorusWorkflowTest": base class for testing workflows, will automatically start execution instances if not already running
+    - @ref QorusInterfaceTest::Action "Action": abstract class representing some action
+      - @ref QorusInterfaceTest::CreateFile "CreateFile": abstract class for input file
+      - @ref QorusInterfaceTest::CreateFileText "CreateFileText": input text file
+      - @ref QorusInterfaceTest::CreateFileCsv "CreateFileCsv": input csv file
+      - @ref QorusInterfaceTest::InsertDbTableRows "InsertDbTableRows": inserts one or more rows into DB table
+        - @ref QorusInterfaceTest::InsertDbTableRow "InsertDbTableRow": insert a row into DB table
+      - @ref QorusInterfaceTest::DeleteDbTableData "DeleteDbTableData": delete data from DB table
+      - @ref QorusInterfaceTest::TruncateTable "TruncateTable": truncate a DB table (delete all rows)
+      - @ref QorusInterfaceTest::AbstractRemoteDbSqlUtilAction "AbstractRemoteDbSqlUtilAction": abstract base class for remote sqlutil streaming actions
+        - @ref QorusInterfaceTest::AbstractRemoteDbSelectAction "AbstractRemoteDbSelectAction": abstract base class for streaming data from a remote DB
+          - @ref QorusInterfaceTest::RemoteDbSelectAction "RemoteDbSelectAction": streams data from a remote DB and compares to expected row data
+        - @ref QorusInterfaceTest::RemoteDbDeleteAction "RemoteDbDeleteAction": deletes data in a remote datasource
+        - @ref QorusInterfaceTest::RemoteDbRowSqlUtilAction "RemoteDbRowSqlUtilAction": performs sqlutil-based streaming inserts or upserts of data in remote datasources in one or more tables in a single remote transaction
+          - @ref QorusInterfaceTest::InsertRemoteDbTableRows "InsertRemoteDbTableRows": performs sqlutil-based streaming to insert rows in a single remote table
+          - @ref QorusInterfaceTest::UpsertRemoteDbTableRows "UpsertRemoteDbTableRows": performs sqlutil-based streaming to upsert (or merge) rows in a single remote table
+      - @ref QorusInterfaceTest::CallService "CallService": call any Qorus service method
+      - @ref QorusInterfaceTest::Sleep "Sleep": wait action
+      - @ref QorusInterfaceTest::WaitForWfiid "WaitForWfiid": wait for WFIID to be finished
+      - @ref QorusInterfaceTest::CreateOrder "CreateOrder": creates order
+      - @ref QorusInterfaceTest::CheckFileText "CheckFile": check whether some file exists
+      - @ref QorusInterfaceTest::CheckFileCsv "CheckFileCsv": check csv file content
+      - @ref QorusInterfaceTest::CheckFileNonexisting "CheckFileNonexisting": check whether some file doesn't exist
+      - @ref QorusInterfaceTest::ExecSynchronousOrder "ExecSynchronousOrder": creates and executes a synchronous workflow order
+      - @ref QorusInterfaceTest::StartLog "StartLog": starts log stopwatch (i. e. from this time we will check log files)
+      - @ref QorusInterfaceTest::CheckLog "CheckLog": check whether log matches specified pattern
+      - @ref QorusInterfaceTest::CheckDbTableRows "CheckDbTableRows": check rows in a database
+        - @ref QorusInterfaceTest::CheckDbTableRow "CheckDbTableRow": check a row in a database
+      - @ref QorusInterfaceTest::RunJob "RunJob": invokes the given job and retrieves the result
+        - @ref QorusInterfaceTest::RunJobResult "RunJobResult": runs the given job and checks the result status and optionally the result job info hash
+
+    Additionally, the following helper class is provided:
+    - @ref QorusInterfaceTest::WorkflowLogHelper "WorkflowLogHelper": provides an API for displaying workflow logs during a test
+
+    To use this module, use \c "%requires QorusInterfaceTest" in your code.
+
+    <b>Examples:</b>
+    @code{.py}
+class MyJobTest inherits QorusJobTest {
+    constructor() : QorusJobTest("my-job", "1.0", \ARGV) {
+        addTestCase("my-test-1, \test1());
+    }
+
+    test1() {
+        exec(new CreateFileText(input_filename, file_content));
+        exec(new RunJobResult(OMQ::StatComplete));
+    }
+}
+    @endcode
+
+    @subsection qorusinterfacetestsrun How to run tests
+
+    Make sure your scripts have the executable bit set (on UNIX systems) and an appropriate hash-bang as the first
+    line (ex: <tt>"#!/usr/bin/env qr"</tt> or <tt>"#!/usr/bin/env qore"</tt>.
+
+    If your script's name is <tt>test.qtest</tt>, then The following command should execute the script:
+
+    @verbatim
+    test.qtest [OPTIONS]
+    @endverbatim
+
+    See @ref QorusInterfaceTest "QorusInterfaceTest" module in Qore for options, output formats and further details.
+
+    @section qorusinterfacetest_relnotes Release Notes
+
+    @subsection unittest_v5_1 Version 5.1
+    - aligned version number with Qorus
+    - added constructors useful for Java and Python
+
+    @subsection unittest_v1_1 Version 1.1
+    - added @ref QorusInterfaceTest::QorusInterfaceTest::setUserPassword() to allow child classes to set the REST
+      username & password for the Qorus server connection before trying to communicate with the server
+
+    @subsection unittest_v1_0_1 Version 1.0.1
+    - minor adjustment to @ref QorusInterfaceTest::FindOrderByKey::run() "FindOrderByKey::run()" for an info service
+      key search method fix (a href="https://bugs.qoretechnologies.com/issues/2108">issue 2108</a>)
+
+    @subsection unittest_v1_0 Version 1.0
+    - initial version of module
+*/
+
+#! the QorusInterfaceTest namespace contains all the definitions in the @ref QorusInterfaceTest "QorusInterfaceTest" module
+public namespace QorusInterfaceTest {
+    #! Base class that exports functions for Qorus unit testing. For realworld examples see @ref qorusinterfacetestintro.
+    public class QorusInterfaceTest inherits QUnit::Test {
+        private {
+            #! a REST URI path prefix for the interface
+            string m_rest_pfx;
+            #! Qorus instance name
+            string m_instance_name;
+            #! interface description
+            string m_desc;
+            #! start timestamp
+            date m_timestamp = now_us();
+            #! flag if the system was started for these tests
+            bool m_system_started;
+
+            #! command-line options
+            const Opts = Test::Opts + (
+                "login": "L,login=s",
+                "restart": "R,restart:d",
+                "timeout": "T,timeout=i",
+            );
+
+            #! the default column position for option usage
+            const OptionColumn = 25;
+
+            #! system start code: unknown status
+            const SS_UNKNOWN = 0;
+
+            #! system start code: running status
+            const SS_RUNNING = 1;
+
+            #! system start code: stopped status
+            const SS_STOPPED = 2;
+        }
+
+        #! creates the object
+        constructor(string name, string version, string desc, string rest_pfx, reference<auto> p_argv,
+                hash<auto> opts = Opts) : Test(name, version, \p_argv, opts) {
+            init(desc, rest_pfx);
+        }
+
+        #! creates the object
+        constructor(string name, string version, string desc, string rest_pfx, *list<auto> p_argv,
+                hash<auto> opts = Opts) : Test(name, version, p_argv, opts) {
+            init(desc, rest_pfx);
+        }
+
+        #! creates the object
+        constructor(string name, string version, string desc, string rest_pfx, hash<auto> opts = Opts)
+                : Test(name, version, argv, opts) {
+            init(desc, rest_pfx);
+        }
+
+        private:internal init(string desc, string rest_pfx) {
+            m_desc     = desc;
+            m_rest_pfx = rest_pfx;
+            setUserPassword();
+            m_instance_name = getQorusInstanceName();
+
+            if (!omqclient.getOptions("qorus-client")."allow-test-execution") {
+                throw "TEST-EXECUTION-FORBIDDEN", sprintf("%s: the \"qorus-client.allow-test-execution\" option is "
+                    "disabled; please try again after enabling the option in the options file; ex:\n"
+                    "\techo qorus-client.allow-test-execution: true >> %s", m_desc,
+                    QorusClient::parseOptions("qorus")."option-file");
+            }
+
+            if (m_options.restart) {
+                if (m_options.restart.typeCode() != NT_DATE) {
+                    restartSystem();
+                } else {
+                    # get system start time
+                    try {
+                        date d = qrest.get("system/starttime");
+                        if (d < m_options.restart)
+                            restartSystem(SS_RUNNING);
+                        else if (m_options.verbose)
+                            printf("not restarting system; system was started: %s\n", d.format("YYYY-MM-DD HH:mm:SS"));
+                    } catch (hash<ExceptionInfo> ex) {
+                        restartSystem(SS_STOPPED);
+                    }
+                }
+            }
+            if (m_options.timeout) {
+                # convert from seconds to ms
+                m_options.timeout *= 1000;
+                qrest.setConnectTimeout(m_options.timeout);
+                qrest.setTimeout(m_options.timeout);
+            }
+        }
+
+        #! reimplement in child classes to allow the REST username & password for the Qorus server connection to be set before trying to communicate with the server
+        /** this base implementation sets the user and password from the "login" option
+         */
+        private setUserPassword() {
+            if (m_options.login) {
+                (*string user, *string pass) = (m_options.login =~ x/([^:]+):(.*)/);
+                if (!user || !pass) {
+                    stderr.printf("ERROR: login missing ':' separating the username and password; got %y instead\n", m_options.login);
+                    set_return_value(-1);
+                    return;
+                }
+                qrest.setUserPassword(user, pass);
+            }
+        }
+
+        #! checks that the interface exists and executes a StarLog action
+        globalSetUp() {
+            testAssertion(m_desc + ": check if loaded", \isInterfaceLoaded());
+            if (canRun())
+                testAssertion(m_desc + ": check if running", \isInterfaceRunning());
+
+            exec(new StartLog()); # automatically start to check the log
+        }
+
+        globalTearDown() {
+            if (m_system_started) {
+                shutdownSystem();
+            }
+        }
+
+        #! executes the Action by calling its run() method and returns the object of Action
+        /** @return the Action; typed as \c auto so that no \c cast<>() is needed to call local action methods on the
+            result
+        */
+        auto exec(Action data) {
+            data.run(self);
+
+            return data;
+        }
+
+        #! tests whether some Qorus instance is running and returns its name
+        /** @par Example:
+            @code{.py}
+            t.getQorusInstanceName();
+            @endcode
+
+            returns current Qorus instance name
+        */
+        string getQorusInstanceName() {
+            return qrest.get("system/instance-key");
+        }
+
+        #! returns the Qorus instance name
+        /**
+            @return Qorus instance name
+          */
+        string getInstanceName() {
+            return m_instance_name;
+        }
+
+        #! returns a string describing the current interface being tested
+        string getDescription() {
+            return m_desc;
+        }
+
+        #! returns the test start timestamp
+        date getTimestamp() {
+            return m_timestamp;
+        }
+
+        #! returns information about the interface from the REST API or @ref nothing if the interface doesn't exist or the system is not responding on the HTTP interface
+        *hash<auto> getInterfaceInfo() {
+            try {
+                return qrest.get(m_rest_pfx);
+            } catch (hash<ExceptionInfo> ex) {
+            }
+        }
+
+        #! tests whether the current interface is loaded in the current Qorus instance
+        /** @par Example:
+            @code{.py}
+            t.isInterfaceLoaded(info);
+            @endcode
+
+            @return True if the interface is loaded, False if not
+          */
+        bool isInterfaceLoaded() {
+            return boolean(getInterfaceInfo());
+        }
+
+        #! tests whether the current interface is running in the current Qorus instance
+        /** @par Example:
+            @code{.py}
+            bool b = t.isInterfaceRunning();
+            @endcode
+
+            @return True if the interface is running, False if not
+        */
+        bool isInterfaceRunning() {
+            throw "UNSUPPORTED", sprintf("not supported for the %s class", self.className());
+        }
+
+        #! returns the configuration (including source) for the named library function
+        hash<auto> getFunctionInfo(string name) {
+            return qrest.get("functions/" + name);
+        }
+
+        #! returns the configuration (including source) for the named library constant
+        hash<auto> getConstantInfo(string name) {
+            return qrest.get("constant/" + name);
+        }
+
+        #! returns the configuration (including source) for the named library class
+        hash<auto> getClassInfo(string name) {
+            return qrest.get("classes/" + name);
+        }
+
+        #! disables the current interface
+        disable() {
+            qrest.put(m_rest_pfx + "/disable");
+        }
+
+        #! enables the current interface
+        enable() {
+            qrest.put(m_rest_pfx + "/enable");
+        }
+
+        #! returns the column number for usage output
+        int getOptionColumn() {
+            return OptionColumn;
+        }
+
+        #! returns True if the system was not running before it was started
+        restartSystem(int status = SS_UNKNOWN) {
+            if (status == SS_UNKNOWN) {
+                try {
+                    date d = qrest.get("system/starttime");
+                    if (m_options.verbose)
+                        printf("restarting system started: %s\n", d.format("YYYY-MM-DD HH:mm:SS"));
+                    status = SS_RUNNING;
+                } catch (hash<ExceptionInfo> ex) {
+                    status = SS_STOPPED;
+                }
+            }
+            if (status == SS_RUNNING) {
+                shutdownSystem();
+            } else {
+                m_system_started = True;
+            }
+            startSystem();
+        }
+
+        shutdownSystem() {
+            if (m_options.verbose) {
+                print("shutting down Qorus: ");
+                flush();
+            }
+            bool try_compat;
+            try {
+                if (qrest.put("system/shutdownWait") =~ /does not implement/)
+                    try_compat = True;
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "DATASTREAM-CLIENT-RECEIVE-ERROR")
+                    try_compat = True;
+            }
+            if (try_compat)
+                omqapi."shutdown-wait"();
+            if (m_options.verbose) {
+                print("done\n");
+                flush();
+            }
+        }
+
+        startSystem() {
+            if (m_options.verbose) {
+                print("starting Qorus: ");
+                flush();
+            }
+
+%ifdef Windows
+            int rc = system("qorus verbose=11 --debug-system >nul 2>nul");
+%else
+            int rc = system("qorus verbose=11 --debug-system >/dev/null 2>/dev/null");
+%endif
+            if (rc)
+                throw "QORUS-STARTUP-ERROR", sprintf("could not start qorus: %s", strerror());
+
+            # wait for qorus to come up
+            while (True) {
+                try {
+                    qrest.get("system/starttime");
+                } catch (hash<ExceptionInfo> ex) {
+                    usleep(500ms);
+                    continue;
+                }
+                break;
+            }
+            if (m_options.verbose) {
+                print("done\n");
+                flush();
+            }
+        }
+
+        #! outpus command-line usage information
+        private usageIntern() {
+            int option_column = getOptionColumn();
+            Test::usageIntern(option_column);
+            printOption("-L,--login=ARG", "HTTP login info: user:pass", option_column);
+            printOption("-R,--restart[=ARG]", "restart or start the system if not started", option_column);
+            printOption("", "[ARG]=date/time from last build; if the system was started", option_column);
+            printOption("", "before this time, then it will be shut down and restarted;", option_column);
+            printOption("", "this option also enables tests that require system startup/shutdown", option_column);
+            printOption("-T,--timeout=ARG", "gives the HTTP timeout in seconds", option_column);
+        }
+
+        #! returns the log file name for the current object
+        abstract string getLogFileName();
+
+        #! checks if the interface can run
+        abstract bool canRun();
+    }
+
+    #! Workflow test class
+    /** @note if the given workflow is not started, then this class will try to start it automatically and stop it when done; use @ref QorusPassiveWorkflowTest to test workflows without starting them (for example, to test a synchronous workflow)
+     */
+    public class QorusWorkflowTest inherits QorusInterfaceTest {
+        private {
+            #! flag if a workflow exec instance was started; if True then it is stopped in the destructor
+            *bool m_started;
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, reference<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, version, sprintf("workflow %s v%s", name, version),
+                sprintf("workflows/%s:%s", name, version), \p_argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, *list<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, version, sprintf("workflow %s v%s", name, version),
+                sprintf("workflows/%s:%s", name, version), p_argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, hash<auto> opts)
+                : QorusInterfaceTest(name, version, sprintf("workflow %s v%s", name, version),
+                sprintf("workflows/%s:%s", name, version), argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+        */
+        constructor(string name, string version)
+                : QorusInterfaceTest(name, version, sprintf("workflow %s v%s", name, version),
+                sprintf("workflows/%s:%s", name, version), argv) {
+        }
+
+        #! stops any workflow execution instance started in the isInterfaceRunning() method call
+        destructor() {
+            if (m_started) {
+                qrest.put(m_rest_pfx + "/stop");
+            }
+        }
+
+        #! returns the log file name for the current object
+        string getLogFileName() {
+            return omqclient.getWorkflowLogFileName(m_name, m_version);
+        }
+
+        #! tests whether the current interface is running in the current Qorus instance
+        /** @par Example:
+            @code{.py}
+            bool b = t.isInterfaceRunning();
+            @endcode
+        */
+        bool isInterfaceRunning() {
+            try {
+                *int cnt = qrest.get(m_rest_pfx + "/exec_count");
+                # if the wf exists but is not running, then try to start it
+                if (cnt === 0) {
+                    qrest.put(m_rest_pfx + "/start");
+                    return m_started = True;
+                }
+                return boolean(cnt);
+            } catch (hash<ExceptionInfo> ex) {
+            }
+            return False;
+        }
+
+        #! checks if the interface can run
+        bool canRun() {
+            return True;
+        }
+
+        #! finds the last workflow order instance created for this workflow
+        softint getLastOrderId() {
+            return qrest.get(m_rest_pfx + "/orders/?orderby=created;limit=1;desc=1")[0].workflow_instanceid;
+        }
+
+        #! creates an order instance and returns the workflow_instanceid
+        /** @param staticdata the static data hash for the order
+            @param create_opts other options to add to the order hash for the create order REST API, corresponding to the @ref OMQ::UserApi::create_order() API \a params parameter (ex: \a orderkeys for order keys, etc)
+
+            @return the workflow_instanceid created
+        */
+        int createOrder(hash<auto> staticdata, *hash<auto> create_opts) {
+            return cast<CreateOrder>(exec(new CreateOrder(m_name, staticdata, create_opts))).wfiid();
+        }
+
+        #! creates and executes a synchronous workflow order and returns the hash data result
+        /** @param orderdata a hash with the following keys:
+            - \c staticdata: (hash) the static workflow order data (required)
+            - \c dynamicdata: (hash) the initial dynamic data for the workflow (optional)
+            - \c options: (hash) a hash of option names and values; if any options are not valid for the workflow, then an exception is raised and the workflow execution instance is not started (optional)
+            - \c priority: the order priority (default @ref OMQ::DefaultOrderPriority), ignored while the order is processed synchronously; from 0 - 999; priority 0 is the highest; 999 is the
+lowest
+            - \c orderkeys: order keys for the order
+            - \c external_order_instanceid: the optional external order instanceid for the order
+            - \c parent_workflow_instanceid: a loosely-coupled workflow that will be marked as the parent of this workflow order
+
+            @return a hash with the following keys:
+            - \c workflow_instanceid: the workflow instance ID for the order created
+            - \c status: the status of the workflow; see @ref StatusDescriptions for possible values
+            - \c dynamicdata: the dynamic data of the workflow order instance
+         */
+        hash<auto> execSynchronous(hash<auto> orderdata) {
+            hash<auto> h = orderdata + {
+                "name": m_name,
+                "version": m_version,
+            };
+            return cast<ExecSynchronousOrder>(exec(new ExecSynchronousOrder(h))).result();
+        }
+
+        #! returns a hash of workflow order instance information keyed by workflow_instanceid for all workflow orders in the hierarchy
+        /** @param wfiid the workflow_instanceid of the workflow order to query
+         */
+        static hash<auto> hierarchyInfo(int wfiid) {
+            return qrest.get("/orders/" + wfiid).HierarchyInfo;
+        }
+
+        #! returns the static data hash of the given workflow order
+        /** @param wfiid the workflow_instanceid of the workflow order to query
+         */
+        static hash<auto> staticData(int wfiid) {
+            return qrest.get("/orders/" + wfiid + "/staticdata");
+        }
+
+        #! returns the dynamic data hash of the given workflow order or @ref nothing if no dynamic data exists for the workflow order
+        /** @param wfiid the workflow_instanceid of the workflow order to query
+         */
+        static *hash<auto> dynamicData(int wfiid) {
+            return qrest.get("/orders/" + wfiid + "/dynamicdata");
+        }
+
+        #! returns the order key hash for the given workflow order or @ref nothing if no order keys have been set for the workflow order
+        /** @param wfiid the workflow_instanceid of the workflow order to query
+         */
+        static *hash<auto> orderKeys(int wfiid) {
+            return qrest.get("/orders/" + wfiid + "/keys");
+        }
+    }
+
+    #! workflow test class; this class will not start any workflow execution instances
+    public class QorusPassiveWorkflowTest inherits QorusWorkflowTest {
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, reference<auto> p_argv, *hash<auto> opts)
+                : QorusWorkflowTest(name, version, \p_argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, *list<auto> p_argv, *hash<auto> opts)
+                : QorusWorkflowTest(name, version, p_argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, hash<auto> opts)
+                : QorusWorkflowTest(name, version, argv, opts) {
+        }
+
+        #! creates the object from the arguments
+        /** @param name the workflow name
+            @param version the version of the workflow
+        */
+        constructor(string name, string version)
+                : QorusWorkflowTest(name, version, argv) {
+        }
+
+        #! tests whether the current interface is running in the current Qorus instance
+        /** @par Example:
+            @code{.py}
+            bool b = t.isInterfaceRunning();
+            @endcode
+        */
+        bool isInterfaceRunning() {
+            try {
+                return boolean(qrest.get(m_rest_pfx + "/exec_count"));
+            } catch (hash<ExceptionInfo> ex) {
+            }
+            return False;
+        }
+
+        #! returns @ref False so that no execution instances will be started when the test is run
+        bool canRun() {
+            return False;
+        }
+    }
+
+    #! service test class
+    public class QorusServiceTest inherits QorusInterfaceTest {
+        private {
+            #! the type of service
+            string m_svc_type;
+        }
+
+        #! creates the object from the arguments
+        /** the version number is not given because it's only possible to test the latest version of the service in
+            any case
+
+            @param name the service name
+            @param svc_type the service type:
+            - \c "user": the default
+            - \c "system": only for testing system services
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string svc_type = "user", reference<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, "<latest>", sprintf("%s service %s v<latest>", svc_type, name),
+                sprintf("services/%s", name), \p_argv, opts) {
+            m_svc_type = svc_type;
+        }
+
+        #! creates the object from the arguments
+        /** the version number is not given because it's only possible to test the latest version of the service in
+            any case
+
+            @param name the service name
+            @param svc_type the service type:
+            - \c "user": the default
+            - \c "system": only for testing system services
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string svc_type = "user", *list<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, "<latest>", sprintf("%s service %s v<latest>", svc_type, name),
+                sprintf("services/%s", name), p_argv, opts) {
+            m_svc_type = svc_type;
+        }
+
+        #! creates the object from the arguments
+        /** the version number is not given because it's only possible to test the latest version of the service in
+            any case
+
+            @param name the service name
+            @param svc_type the service type:
+            - \c "user": the default
+            - \c "system": only for testing system services
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string svc_type = "user", hash<auto> opts)
+                : QorusInterfaceTest(name, "<latest>", sprintf("%s service %s v<latest>", svc_type, name),
+                sprintf("services/%s", name), argv, opts) {
+            m_svc_type = svc_type;
+        }
+
+        #! creates the object from the arguments
+        /** the version number is not given because it's only possible to test the latest version of the service in
+            any case
+
+            @param name the service name
+            @param svc_type the service type:
+            - \c "user": the default
+            - \c "system": only for testing system services
+        */
+        constructor(string name, string svc_type = "user") : QorusInterfaceTest(name, "<latest>",
+                sprintf("%s service %s v<latest>", svc_type, name),
+                sprintf("services/%s", name), argv) {
+            m_svc_type = svc_type;
+        }
+
+        #! returns the log file name for the current object
+        string getLogFileName() {
+            return omqclient.getServiceLogFileName(m_svc_type, m_name, m_version);
+        }
+
+        #! checks if the interface can run
+        bool canRun() {
+            return False;
+        }
+    }
+
+    #! job test class
+    public class QorusJobTest inherits QorusInterfaceTest {
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param version the version of the job
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, reference<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, version, sprintf("job %s v%s", name, version),
+                sprintf("jobs/%s", name), \p_argv, opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param version the version of the job
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, *list<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, version, sprintf("job %s v%s", name, version),
+                sprintf("jobs/%s", name), p_argv, opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param p_argv an optional reference to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, reference<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, "<latest>", sprintf("job %s", name), sprintf("jobs/%s", name), \p_argv,
+                    opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param p_argv an optional  to command-line arguments to process
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, *list<auto> p_argv, *hash<auto> opts)
+                : QorusInterfaceTest(name, "<latest>", sprintf("job %s", name), sprintf("jobs/%s", name), p_argv,
+                    opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param version the version of the job
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, string version, *hash<auto> opts) : QorusInterfaceTest(name, version,
+                sprintf("job %s v%s", name, version),
+                sprintf("jobs/%s", name), argv, opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param version the version of the job
+        */
+        constructor(string name, string version) : QorusInterfaceTest(name, version, sprintf("job %s v%s", name,
+                version),
+                sprintf("jobs/%s", name), argv) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+            @param opts an optional option hash for @ref Qore::GetOpt::constructor()
+        */
+        constructor(string name, hash<auto> opts) : QorusInterfaceTest(name, "<latest>", sprintf("job %s", name),
+                sprintf("jobs/%s", name), argv, opts) {
+        }
+
+        #! creates the object according to the arguments
+        /** @param name the job name
+        */
+        constructor(string name) : QorusInterfaceTest(name, "<latest>", sprintf("job %s", name),
+                sprintf("jobs/%s", name), argv) {
+        }
+
+        #! returns the log file name for the current object
+        string getLogFileName() {
+            return omqclient.getJobLogFileName(m_name, m_version);
+        }
+
+        #! checks if the interface can run
+        bool canRun() {
+            return False;
+        }
+
+        #! runs the given job and returns the result hash
+        hash<auto> run() {
+            return qrest.put(m_rest_pfx + "/run");
+        }
+
+        #! returns the job result hash for the given job_instanceid
+        *hash<auto> getJobResultHash(int jiid) {
+            return qrest.get("jobresults/" + jiid);
+        }
+    }
+
+    #! abstract class representing an action in a test case
+    public class Action {
+        #! creates the object
+        /**
+        */
+        constructor() {
+        }
+
+        prehook(QorusInterfaceTest t) {
+        }
+
+        #! runs the test
+        /** @param t QorusInterfaceTest test object
+
+            checks current output and return some value if any returned from corresponding testcase
+          */
+        abstract any run(QorusInterfaceTest t);
+    }
+
+    #! a check for log content
+    public class StartLog inherits Action {
+        private {
+            string m_logfile;
+            string m_instance_name;
+            string m_timepoint;
+        }
+
+        constructor() {
+        }
+
+        run(QorusInterfaceTest t) {
+            m_instance_name = t.getInstanceName();
+            m_logfile       = t.getLogFileName();
+            m_timepoint     = sprintf('+++ TEST TIMESTAMP: %s', t.getTimestamp());
+
+            t.testAssertion('timestamp created in ' + m_logfile, \createTimepointInLogfile(), NOTHING, new TestResultValue());
+        }
+
+        createTimepointInLogfile() {
+            if (!m_logfile) {
+                throw 'NO-DEFAULT-LOGFILE-SET', 'you should set logfile while testing';
+            }
+            File f_log();
+            f_log.open2(m_logfile, O_APPEND | O_WRONLY | O_CREAT);
+            f_log.write(m_timepoint + "\n");
+            f_log.close();
+        }
+    }
+
+    #! a check for log content
+    public class CheckLog inherits Action {
+        private {
+            string m_regex;
+            string m_logfile;
+            string m_instance_name;
+            QorusInterfaceTest m_test;
+
+            string m_timepoint;
+            string m_log_since_timepoint;
+        }
+
+        #! creates the object according to the arguments
+        /** @param regex regex that log lines should match to
+            @param test the test that the action belongs to
+            @param logfile logfile
+          */
+        constructor(string regex, *QorusInterfaceTest test, *string logfile) {
+            m_regex = regex;
+            if (logfile) {
+                m_logfile = logfile;
+            }
+            if (test) {
+                m_test = test;
+            }
+        }
+
+        #! checks the log file
+        /** @param t QorusInterfaceTest test object
+
+            checks log content
+        */
+        run(QorusInterfaceTest t) {
+            if (!m_test) {
+                m_test = t;
+            }
+            m_timepoint     = 'TIMESTAMP: ' + m_test.getTimestamp();
+            m_instance_name = m_test.getInstanceName();
+            m_logfile       = m_test.getLogFileName();
+
+            t.testAssertion('log ' + m_logfile + ' checked against regex "' + m_regex + '"', \regex(), (logSinceTimepoint(), m_regex));
+        }
+
+        /**
+            @return regex that should be matched
+          */
+        string getRegex() {
+            return m_regex;
+        }
+
+        /**
+            @return logfile to inspect
+          */
+        string getLogfile() {
+            return m_logfile;
+        }
+
+        string logSinceTimepoint() {
+            if (m_log_since_timepoint) {
+                return m_log_since_timepoint;
+            }
+
+            File f_readlog();
+            f_readlog.open2(m_logfile);
+            bool found_timepoint = False;
+            while (exists(*string line = f_readlog.readLine(False))) {
+                if (found_timepoint) {
+                    m_log_since_timepoint += line + "\n";
+                }
+                if (line == m_timepoint) {
+                    found_timepoint = True;
+                    m_log_since_timepoint = '';
+                }
+            }
+
+            if (!found_timepoint) {
+                throw 'NO-TIMEPOINT-FOUND', sprintf('Start log for %s before checking it', m_test.getDescription());
+            }
+
+            return m_log_since_timepoint;
+        }
+    }
+
+    #! a check for nonexisting file
+    public class CheckFileNonexisting inherits Action {
+        private {
+            string m_filename;
+        }
+
+        #! creates the object according to the arguments
+        /** @param f filename
+        */
+        constructor(string f) {
+            m_filename = f;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks if the file is nonexisting
+        */
+        run(QorusInterfaceTest t) {
+            t.testAssertion('file ' + m_filename + ' does not exist', \is_readable(), m_filename, new TestResultFailure());
+        }
+
+        /**
+            @return filename that is inspected
+        */
+        string getFilename() {
+            return m_filename;
+        }
+    }
+
+    public class TestResultIsType inherits QUnit::AbstractTestResult {
+        constructor(int type) : AbstractTestResult("IsList") {
+            m_value = type;
+        }
+
+        bool equals(AbstractTestResult r) {
+            return r.m_type == "Value" && r.m_value.typeCode() == m_value;
+        }
+
+        string toString() {
+            return sprintf("type: %d", m_type);
+        }
+    }
+
+    #! a check for text file
+    public class CheckFileText inherits Action {
+        private {
+            string m_glob;
+            string m_content;
+        }
+
+        /** @param f glob that the output file should match (the newest one from the matching ones is picked)
+            @param c expected file content
+          */
+        constructor(string f, string c) {
+            m_glob     = f;
+            m_content  = c;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks the file content
+          */
+        run(QorusInterfaceTest t) {
+            *list<auto> result = t.testAssertion('found files matching glob', \glob(), m_glob, new TestResultIsType(NT_LIST));
+            if (result) {
+                File f_read();
+                string newest = getNewestFile(result); # hopefully someone else does not create newer file...
+                t.testAssertion("file readable: " + newest, \is_readable(), newest);
+                f_read.open2(newest);
+                t.testAssertion("file content check: " + newest, \f_read.read(), -1, new TestResultValue(m_content));
+                # unlink(newest);
+            }
+        }
+
+        /**
+            @return glob to inspect
+          */
+        string getGlob() {
+            return m_glob;
+        }
+
+        /**
+            @param files list of existing files
+            @return the newest file name
+          */
+        string getNewestFile(list<auto> files) {
+            code sort_code = int sub (ReadOnlyFile l, ReadOnlyFile r) {
+                return l.hstat().atime <=> r.hstat().atime;
+            };
+            return sort((map new ReadOnlyFile($1), files), sort_code).last().getFileName();
+        }
+    }
+
+    #! a check for csv file
+    public class CheckFileCsv inherits Action {
+        private {
+            string m_glob;
+            list<auto> m_content;
+            string m_separator;
+        }
+
+        /** @param f glob that the output file should match (the newest one from the matching ones is picked)
+            @param c expected file content as list of hashes
+            @param sep separator (default: ';')
+          */
+        constructor(string f, list<auto> c, *string sep = ';') {
+            m_glob      = f;
+            m_content   = c;
+            m_separator = sep;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks the file content
+        */
+        run(QorusInterfaceTest t) {
+            *list<auto> result = t.testAssertion("a matching file found", \glob(), m_glob, new TestResultIsType(NT_LIST));
+            if (result) {
+                File f_read();
+                string newest = getNewestFile(result); # hopefully someone else does not create newer file...
+                f_read.open2(newest);
+                t.testAssertion("file content check", \f_read.read(), -1, new TestResultValue(struct2csv(m_content, m_separator)));
+                # unlink(newest);
+            }
+        }
+
+        /**
+            @return glob to inspect
+        */
+        string getGlob() {
+            return m_glob;
+        }
+
+        /**
+            @param files list of existing files
+            @return the newest file name
+        */
+        string getNewestFile(list<auto> files) {
+            code sort_code = int sub (ReadOnlyFile l, ReadOnlyFile r) {
+                return l.hstat().atime <=> r.hstat().atime;
+            };
+            return sort((map new ReadOnlyFile($1), files), sort_code).last().getFileName();
+        }
+
+        string struct2csv(list<auto> struct, *string separator = ';') {
+            if (!elements struct) {
+                return '';
+            }
+
+            return
+                join(separator, struct[0].keys())
+                + "\n"
+                + join("\n", (map join(separator, $1.values()), struct));
+        }
+    }
+
+    #! a check for database content
+    public class CheckDbTableRows inherits Action {
+        private {
+            AbstractDatasource m_ds;
+            string m_table;
+            #! expected row data
+            list<auto> m_exp;
+            hash<auto> m_select;
+            #! the actual rows selected
+            *list<auto> m_rows;
+
+            *string m_connstr;
+        }
+
+        /** @param dsname name of the datasource
+            @param tablename table name
+            @param selectHash a select hash specifying the rows added by the current interface and any other relevant parameters (orderby, etc)
+            @param expectedValues list of hashes of expected values that should be in selected rows
+          */
+        constructor(string dsname, string tablename, hash<auto> selectHash, softlist<auto> expectedValues) {
+            m_ds = omqclient.getDatasourcePool(dsname);
+            m_table = tablename;
+            m_select = selectHash;
+            m_exp  = expectedValues;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            check for db content
+          */
+        run(QorusInterfaceTest t) {
+            Table table(m_ds, m_table);
+            m_rows = table.selectRows(m_select);
+            # get a detailed assertion name to help with debugging
+            string aname = sprintf("expected row count: %s where: %y", m_table, m_select);
+            t.testAssertionValue(aname, m_rows.size(), m_exp.size());
+            foreach hash<auto> row in (m_rows) {
+                int rownum = $# + 1;
+                hash<auto> m_row = m_exp[$#];
+                # output one line for each row if possible, not for every column
+                foreach string column in (m_row.keyIterator()) {
+                    if (m_row{column} != row{column})
+                        t.testAssertionValue('checking ' + ordinal(rownum) + ' row ' + ordinal($# + 1) + ' column ' + m_table + '.' + column, row{column} ?? NOTHING, m_row{column});
+                }
+                t.testAssertionValue('checking table ' + m_table + ' row ' + rownum.toString(), 1, 1);
+            }
+        }
+
+        /**
+            @return table to be inspected
+        */
+        string getTable() {
+            return m_table;
+        }
+
+        /**
+            @return select hash
+        */
+        hash<auto> getSelectHash() {
+            return m_select;
+        }
+
+        #! returns the expected values
+        /**
+            @return expected values
+        */
+        list<auto> getData() {
+            return m_exp;
+        }
+
+        #! returns the rows actually selected in the last execution of the action
+        *list<auto> getRowData() {
+            return m_rows;
+        }
+    }
+
+    #! a check for database content
+    public class CheckDbTableRow inherits CheckDbTableRows {
+        /** @param dsname name of the datasource
+            @param tablename table name
+            @param selectHash a select hash specifying the rows added by the current interface and any other relevant parameters (orderby, etc)
+            @param expectedValues row hash of expected values that should be in the single selected row
+          */
+        constructor(string dsname, string tablename, hash<auto> selectHash, *hash<auto> expectedValues) : CheckDbTableRows(dsname, tablename, selectHash, expectedValues) {
+        }
+
+        /**
+            @return expected values
+          */
+        hash<auto> getData() {
+            return m_exp[0];
+        }
+
+        #! returns the row actually selected in the last execution of the action
+        *hash<auto> getRowData() {
+            return m_rows[0];
+        }
+    }
+
+    #! action class to create a file as an input for an interface
+    public class CreateFile inherits Action {
+        private {
+            string m_filename;
+        }
+
+        /** @param f file that should be created
+        */
+        constructor(string f) {
+            m_filename = f;
+        }
+
+        /**
+            @return file name
+        */
+        string getFile() {
+            return m_filename;
+        }
+
+        static createFile(QorusInterfaceTest t, string filename, string contents) {
+            # make sure parent dir exists
+            *list<auto> captures = regex_extract(filename, '\A(.*)/[^/]*\z');
+            if (captures) {
+                Dir d();
+                d.chdir(captures[0]);
+                if (!d.exists()) {
+                    d.create();
+                }
+            }
+
+            # write the file
+            unlink(filename);
+            File f();
+            f.open2(filename, O_WRONLY | O_CREAT);
+            f.write(contents);
+            f.close();
+        }
+    }
+
+    #! action class to create a text file as an input for an interface
+    public class CreateFileText inherits CreateFile {
+        private {
+            string m_content;
+        }
+
+        /** @param f file name
+            @param c content of the file
+        */
+        constructor(string f, string c) : CreateFile(f) {
+            m_content  = c;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks whether the file with specified content was created
+        */
+        run(QorusInterfaceTest t) {
+            createFile(t, m_filename, m_content);
+            t.testAssertion('created text file ' + m_filename, \is_readable(), m_filename);
+        }
+
+        /**
+            @return file content
+        */
+        string getContent() {
+            return m_content;
+        }
+    }
+
+    #! action class to create a csv file as an input for an interface
+    public class CreateFileCsv inherits CreateFile {
+        private {
+            list<auto> m_content;
+            string m_separator;
+        }
+
+        #! creates the action object based on the arguments
+        /** @param f file that should be created
+            @param c list of hashes specifying data in csv file
+            @param separator separator in csv file
+        */
+        constructor(string f, *list<auto> c, *string separator) : CreateFile(f) {
+            m_content   = c;
+            m_separator = separator ?? ';';
+        }
+
+        #! checks whether the csv file with specified content was created
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            createFile(t, m_filename, struct2csv(m_content, m_separator));
+            t.testAssertion('created csv file ' + m_filename, \is_readable(), m_filename);
+        }
+
+        #! returns a list of hashes representing the CSV lines
+        /**
+            @return list of csv lines in the form of hashes
+        */
+        list<auto> getContent() {
+            return m_content;
+        }
+
+        #! returns the separator string
+        /**
+            @return csv separator
+        */
+        string getSeparator() {
+            return m_separator;
+        }
+
+        string struct2csv(list<auto> struct, *string separator = ';') {
+            if (!elements struct) {
+                return '';
+            }
+
+            return
+                join(separator, struct[0].keys())
+                + "\n"
+                + join("\n", (map join(separator, $1.values()), struct));
+        }
+    }
+
+    #! sleep action
+    public class Sleep inherits Action {
+        private {
+            int m_sleep;
+        }
+
+        #! creates the sleep action object
+        /** @param secs the time in seconds
+        */
+        constructor(softint secs) {
+            m_sleep = secs;
+        }
+
+        #! sleeps for the given number of seconds
+        /** @param t QorusInterfaceTest test object
+
+            performs sleep action
+        */
+        run(QorusInterfaceTest t) {
+            t.testAssertion('waiting ' + m_sleep + 's for processing', bool sub () {return True;});
+            sleep(m_sleep);
+        }
+    }
+
+    #! Inserts one or more rows into a remote table in a remote Qorus instance
+    public class AbstractRemoteDbSqlUtilAction inherits Action {
+        private {
+            #! the sqlutil method or stream name
+            string m_action;
+            #! the @ref remoteconn "remote connection" name
+            string m_remote;
+            #! the name of the remote datasource
+            string m_ds;
+            #! stream options
+            *hash<auto> m_opts;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param action the name of the sqlutil method or stream
+            @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname the name of the remote datasource
+            @param opts stream options
+        */
+        constructor(string action, string remote, string dsname, *hash<auto> opts) {
+            m_action = action;
+            m_remote = remote;
+            m_ds = dsname;
+            m_opts = opts;
+        }
+    }
+
+    #! Selects one or more rows from a remote table in a remote Qorus instance
+    public class AbstractRemoteDbSelectAction inherits AbstractRemoteDbSqlUtilAction {
+        private {
+            #! the primary table name for the select call
+            string m_tableName;
+            #! the select hash for the remote select stream
+            hash<auto> m_sh;
+            #! row count
+            int m_rows = 0;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname the name of the remote datasource
+            @param tableName the primary table name for the select stream
+            @param sh the select hash for the select stream
+            @param opts select stream options; see @ref OMQ::DbRemoteReceive::constructor() for information; note that the \c "select" stream option is added automaticallty using the \a sh argument when opening the stream
+
+            @note data is always streamed in row format
+        */
+        constructor(string remote, string dsname, string tableName, hash<auto> sh, *hash<auto> opts) : AbstractRemoteDbSqlUtilAction("select", remote, dsname, opts - ("select", "block")) {
+            m_tableName = tableName;
+            m_sh = sh;
+        }
+
+        #! runs the test by streaming the remote data and calling checkRowImpl() for each row
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            # set up the remote stream
+            DbRemoteReceive recv(m_remote, m_ds, m_action, m_tableName, m_opts + ("select": m_sh, "block": 1));
+
+            hash<auto> my_ex;
+            while (*hash row = recv.getDataRows()[0]) {
+                ++m_rows;
+                try {
+                    if (!my_ex)
+                        checkRowImpl(t, row);
+                } catch (hash<ExceptionInfo> ex) {
+                    my_ex = ex;
+                }
+            }
+            if (my_ex)
+                throw my_ex.err, my_ex.desc, my_ex.arg;
+        }
+
+        #! called for each row received from the remote end; reimplement this in a subclass and implement assertions here
+        abstract checkRowImpl(QorusInterfaceTest t, hash<auto> row);
+    }
+
+    #! Selects data from a remote DB and compares to expected data
+    public class RemoteDbSelectAction inherits AbstractRemoteDbSelectAction {
+        private {
+            #! expected data
+            list<auto> m_data;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname the name of the remote datasource
+            @param tableName the primary table name for the select stream
+            @param sh the select hash for the select stream; make sure the order is the same as in the expected data
+            @param data the expected row data in the remote database; must be a list of hashes
+            @param opts select stream options; see @ref OMQ::DbRemoteReceive::constructor() for information; note that the \c "select" stream option is added automaticallty using the \a sh argument when opening the stream
+
+            @note data is always streamed in row format
+        */
+        constructor(string remote, string dsname, string tableName, hash<auto> sh, softlist<auto> data, *hash<auto> opts) : AbstractRemoteDbSelectAction(remote, dsname, tableName, sh, opts) {
+            m_data = data;
+        }
+
+        #! runs the test; comparing all rows and then the row count
+        run(QorusInterfaceTest t) {
+            AbstractRemoteDbSelectAction::run(t);
+            t.testAssertionValue("check row count", m_rows, m_data.size());
+        }
+
+        #! compares each row to the expected row values
+        checkRowImpl(QorusInterfaceTest t, hash<auto> row) {
+            if (m_rows > m_data.size()) {
+                t.testAssertionValue("check row count", m_rows, m_data.size());
+            }
+            hash<auto> expected_row = m_data[m_rows - 1];
+            t.testAssertionValue("check row value", row{expected_row.keys()}, expected_row);
+        }
+    }
+
+    #! Deletes one of more rows from a remote table in a remote Qorus instance
+    public class RemoteDbDeleteAction inherits AbstractRemoteDbSqlUtilAction {
+        private {
+            #! the table name for the delete call
+            string m_tableName;
+            #! the where clause for the remote delete call
+            hash<auto> m_where;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname the name of the remote datasource
+            @param tableName the table name for the delete call
+            @param cond the where clause for the remote delete call
+            @param opts stream options
+        */
+        constructor(string remote, string dsname, string tableName, hash<auto> cond, *hash<auto> opts) : AbstractRemoteDbSqlUtilAction("delete", remote, dsname, opts) {
+            m_where = cond;
+            m_tableName = tableName;
+        }
+
+        #! runs the test by deleting data from the remote table according to the where clause
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            on_error t.testAssertion(sprintf("DB row delete: remote: %s ds: %s table %s", m_remote, m_tableName, m_ds), bool sub () {return False;});
+
+            QorusSystemRestHelper rest = omqclient.getRemoteRest(m_remote);
+            int rows = rest.put("services/sqlutil/del?action=call", ("args": (m_ds, m_tableName, m_where)));
+            on_success t.testAssertion(sprintf("DB row delete: remote: %s ds: %s table: %s rows: %d", m_remote, m_tableName, m_ds, rows), bool sub () {return True;});
+        }
+    }
+
+    #! Inserts one or more rows into a remote table in a remote Qorus instance
+    public class RemoteDbRowSqlUtilAction inherits AbstractRemoteDbSqlUtilAction {
+        private {
+            #! list of hashes of table names + data; keys in each hash: \c "table", \c "data"
+            list<auto> m_data;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param action the name of the sqlutil stream
+            @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname the name of the remote datasource
+            @param data a list of hashes giving table names and data to push to the tables; in each hash the following keys are required:
+            - \c "table": the name of the target table
+            - \c "data": a list of hashes representing the row data to insert; keys are column names; values are literal values passed to @ref SqlUtil::AbstractTable::insert()
+            @param opts stream options
+        */
+        constructor(string action, string remote, string dsname, softlist<auto> data, *hash<auto> opts) : AbstractRemoteDbSqlUtilAction(action, remote, dsname, opts) {
+            m_data = data;
+        }
+
+        #! runs the test by streaming the input data to the remote database
+        /** @param t QorusInterfaceTest test object
+
+            runs the remote action with the input data
+        */
+        run(QorusInterfaceTest t) {
+            # get initial hash
+            hash<auto> ih = shift m_data;
+            # setup the remote send
+            DbRemoteSend sender(m_remote, m_ds, m_action, ih.table, m_opts);
+
+            on_success {
+                sender.commit();
+                t.testAssertion(sprintf("DB row %s: %s", m_action, m_ds), bool sub () {return True;});
+            }
+            on_error {
+                sender.disconnect();
+                t.testAssertion(sprintf("DB row %s: %s", m_action, m_ds), bool sub () {return False;});
+            }
+
+            sender.append(ih.data);
+
+            foreach hash<auto> h in (m_data) {
+                sender.openStream(m_action, h.table);
+                sender.append(h.data);
+            }
+        }
+    }
+
+    #! Inserts one or more rows into a remote table in a remote Qorus instance
+    public class InsertRemoteDbTableRows inherits RemoteDbRowSqlUtilAction {
+        #! Creates the object according to the arguments
+        /** @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname name of the datasource
+            @param tableName a table name
+            @param rows a list of hashes representing row data to insert; keys are column names; values are literal
+            values passed to @ref SqlUtil::AbstractTable::insert()
+            @param opts stream options
+        */
+        constructor(string remote, string dsname, string tableName, softlist<auto> rows, *hash<auto> opts) : RemoteDbRowSqlUtilAction("insert", remote, dsname, ("table": tableName, "data": rows), opts) {
+        }
+    }
+
+    #! Upserts (ie performs an SQL merge operation) one or more rows into a remote table in a remote Qorus instance
+    public class UpsertRemoteDbTableRows inherits RemoteDbRowSqlUtilAction {
+        #! Creates the object according to the arguments
+        /** @param remote the name of the @ref remoteconn "remote connection"
+            @param dsname name of the datasource
+            @param tableName a table name
+            @param rows a list of hashes representing row data to upsert; keys are column names; values are literal
+            values passed to @ref SqlUtil::AbstractTable::upsert()
+            @param opts stream options
+        */
+        constructor(string remote, string dsname, string tableName, softlist<auto> rows, *hash<auto> opts) : RemoteDbRowSqlUtilAction("upsert", remote, dsname, ("table": tableName, "data": rows), opts) {
+        }
+    }
+
+    #! Inserts one or more rows into DB table
+    public class InsertDbTableRows inherits Action {
+        private {
+            AbstractDatasource m_ds;
+            string m_tableName;
+            list<auto> m_data;
+        }
+
+        /** @param dsname name of the datasource
+            @param tableName a table name
+            @param rows a list of hashes representing row data to insert; keys are column names; values are literal values passed to @ref SqlUtil::AbstractTable::insert()
+            */
+        constructor(string dsname, string tableName, softlist<auto> rows) {
+            m_tableName = tableName;
+            m_ds = omqclient.getDatasourcePool(dsname);
+            m_data = rows;
+        }
+
+        #! runs the test by inserting data into the database
+        /** @param t QorusInterfaceTest test object
+
+            checks whether the row was inserted
+        */
+        run(QorusInterfaceTest t) {
+            on_success {
+                m_ds.commit();
+                t.testAssertion(sprintf("DB row insert: %s", m_tableName), bool sub () {return True;});
+            }
+            on_error {
+                m_ds.rollback();
+                t.testAssertion(sprintf("DB row insert: %s", m_tableName), bool sub () {return False;});
+            }
+
+            Table table(m_ds, m_tableName);
+            map table.insert($1), m_data;
+        }
+    }
+
+    #! Insert a row into DB table
+    public class InsertDbTableRow inherits InsertDbTableRows {
+        /** @param dsname name of the datasource
+            @param tableName a table name
+            @param row a data in a hash form. Keys are column names.
+        */
+        constructor(string dsname, string tableName, hash<auto> row) : InsertDbTableRows(dsname, tableName, row) {
+        }
+    }
+
+    #! Deletes one or more rows from a DB table
+    public class DeleteDbTableData inherits Action {
+        private {
+            AbstractDatasource m_ds;
+            string m_tableName;
+            hash<auto> m_where;
+        }
+
+        #! Creates the object according to the arguments
+        /** @param dsname name of the datasource
+            @param tableName a table name
+            @param w a where clause. Keys are column names.
+        */
+        constructor(string dsname, string tableName, hash<auto> w) {
+            m_tableName = tableName;
+            m_ds = omqclient.getDatasourcePool(dsname);
+            m_where = w;
+        }
+
+        #! runs the test by deleting one or more rows from the table using the arguments passed to the constructor()
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            on_success {
+                m_ds.commit();
+                t.testAssertion(sprintf("DB row delete: %s", m_tableName), bool sub () {return True;});
+            }
+            on_error {
+                m_ds.rollback();
+                t.testAssertion(sprintf("DB row delete: %s", m_tableName), bool sub () {return False;});
+            }
+
+            Table table(m_ds, m_tableName);
+            table.del(m_where);
+        }
+    }
+
+    #! clear given table. Data are truncated/deleted completely.
+    public class TruncateTable inherits Action {
+        private {
+            AbstractDatasource m_ds;
+            string m_tableName;
+        }
+
+        /** @param dsname name of the datasource listed
+            @param tableName a table name
+        */
+        constructor(string dsname, string tableName) {
+            m_tableName = tableName;
+            m_ds = omqclient.getDatasourcePool(dsname);
+        }
+
+        #! deletes the data in the table given in the constructor
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            on_success {
+                m_ds.commit();
+                t.testAssertion(sprintf("DB row truncate: %s", m_tableName), bool sub () {return True;});
+            }
+            on_error {
+                m_ds.rollback();
+                t.testAssertion(sprintf("DB row truncate: %s", m_tableName), bool sub () {return False;});
+            }
+
+            Table table(m_ds, m_tableName);
+            table.truncate();
+        }
+
+    }
+
+    #! Call any of Qorus services
+    public class CallService inherits Action {
+        private {
+            string m_name;
+            string m_method;
+            *list<auto> m_args;
+            auto m_result;
+        }
+
+        #! sets up the service method call
+        /** @param call either:
+            - a service identifier string in a \"service.method\"
+            - a service name; in this case (if the argument has no \c "." character in it), the following argument
+              must be a string method name
+
+            Any additional arguments are used as a service method arguments.
+
+            @code{.py}
+            # call system service method fs.ls("/tmp")
+            CallService call("fs.ls", "/tmp");
+            # this form is equivalent to the above
+            CallService call("fs", "ls", "/tmp");
+            @endcode
+
+            @note if the \a call argument is given with three elements, the first element is assumed to be a service
+            type string and will be ignored (ex: \c "system.fs.ls")
+        */
+        constructor(string call) {
+            list<auto> m = call.split(".");
+            if (m.size() == 1) {
+                if (argv[0].typeCode() != NT_STRING) {
+                    throw "INPUT-CALL-SERVICE-ERROR", sprintf("a string method name must follow the service name "
+                        "(%y) if the first argument does not contain the method name in the format "
+                        "\"service.method\" (method: %y)", call, argv[0]);
+                }
+                m_name = call;
+                m_method = shift argv;
+            } else {
+                # ignore first element (service type) for backwards compatibility if there are 3 elements
+                if (m.size() == 3) {
+                    shift m;
+                } else if (m.size() != 2) {
+                    throw "INPUT-CALL-SERVICE-ERROR", sprintf("call argument must contain 2 dot separated parts; example: "
+                        "\"arch.info\"; got: %y", call);
+                }
+                m_name = m[0];
+                m_method = m[1];
+            }
+
+            m_args = argv;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks if the service call was performed
+        */
+        run(QorusInterfaceTest t) {
+            on_success {
+                t.testAssertion(sprintf("call service: %s.%s", m_name, m_method), bool sub () {return True;});
+            }
+            on_error {
+                t.testAssertion(sprintf("call service: %s.%s", m_name, m_method), bool sub () {return False;});
+            }
+
+            m_result = qrest.put("services/" + m_name + "/" + m_method + "/call", {"args": m_args});
+        }
+
+        #! Returns anything that the service method returned in the run() call
+        auto getResult() {
+            return m_result;
+        }
+    }
+
+    #! This class will wait for a workflow order to reach a final status (COMPLETE, ERROR, or CANCELED)
+    public class WaitForWfiid inherits Action {
+        private {
+            #! the workflow_instanceid to check
+            int m_wfiid;
+            #! the timeout
+            date m_timeout;
+
+            #! Expected result of the run.
+            AbstractTestResult m_expectedResult;
+
+            #! event mutex
+            Mutex m_m();
+            #! event condition
+            Condition m_cond();
+
+            #! REST connection
+            QorusSystemRestHelper m_rest;
+
+            #! final workflow statuses
+            const FinalStatuses = {
+                OMQ::StatComplete: True,
+                OMQ::StatError: True,
+                OMQ::StatCanceled: True,
+            };
+        }
+
+        #! create the object according to the arguments
+        /** @param wfiid the workflow order instance ID to wait for
+            @param expectedResult an @ref QUnit::AbstractTestResult "AbstractTestResult" object; the default value is @ref QUnit::TestResultSuccess "TestResultSuccess" which means that the test succeeds when the order status is \c COMPLETE
+            @param timeout_ms the timeout in milliseconds; if the order does not get a final status in this time period, then the test will fail
+            @param rest the REST connection object to the Qorus server
+
+            To pass if the order status is \c COMPLETE in the timeout given, then use @ref QUnit::TestResultSuccess "TestResultSuccess" (the default value) for the \a expectedResult parameter.
+            To pass if the order status is \c ERROR in the timeout given, then use @ref QUnit::TestResultExceptionType "TestResultExceptionType" for the \a expectedResult parameter to match the \c "WORKFLOW-ERROR" exception, which is thrown when the order gets an \c ERROR status within the timeout period
+            To pass if the order status is \c CANCELED in the timeout given, then use @ref QUnit::TestResultExceptionType "TestResultExceptionType" for the \a expectedResult parameter to match the \c "QORUS-WORKFLOW-TEST-EXCEPTION" exception, which is thrown when the order gets a \c CANCELED status within the timeout period
+        */
+        constructor(softint wfiid, *AbstractTestResult expectedResult = new TestResultSuccess(), timeout timeout_ms = 60s, QorusSystemRestHelper rest = qrest) {
+            m_wfiid = wfiid;
+            m_timeout = milliseconds(timeout_ms);
+            m_rest = rest;
+            m_expectedResult = expectedResult;
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks (and waits until) the given WFIID gets some "final" status
+        */
+        run(QorusInterfaceTest t) {
+            date start = now_us();
+
+            #background eventThread();
+
+            *hash<auto> res;
+
+            while (True) {
+                res = m_rest.get("/orders/" + m_wfiid);
+                if (!res) {
+                    t.testAssertion(sprintf("WFIID %d exists", m_wfiid), bool sub () {return False;});
+                    return;
+                }
+
+                if (FinalStatuses{res.workflowstatus})
+                    break;
+
+                sleep(500ms);
+                date d = now_us() - start;
+                if (d > m_timeout) {
+                    t.testAssertion(sprintf("waiting for WFIID %d timed out after: %y", m_wfiid, d), bool sub () {return False;});
+                    return;
+                }
+            }
+
+            code check = bool sub () {
+                switch (res.workflowstatus) {
+                    case OMQ::StatComplete: {
+                        return True;
+                    }
+                    case OMQ::StatError: {
+                        *list<auto> errors = res.ErrorInstances;
+                        hash<auto> lastError = errors[errors.size() -1] ?? {
+                            "error": "WORKFLOW-ERROR",
+                            "info": "one or more subworkflows failed; see subworkflow orders for error details",
+                        };
+
+                        throw "WORKFLOW-ERROR", sprintf("%s: %s", lastError.error, lastError.info);
+                    }
+
+                    case OMQ::StatCanceled: {
+                        throw "QORUS-WORKFLOW-TEST-EXCEPTION", sprintf("WFIID %d was canceled", m_wfiid);
+                    }
+                    default:
+                        return False;
+                }
+            };
+
+            t.testAssertion(sprintf("WFIID %d finished", m_wfiid), check, NOTHING, m_expectedResult);
+        }
+    }
+
+    #! ensure a workflow is running
+    public class CheckRunningWorkflow inherits Action {
+        private {
+            #! the URI path of the workflow to check
+            string m_path;
+            #! a descriptive string for the workflow
+            string m_desc;
+
+            #! REST connection
+            QorusSystemRestHelper m_rest;
+        }
+
+        #! create the object according to the arguments
+        /** @param name the workflow name
+            @param version the optional workflow version string
+            @param timeout_ms the timeout to wait if the workflow is running in milliseconds
+            @param rest the REST connection object to the Qorus server
+        */
+        constructor(string name, *string version, timeout timeout_ms = 60s, QorusSystemRestHelper rest = qrest) {
+            m_path = sprintf("workflows/%s", name);
+            m_desc = sprintf("workflow %s", name);
+            if (exists version) {
+                m_path += sprintf(":%s", version);
+                m_desc += sprintf(" v%s", version);
+            }
+            m_rest = rest;
+            m_rest.setTimeout(timeout_ms);
+        }
+
+        /** @param t QorusInterfaceTest test object
+
+            checks if the given workflow is running
+        */
+        run(QorusInterfaceTest t) {
+            try {
+                *int cnt = m_rest.get(m_path + "/exec_count");
+                t.testAssertion(sprintf("workflow %s is running", m_desc), \boolean(), cnt);
+            } catch (hash<ExceptionInfo> ex) {
+            }
+        }
+    }
+
+    #! Creates and executes a synchronous workflow order
+    public class ExecSynchronousOrder inherits Action {
+        private {
+            hash<auto> m_orderdata;
+            string m_expected_status;
+            *hash<auto> m_expected_dd;
+            hash<auto> m_result;
+        }
+
+        #! creates the action with the order details
+        /** @param orderdata order details with the following keys:
+            - \c "name": (required) the name of the workflow order to create and execute synchronously
+            - \c "staticdata": (optional hash) the static data for the order; either this key or \c "external_order_instanceid" is required
+            - \c "external_order_instanceid: (optional string) the external order instance ID for the workflow data; either this key or \c "staticdata" is required
+            - \c "dynamicdata": (optional hash) the initial dynamic data for the order
+            - \c "orderkeys": (optional hash) a hash of order keys for the order
+            - \c "priority": (optional int) the order priority (default @ref OMQ::DefaultOrderPriority) from 0 - 999; priority 0 is the highest; 999 is the lowest
+            - \c "parent_workflow_instanceid": (optional int) a loosely-coupled workflow that will be marked as the parent of this workflow
+            - \c "options": (hash) an optional hash of option names and values; if any options are not valid for the workflow, then an exception is raised and the synchronous workflow execution instance is not started
+            @param expected_status the expected workflow order status after execution (see @ref StatusDescriptions for possible values)
+            @param expected_dd the expected dynamic data after execution; only keys given in the hash will be compared
+        */
+        constructor(hash<auto> orderdata, string expected_status = OMQ::StatComplete, *hash<auto> expected_dd) {
+            if (!exists orderdata.name)
+                throw "EXEC-SYNCHRONOUS-ORDER-ERROR", sprintf("missing \"name\" key in order data giving the workflow name; got: %y", orderdata);
+            m_orderdata = orderdata;
+            m_expected_status = expected_status;
+            m_expected_dd = expected_dd;
+        }
+
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            m_result = qrest.post("/workflows/" + m_orderdata.name + "/execSynchronous", m_orderdata - "name");
+            t.testAssertionValue("exec order " + m_result.workflow_instanceid + " status", m_result.status, m_expected_status);
+            foreach hash h in (m_expected_dd.pairIterator())
+                t.testAssertionValue("exec order " + m_result.workflow_instanceid + " dd key " + h.key, m_result.dynamicdata{h.key}, h.value);
+        }
+
+        hash<auto> result() {
+            return m_result;
+        }
+    }
+
+    #! Creates a workflow order
+    public class CreateOrder inherits Action {
+        private {
+            string m_name;
+            hash<auto> m_staticdata;
+            *hash<auto> m_create_opts;
+            softint m_wfiid;
+        }
+
+        #! creates the action with the workflow name, static data, and other optional information
+        /** @param name the workflow name for the order
+            @param staticdata the workflow order's static data
+            @param create_opts any other options (except staticdata) to be used when creating the workflow order
+        */
+        constructor(string name, hash<auto> staticdata, *hash<auto> create_opts) {
+            m_name = name;
+            m_staticdata = staticdata;
+            m_create_opts = create_opts - "staticdata";
+        }
+
+        /** @param t QorusInterfaceTest test object
+        */
+        run(QorusInterfaceTest t) {
+            *hash<auto> res = qrest.post("/workflows/" + m_name + '/createOrder', ("staticdata": m_staticdata) + m_create_opts);
+            m_wfiid = res.workflow_instanceid;
+            t.testAssertion('instance for workflow ' + m_name + ' created (see id=' + res.workflow_instanceid + ')', \regex(), (res.workflow_instanceid, '\d+'));
+        }
+
+        #! returns the workflow instance ID created
+        int wfiid() {
+            return m_wfiid;
+        }
+    }
+
+    #! Unblocks a workflow order
+    public class UnblockOrder inherits Action {
+        private {
+            int m_wfiid;
+            string m_status;
+        }
+
+        #! creates the action with the workflow instance ID
+        /** @param wfiid the workflow instance ID
+            @param status the expected status after unblocking
+        */
+        constructor(int wfiid, string status = OMQ::StatReady) {
+            m_wfiid = wfiid;
+            m_status = status;
+        }
+
+        /** @param t QorusInterfaceTest test object
+         */
+        run(QorusInterfaceTest t) {
+            *hash<auto> res = qrest.put("/orders/" + m_wfiid + "/unblock");
+            t.assertEq(m_status, res.workflow_status);
+        }
+    }
+
+    #! run the job
+    public class RunJob inherits Action {
+        private {
+            #! the result of running the job
+            hash<auto> m_jobresult;
+        }
+
+        #! creates the object with no parameters
+        constructor() {
+        }
+
+        #! runs the job and gets the job result information hash
+        /** @param t QorusInterfaceTest test object
+         */
+        run(QorusInterfaceTest t) {
+            *hash<auto> h = cast<QorusJobTest>(t).run();
+
+            if (h)
+                m_jobresult = h;
+
+            # ensure that the job was run
+            t.testAssertion(getDesc("run"), \type(), h.job_instanceid, new TestResultValue(Type::Int));
+        }
+
+        #! returns a hash of job instance information created by the run() method
+        hash<auto> getJobResult() {
+            return m_jobresult;
+        }
+
+        #! get assertion description
+        private string getDesc(string assert) {
+            return sprintf("job %s (jiid %d)", assert, m_jobresult.job_instanceid);
+        }
+    }
+
+    #! runs a job and compares the result status and optionally job instance information
+    public class RunJobResult inherits RunJob {
+        private {
+            string m_expected_status;
+            *hash<auto> m_expected_info;
+        }
+
+        #! creates the object with the expected status value and an optional info hash
+        /** @param expected_status the expected status of the job instance
+            @param expected_info the optional expected info hash of the job instance
+        */
+        constructor(string expected_status, *hash<auto> expected_info) {
+            m_expected_status = expected_status;
+            m_expected_info = expected_info;
+        }
+
+        #! runs the job and gets the job result information hash; tests for the expected status and any job information given in the constructor
+        /** @param t QorusInterfaceTest test object
+         */
+        run(QorusJobTest t) {
+            RunJob::run(t);
+            t.testAssertion(getDesc("status"), string sub () { return m_jobresult.status; }, NOTHING, new TestResultValue(m_expected_status));
+
+            if (!m_expected_info)
+                return;
+
+            # get full job info
+            hash<auto> jh = t.getJobResultHash(m_jobresult.job_instanceid);
+
+            # check the info hash if any given in the constructor
+            t.testAssertion(getDesc("info"), *hash<auto> sub () {return jh.info{m_expected_info.keys()};}, NOTHING, new TestResultValue(m_expected_info));
+        }
+    }
+
+    #! Invokes a SOAP operation and optionally checks the response
+    /**
+        @par If the response is not known in advance:
+        @code{.py}
+        exec(new CallSoapMethod("wdsl file name", "service url", "SOAP operation name", ("arg1": "value")).expectResponse(("retVal1": 8)));
+        @endcode
+
+        @par If the response is not known in advance:
+        @code{.py}
+        any response = exec(new CallSoapMethod("wdsl file name", "service url", "SOAP operation name", ("arg1": "value"))).getResponse();
+        # process the response
+        @endcode
+    */
+    public class CallSoapMethod inherits Action {
+        private {
+            SoapClient soapClient;
+            string operation;
+            auto args;
+            bool expectedResponseSet;
+            auto expectedResponse;
+            auto actualResponse;
+            hash<auto> info;
+        }
+
+        #! Creates the action
+        /** @param soapClient the SoapClient instance to use for invoking the operation
+            @param operation the name of the SOAP operation to invoke
+            @param args the arguments to the operation
+         */
+        constructor(SoapClient soapClient, string operation, auto args) {
+            self.soapClient = soapClient;
+            self.operation = operation;
+            self.args = args;
+            expectedResponseSet = False;
+        }
+
+        #! Creates the action
+        /**
+            @param wsdl the name of the WSDL file
+            @param url the URL of the server
+            @param operation the name of the SOAP operation to invoke
+            @param args the arguments to the operation
+         */
+        constructor(string wsdl, string url, string operation, auto args) {
+            soapClient = new SoapClient(("wsdl": wsdl, "url": url));
+            self.operation = operation;
+            self.args = args;
+            expectedResponseSet = False;
+        }
+
+        #! Sets the expected response to be checked by run()
+        /** @param expectedResponse the expected response
+
+            @return self for chaining
+         */
+        CallSoapMethod expectResponse(auto expectedResponse) {
+            self.expectedResponse = expectedResponse;
+            expectedResponseSet = True;
+            return self;
+        }
+
+        #! Invokes the SOAP operation specified in constructor and optionally checks the response if the expectResponse() method was called.
+        /**
+            @param test the QorusInterfaceTest executing this action
+        */
+        run(QorusInterfaceTest test) {
+            actualResponse = soapClient.call(operation, args, \info);
+            if (expectedResponseSet) {
+                test.assertEq(expectedResponse, actualResponse);
+            }
+        }
+
+        #! Returns the actual value returned by the SOAP operation.
+        /**
+            @return the actual value returned by the SOAP operation
+         */
+        auto getResponse() {
+            return actualResponse;
+        }
+
+        #! Returns a hash of technical information about the SOAP call (raw message info and headers)
+        /**
+            @return a hash of technical information about the SOAP call (raw message info and headers)
+        */
+        hash<auto> getInfo() {
+            return info;
+        }
+    }
+
+    #! Finds a workflow order using a key and value. Fails the test if there is more or less than 1 order.
+    /** @par Example:
+        @code{.py}
+FindOrderByKey order = exec(new FindOrderByKey("wf name", "1.0", "my_key", "value"));
+# use order.getStaticData(), order.getInstanceId() etc.
+        @endcode
+
+        @par For finding orders on a remote Qorus instance:
+        @code{.py}
+FindOrderByKey order = exec(new FindOrderByKey("wf name", "1.0", "my_key", "value").on("qorus connection name"));
+# use order.getStaticData(), order.getInstanceId() etc.
+        @endcode
+    */
+    public class FindOrderByKey inherits Action {
+        private {
+            QorusSystemRestHelper restHelper;
+            string workflowName;
+            string workflowVersion;
+            string keyName;
+            auto value;
+            hash<auto> result;
+        }
+
+        #! Creates the action with given parameters.
+        /**
+            @param workflowName the name of the workflow
+            @param workflowVersion the version of the workflow
+            @param keyName the name of the key
+            @param value the value of the key to find
+         */
+        constructor(string workflowName, string workflowVersion, string keyName, softstring value) {
+            restHelper = qrest;
+            self.workflowName = workflowName;
+            self.workflowVersion = workflowVersion;
+            self.keyName = keyName;
+            self.value = value;
+        }
+
+        #! Changes the REST helper to be used to find the workflow order.
+        /** @param restHelper the REST helper to use
+            @return self for chaining
+         */
+        FindOrderByKey on(QorusSystemRestHelper restHelper) {
+            self.restHelper = restHelper;
+            return self;
+        }
+
+        #! Changes the REST helper to be used to find the workflow order
+        /**
+            @param connectionName the name of a remote Qorus connection
+            @return self for chaining
+        */
+        FindOrderByKey on(string connectionName) {
+            self.restHelper = get_remote_rest_connection(connectionName);
+            return self;
+        }
+
+        #! Executes the action by calling info.getOrderInfoFromKey()
+        /** @param test the QorusInterfaceTest executing this action
+        */
+        run(QorusInterfaceTest test) {
+            list<auto> orders = restHelper.put("services/info/getOrderInfoFromKey?action=call",
+                    ("args": (workflowName, workflowVersion, keyName, value)));
+            if (!orders)
+                throw "TEST-ERROR", sprintf("Workflow order with key %s = %y not found", keyName, value);
+
+            if (elements orders != 1) {
+                throw "TEST-ERROR", sprintf("Multiple workflow orders with key %s = %y found: instance ids: %y",
+                        keyName, value, map $1.workflow_instanceid, orders);
+            }
+            result = orders[0];
+        }
+
+        #! Returns the workflow instance id
+        /** @return the workflow instance id, if any was found, otherwise @ref nothing
+         */
+        *softint getInstanceId() {
+            return result.workflow_instanceid;
+        }
+
+        #! Returns static data
+        /** @return the static data, if any was found, otherwise @ref nothing
+         */
+        *hash<auto> getStaticData() {
+            return result.staticdata;
+        }
+    }
+
+    #! class that outputs workflow log data to the console; meant to support test execution
+    /** @par Example:
+        @code
+# use the "m_rest_pfx" member to initialize the log streamer
+WorkflowLogHelper wlh(m_rest_pfx, m_options.verbose > 1);
+        @endcode
+    */
+    public class WorkflowLogHelper {
+        public {}
+
+        private:internal {
+            bool exit;
+        }
+
+        #! creates the object with the given rest prefix and log flag
+        /** @par Example:
+            @code
+# use the "m_rest_pfx" member to initialize the log streamer
+WorkflowLogHelper wlh(m_rest_pfx, m_options.verbose > 1);
+            @endcode
+
+            @param rest_pfx the REST prefix for the workflow
+            @param log a flag if consule logging should be performed
+        */
+        constructor(string rest_pfx, bool log) {
+            if (!log) {
+                return;
+            }
+
+            # get wfid
+            int wfid = qrest.get(rest_pfx + "/workflowid");
+            string url = qrest.getURL();
+            url =~ s/\/api.*/\//;#/;
+            url += sprintf("log/workflows/%d", wfid);
+            url =~ s/^http/ws/i;
+            printf("streaming log messages from url: %y\n", url);
+            # issue #2018: must get proxy URL before starting background thread to avoid a potential deadlock
+            *string proxy_url = qrest.getProxyURL();
+            background logThread(rest_pfx, url, proxy_url);
+        }
+
+        #! stops the streaming operation
+        stop() {
+            exit = True;
+        }
+
+        #! the internal log thread method
+        private:internal logThread(string rest_pfx, string url, *string proxy_url) {
+            date now = now_us();
+            bool show;
+            code event = sub (*string str) {
+                if (!str) {
+                    return;
+                }
+
+                if (!show) {
+                    # ignore historical messages
+                    if (str =~ /^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}/) {
+                        string ds = str.substr(0, 26);
+                        date ts = date(ds);
+                        #printf("ds: %y ts: %y now: %y\n", ds, ts, now);
+                        if (ts > now) {
+                            show = True;
+                        } else {
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
+                }
+
+                print(str);
+                if (str =~ /exiting with status/) {
+                    exit = True;
+                }
+            };
+
+            WebSocketClient ws(event, ("url": url, "proxy": proxy_url));
+            ws.connect();
+
+            while (!exit) {
+                if (!ws.isOpen()) {
+                    stdout.printf("server closed connection (URL: %s)\n", url);
+                    return;
+                }
+                usleep(100ms);
+            }
+            ws.disconnect();
+            printf("stopped log streaming on user request (URL: %s)\n", url);
+        }
+    }
+}

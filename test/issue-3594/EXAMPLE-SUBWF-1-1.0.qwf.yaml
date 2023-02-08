@@ -1,0 +1,17 @@
+# This is a generated file, don't edit!
+type: workflow
+name: EXAMPLE-SUBWF-1
+desc: Example subworkflow 1
+version: "1.0"
+autostart: 0
+steps:
+    [
+        "ExampleSub1Step1:1.0",
+        [
+            "ExampleSub1Step2:1.0",
+            "ExampleSub1Step3:1.0",
+            "ExampleSub1Step4:1.0",
+            "ExampleSub1Step5:1.0"
+        ],
+        "ExampleSub1Step6:1.0"
+    ]

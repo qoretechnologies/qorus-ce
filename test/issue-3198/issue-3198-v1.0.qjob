@@ -1,0 +1,28 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# name: issue-3198
+# version: 1.0
+# desc: issue 3198 test job
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# class-name: Issue3198Job
+# remote: true
+# active: false
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# mappers: issue-3198:1.0
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3198Job inherits QorusJob {
+    run() {
+        hash<auto> output = getMapper("issue-3198").mapData({"input": "test"});
+        saveInfo(output);
+        logInfo("output: %y", output);
+    }
+}
+# END

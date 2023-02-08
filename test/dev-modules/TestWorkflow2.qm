@@ -1,0 +1,32 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file TestWorkflow.qm Qorus Integration Engine test module
+
+/*  TestWorkflow.qm Copyright (C) 2012 - 2022 Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module TestWorkflow2 {
+    version = "1.0";
+    desc = "workflow dev extension test module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+public namespace TestWorkflow2 {
+public class Test2NormalStep inherits QorusNormalStep {
+    final primary() {
+        logInfo("running %s::primary()", self.className());
+        updateDynamicData({"test": True});
+
+        primaryImpl();
+    }
+
+    abstract primaryImpl();
+}
+}

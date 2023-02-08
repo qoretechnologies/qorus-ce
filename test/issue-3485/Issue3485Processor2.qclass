@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Processor2 inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto rec) {
+        UserApi::logInfo("Issue3485Processor2 was called: %y", rec);
+        hash<auto> new_rec = (map {"Issue3485Processor2-" + $1.key: $1.value}, rec.pairIterator());
+        enqueue(new_rec);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

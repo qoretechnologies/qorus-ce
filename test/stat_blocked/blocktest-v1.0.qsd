@@ -1,0 +1,57 @@
+# service: blocktest
+# serviceversion: 1.0
+# servicedesc: Qorus BLOCKED test service
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: contains service functions
+
+sub init() {
+}
+# END
+
+# desc: stops the service
+sub stop() {
+}
+# END
+
+# desc: creates test orders, params: number_of_orders
+# write: true
+sub createOrders($num, string $status=OMQ::StatReady) {
+    if (!$num)
+        throw "CREATE-ORDER-ERROR", "missing number of orders";
+
+    for (my $i = 0; $i < $num; ++$i) {
+        UserApi::createOrder("blocktest", "1.0", ( "staticdata" : ("started" : now()) ), $status);
+    }
+}
+# END
+
+# desc: starts workflow and sets options
+# write: true
+sub startWorkflows($num) {
+    if ($num < 0)
+        throw "DEMO-ERROR", sprintf("number of workflow instances must be >= 0 (value given: %d)", $num);
+
+    while ($num--) {
+        UserApi::callNetworkApi("omq.system.start-workflow", {
+            "name": "blocktest",
+            "version": "1.0",
+        });
+    }
+}
+# END
+
+# desc: creates test orders, starts the demo workflows, and sets retry parameters, params: [num_orders = 50, num_arraytest = 1, num_simpletest = 1, retry = 10, async_retry = 30, set_fast_options = False]
+# write: true
+sub startDemo($num) {
+    if ($num < 0)
+        throw "DEMO-ERROR", sprintf("number of demo orders must be >= 0 (value given: %d)", $num);
+
+    startWorkflows($num);
+    createOrders($num);
+}
+# END

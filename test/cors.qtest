@@ -1,0 +1,86 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class CorsTest
+
+class CorsTest inherits Test {
+    private {
+        const CorsAllowOrigin = ("http://localhost:12345",);
+        const CorsAllowHeaders = ("Test-Header1", "Test-Header2",);
+        const CorsAllowMethods = ("GET", "PUT", "OPTIONS");
+        const CorsAllowCredentials = False;
+        const CorsMaxAge = 600;
+    }
+
+    constructor() : Test("CorsTest", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+
+        addTestCase("cors test", \corsTest());
+
+        set_return_value(main());
+    }
+
+    corsTest() {
+        bool cors_enabled = qrest.get("system/options/cors-enable/value");
+        *softlist<string> cors_origin = qrest.get("system/options/cors-allow-origin/value");
+        *softlist<string> cors_methods = qrest.get("system/options/cors-allow-methods/value");
+        *softlist<string> cors_headers = qrest.get("system/options/cors-allow-headers/value");
+        int cors_max_age = qrest.get("system/options/cors-max-age/value");
+        bool cors_allow_credentials = qrest.get("system/options/cors-allow-credentials/value");
+
+        if (!cors_enabled) {
+            qrest.put("system/options/cors-enable/set", {"value": True});
+        }
+        on_exit if (!cors_enabled) {
+            qrest.put("system/options/cors-enable/set", {"value": False});
+        }
+
+        # set test values
+        qrest.put("system/options/cors-allow-origin/set", {"value": CorsAllowOrigin});
+        qrest.put("system/options/cors-allow-methods/set", {"value": CorsAllowMethods});
+        qrest.put("system/options/cors-allow-headers/set", {"value": CorsAllowHeaders});
+        qrest.put("system/options/cors-max-age/set", {"value": CorsMaxAge});
+        qrest.put("system/options/cors-allow-credentials/set", {"value": CorsAllowCredentials});
+
+        on_exit {
+            qrest.put("system/options/cors-allow-origin/set", {"value": cors_origin});
+            qrest.put("system/options/cors-allow-methods/set", {"value": cors_methods});
+            qrest.put("system/options/cors-allow-headers/set", {"value": cors_headers});
+            qrest.put("system/options/cors-max-age/set", {"value": cors_max_age});
+            qrest.put("system/options/cors-allow-credentials/set", {"value": cors_allow_credentials});
+        }
+
+        hash<auto> hdr = {
+            "Origin": "http://localhost:12345"
+        };
+
+        hash<auto> info;
+        on_error printf("info: %N\n", info);
+        hash<auto> resp = qrest.doRequest("OPTIONS", "workflows", NOTHING, \info, NOTHING, hdr);
+        on_error printf("%N\n", resp);
+        assertEq(CorsAllowOrigin[0], resp."access-control-allow-origin");
+        assertEq(CorsAllowHeaders.join(", "), resp."access-control-allow-headers");
+        assertEq(CorsAllowMethods.join(", "), resp."access-control-allow-methods");
+        assertEq(CorsMaxAge.toString(), resp."access-control-max-age");
+        assertNothing(resp."access-control-allow-credentials");
+
+        qrest.put("system/options/cors-allow-credentials/set", {"value": True});
+        resp = qrest.doRequest("OPTIONS", "workflows", NOTHING, \info, NOTHING, hdr);
+        assertEq("true", resp."access-control-allow-credentials");
+
+        resp = qrest.doRequest("GET", "workflows?short", NOTHING, \info, NOTHING, hdr);
+        assertEq(200, info."response-headers".status_code);
+        assertEq(CorsAllowOrigin[0], resp."access-control-allow-origin");
+        assertEq("true", resp."access-control-allow-credentials");
+        assertNothing(resp."access-control-allow-headers");
+        assertNothing(resp."access-control-allow-methods");
+        assertNothing(resp."access-control-max-age");
+    }
+}

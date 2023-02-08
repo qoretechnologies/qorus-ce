@@ -1,0 +1,35 @@
+#! /usr/bin/env qore
+
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test file: BASICS-SIMPLE-WORKFLOW
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusWorkflowTest {
+    private {
+        const WORKFLOW_NAME = "BASICS-SIMPLE-WORKFLOW";
+
+        const OPTIONS = Opts + {
+            "test": "t,test=s"
+        };
+    }
+
+    constructor() : QorusWorkflowTest(WORKFLOW_NAME, "1.0", \ARGV, OPTIONS) {
+        addTestCase(WORKFLOW_NAME, \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        printf("%N\n", m_options);
+        int wfiid = exec(new CreateOrder(WORKFLOW_NAME, {"options": m_options,})).wfiid();
+        exec(new WaitForWfiid(wfiid));
+    }
+}

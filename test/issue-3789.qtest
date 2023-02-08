@@ -1,0 +1,36 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue3789
+
+class QorusIssue3789 inherits Test {
+    constructor() : Test("issue-3789", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # start a listener on a random port
+        hash<auto> info = qrest.post("system/listeners", {"bind": "127.0.0.1:0"})[0];
+        on_error qrest.del("system/listeners/" + info.name);
+
+        QorusSystemRestHelper qrest2({
+            "url": "http://127.0.0.1:" + info.port,
+        });
+
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", \qrest2.del(), "system/listeners/" + info.name);
+    }
+}

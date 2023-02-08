@@ -1,0 +1,12 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class LowCodeGetData {
+    list<auto> getData(auto ignore) {
+        softlist<auto> rv = UserApi::getConfigItemValue("get-data");
+        UserApi::logInfo("get data connector returning: %y", rv);
+        return rv;
+    }
+}

@@ -1,0 +1,11 @@
+#!/bin/sh
+
+# make sorted, quoted file list and pass to make-release with xargs
+find . \( -name \*.q??* -o -name \*.yaml \) | \
+    sed -E 's,(.*),\"\1\",' | \
+    grep -v -e \.svn -e qrf\"$ -e tibae -e changed_interfaces -e original_interfaces -e issue-3010 -e ISSUE-3010 \
+        -e issue-3166/negative_tests -e issue-3023 -e issue-3215 -e issue-3233 -e issue-3166 -e issue-3085 -e qhtml \
+        -e issue-3274 -e issue-3303 -e issue-3316 -e issue-3325 -e issue-3326 -e swagger-test1 -e issue3334 -e issue3353 \
+        -e issue3546-example.yaml -e dummy-plugin -e 3077 -e k8s -e billing-demo-1.0.yaml | \
+    sort | \
+    xargs make-release -lqorus-tests.qrf -U.

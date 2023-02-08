@@ -1,0 +1,1532 @@
+# cmake config file for Qorus
+#
+# usage:
+# mkdir build
+# cd build
+# cmake ../trunk [-DCMAKE_INSTALL_PREFIX=<path>] [-DCMAKE_BUILD_TYPE=debug]
+# make
+# make install
+#
+# make dist
+#
+# full reference:
+# https://bugs.qoretechnologies.com/projects/qoretechnologies/wiki/QorusBuild
+#
+
+set(CMAKE_SKIP_RPATH TRUE CACHE BOOL "no RPATH, use LD_LIBRARY_PATH instead")
+set(CMAKE_SKIP_INSTALL_RPATH TRUE CACHE BOOL "no RPATH, use LD_LIBRARY_PATH instead")
+set(CMAKE_SKIP_BUILD_RPATH TRUE CACHE BOOL "no RPATH, use LD_LIBRARY_PATH instead")
+
+project(Qorus)
+cmake_minimum_required(VERSION 2.8.13)
+
+set(LIB_SUFFIX "not used") # to silence Qore automatic handling.
+
+if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    if (DEFINED ENV{OMQ_DIR})
+        message(STATUS "")
+        message(STATUS "Automatic set of installation directory to OMQ_DIR:")
+        message(STATUS "    $ENV{OMQ_DIR}")
+        message(STATUS "You can change it with -DCMAKE_INSTALL_PREFIX=<path>")
+        message(STATUS "")
+        # WARNING: we are overriding the cmake cache here. But it's right here.
+        #          The goal is to use OMQ_DIR if is it set and if user does not specify
+        #          his own CMAKE_INSTALL_PREFIX (rpm packages, etc.)
+        set(CMAKE_INSTALL_PREFIX "$ENV{OMQ_DIR}" CACHE PATH "Set install prefix to OMQ_DIR if is it set" FORCE)
+        set(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT 0)
+    endif ()
+endif (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+
+# Check for C++11.
+include(CheckCXXCompilerFlag)
+CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
+if(COMPILER_SUPPORTS_CXX11)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+else()
+    message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
+endif()
+
+find_package(Qore REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+find_package(Doxygen REQUIRED)
+find_package(Git REQUIRED)
+
+find_package(Java REQUIRED)
+# can be built with Java 11+
+if (${Java_VERSION_MAJOR} LESS 11)
+    message(FATAL_ERROR "This module requires Java 11+ to build; the current Java version is ${Java_VERSION}.")
+endif()
+include(UseJava)
+
+include(${CMAKE_SOURCE_DIR}/cmake/QorusMacros.cmake)
+
+# get Qorus versions
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q major OUTPUT_VARIABLE QORUS_VERSION_MAJOR)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q minor OUTPUT_VARIABLE QORUS_VERSION_MINOR)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q sub OUTPUT_VARIABLE QORUS_VERSION_SUB)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q patch OUTPUT_VARIABLE QORUS_VERSION_PATCH)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q rel OUTPUT_VARIABLE QORUS_VERSION_RELEASE)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q full OUTPUT_VARIABLE QORUS_VERSION)
+execute_process(COMMAND qore ${CMAKE_SOURCE_DIR}/cmake/versions.q code OUTPUT_VARIABLE QORUS_VERSION_CODE)
+message(STATUS "Qorus version: ${QORUS_VERSION} (${QORUS_VERSION_CODE})")
+
+# get required defines
+
+set (QORUS_BUILD_USER $ENV{USER})
+site_name(QORUS_BUILD_HOST)
+qorus_build_timestamp(QORUS_BUILD_TIME)
+qorus_build_gitversion(QORUS_REVISION)
+message(STATUS "Build user: ${QORUS_BUILD_USER}")
+message(STATUS "Build host: ${QORUS_BUILD_HOST}")
+message(STATUS "Build time: ${QORUS_BUILD_TIME}")
+message(STATUS "Build gitv: ${QORUS_REVISION}")
+
+file(WRITE ${CMAKE_BINARY_DIR}/version.txt "Qorus Integration Engine: ${QORUS_VERSION}")
+
+# the potentially existing QORE_INCLUDE_DIR is replaced to use current source tree only
+set( QORE_INCLUDE_DIR_PATHS "${CMAKE_SOURCE_DIR}:${CMAKE_SOURCE_DIR}/lib:${CMAKE_SOURCE_DIR}/Classes" )
+set( ENV{QORE_INCLUDE_DIR} "${QORE_INCLUDE_DIR_PATHS}" )
+
+# QorusClientCore and QorusVersion must go first - from the build dir
+set( QORE_MODULE_DIR_PATHS "${CMAKE_BINARY_DIR}:${CMAKE_SOURCE_DIR}/qlib-qorus")
+set( ENV{QORE_MODULE_DIR} "${QORE_MODULE_DIR_PATHS}" )
+
+set (QORUS_SCRIPTS
+    bin/first_time_install.sh
+    bin/ocmd
+    bin/oload
+    bin/ostart
+    bin/ostatus
+    bin/ostop
+    bin/oview
+    bin/ojview
+    bin/oprop
+    bin/qevent
+    bin/make-release
+    bin/schema-tool
+    bin/user-tool
+    bin/qorus-bash-completion-helper
+    bin/make-release.q
+    bin/qrest
+    bin/qdb
+)
+
+set (QORUS_ETC
+    etc/options.example
+    etc/qorus-bash-completion.sh
+)
+
+set (QORUS_ETC_REST_SCHEMAS
+    qorus-rest-api-public.yaml
+    qorus-rest-api-v7.yaml
+)
+foreach (it ${QORUS_ETC_REST_SCHEMAS})
+    set (QORUS_ETC_REST_SCHEMA_TARGETS ${QORUS_ETC_REST_SCHEMA_TARGETS} ${CMAKE_BINARY_DIR}/${it})
+endforeach()
+
+set (QORUS_ETC_GRAFANA
+    etc/grafana/grafana-template.ini
+    etc/grafana/dashboards/grafana-dashboard.json
+    etc/grafana/conf/provisioning/dashboards/grafana-dashboard-template.yaml
+    etc/grafana/conf/provisioning/datasources/grafana-prometheus-datasource-template.yaml
+    # etc/grafana/conf/provisioning/notifiers/sample_notifier.yaml # TODO @OS@ ???
+)
+
+set (QORUS_ETC_PROMETHEUS
+    etc/prometheus/prometheus-template.yaml
+)
+
+set (QORUS_ETC_IMAGES
+    etc/images/Q.ico
+    etc/images/Q.png
+    etc/images/Python.png
+    etc/images/Java.png
+)
+
+# list of modules built with cmake
+set (QORE_CMAKE_MODS
+    fsevent
+    jni
+    json
+    linenoise
+    magic
+    msgpack
+    mysql
+    odbc
+    oracle
+    pgsql
+    process
+    python
+    ssh2
+    sysconf
+    uuid
+    xml
+    xmlsec
+    yaml
+    zmq
+)
+
+# list of qore modules built with autotools
+set (QORE_AUTOTOOLS_MODS
+    sybase
+)
+
+set(QORUS_FAKE_API_MODULES
+    QorusFakeApiCommon.qm
+    QorusFakeApiWorkflow.qm
+    QorusFakeApiService.qm
+    QorusFakeApiJob.qm
+    QorusFakeApiMapper.qm
+)
+
+# list of all Qorus modules
+set (QORUS_MODULES
+    qlib-qorus/QorusInterfaceTest.qm
+    qlib-qorus/QorusDataProviders.qm
+    qlib-qorus/QorusAllDataProviders.qm
+    qlib-qorus/QorusApiDataProvider
+    qlib-qorus/QorusRemoteDataProvider
+    qlib-qorus/QorusRemoteConnectionDataProvider
+    qlib-qorus/RemoteApiProvider
+    qlib-qorus/RemoteDbProvider
+    qlib-qorus/RemoteDbDataProvider
+    qlib-qorus/QorusConnectionProvider.qm
+    qlib-qorus/QorusQscriptUtil.qm
+    qlib-qorus/QorusSchema.qm
+    qlib-qorus/QorusDatasourceProvider.qm
+    qlib-qorus/TibcoActiveEnterprise.qm
+    qlib-qorus/SalesforceSoapConnection.qm
+    qlib-qorus/QorusRemoteDevelopmentClient.qm
+    qlib-qorus/QorusResourceFileLocationHandler.qm
+)
+
+# install qorus modules
+foreach(ITEM ${QORUS_MODULES})
+    if (IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/${ITEM}")
+        list(APPEND QORUS_MODULES_DIRS "${ITEM}")
+        #list(APPEND QORUS_MODULE_DOC_SOURCES "${ITEM}/*")
+    else()
+        list(APPEND QORUS_MODULES_FILES "${ITEM}")
+        #list(APPEND QORUS_MODULE_DOC_SOURCES "${ITEM}")
+    endif()
+endforeach()
+
+set (QORUS_OBJECT_PARSER_SOURCES
+    qorus-object-parser/QorusObjectParser/QorusObjectParserAPI.qc
+    qorus-object-parser/QorusObjectParser/QorusObjectParser.ql
+    qorus-object-parser/QorusObjectParser/QorusObjectParser.qm
+)
+
+set (QORUS_OBJECT_PARSER_QYAML_SOURCES
+    qorus-object-parser/Qyaml/Qyaml.qm
+)
+
+set (QORUS_OBJECT_PARSER_QYAML_VALIDATION
+    qorus-object-parser/Qyaml/validation
+)
+
+set(QORUS_CORE_MODULES_BUILTIN_SRC
+)
+
+# set of source files common to all targets
+set (QORUS_SHARED_SRC
+    lib/cpc-api.ql
+    lib/cpc-dsp-api.ql
+    lib/cpc-master-api.ql
+    lib/cpc-core-api.ql
+    lib/qorus-version.ql
+    Classes/AbstractLogger.qc
+    Classes/QorusSharedApi.qc
+    Classes/QorusMasterClient.qc
+    Classes/NetworkKeyHelper.qc
+    Classes/AbstractQorusClientProcess.qc
+    Classes/AbstractQorusClient.qc
+    Classes/AbstractQorusClusterApi.qc
+)
+
+# source files common to qorus-core, qwf, qsvc, and qjob
+set (COMMON_INTERFACE_CORE_SRC
+    Classes/ActionReason.qc
+    Classes/CodeActionReason.qc
+    Classes/Mappers.qc
+    Classes/QorusMappers.qc
+    Classes/ServerMapperContainer.qc
+    Classes/Streams.qc
+    Classes/QorusSystemRestHelperBase.qc
+    Classes/QorusSystemAPIHelperBase.qc
+    Classes/QorusMethodGateHelper.qc
+    Classes/QorusServiceHelper.qc
+    Classes/QorusRemoteServiceHelper.qc
+    Classes/Connections.qc
+    Classes/OrderData.qc
+    Classes/InstanceData.qc
+    Classes/OmqMap.qc
+    Classes/ThreadLocalData.qc
+    Classes/QorusMapManagerBase.qc
+    Classes/UserApi.qc
+    Classes/MapperApi.qc
+    Classes/QorusUserConnectionsClient.qc
+    Classes/QorusConfigurationItemProvider.qc
+    Classes/AbstractDatasourceManager.qc
+    Classes/Audit.qc
+    Classes/AuditRemote.qc
+    Classes/Map.qc
+    Classes/QorusCommonInterface.qc
+    Classes/QorusClientServer.qc
+    Classes/QorusDataProviderTypeHelper.qc
+    Classes/CommonInterfaceBase.qc
+    Classes/QdspClient.qc
+    Classes/SQLInterface.qc
+    Classes/ServerSQLInterface.qc
+    Classes/QorusDebugLogger.qc
+    Classes/QorusDebugProgramSource.qc
+    Classes/ObserverPattern.qc
+    Classes/QorusLocalRestHelper.qc
+    Classes/InterfaceContextHelper.qc
+    Classes/FSM/Fsm.qc
+    Classes/FSM/QorusFsmHandler.qc
+    Classes/Pipeline/QorusPipelineFactory.qc
+    lib/qorus-shared-system.ql
+    lib/misc.ql
+)
+
+# source files common to qorus-core, qwf, qsvc, qjob, qjob, qorus, qctl, and qbugreport (no qdsp)
+set (COMMON_IX_CORE_MASTER_QCTL_QBUG_SRC
+    lib/qorus.ql
+    lib/qorus-common-master-core-client.ql
+    Classes/QorusCommonLib.qc
+    Classes/QorusRestartableTransaction.qc
+)
+
+# source files common to qorus-core, qwf, qsvc, qjob, and qdsp
+set (COMMON_INTERFACE_CORE_QDSP_SRC
+    Classes/AbstractQorusDistributedProcess.qc
+)
+
+# source files common to qorus-core, qwf, qsvc, qjob, qjob, qorus, qctl, and qbugreport (no qdsp)
+set (COMMON_IX_CORE_QWF_QJOB_SRC
+    Classes/ServerSessionBase.qc
+    Classes/Session.qc
+)
+
+# source files common to qwf, qsvc, qjob, and qdsp
+set (COMMON_INTERFACE_QDSP_SRC
+    Classes/QorusCoreSubsystemClientBase.qc
+    Classes/QorusLogWebSocketHandlerClient.qc
+)
+
+# source files common to qwf, qsvc, and qjob
+set (COMMON_INTERFACE_SRC
+    Classes/RemoteMonitorClient.qc
+    Classes/ServerConnectionsClient.qc
+    Classes/QorusClusterOptions.qc
+    Classes/QorusMapManagerClient.qc
+    Classes/QorusControlClient.qc
+    Classes/QorusInterfaceProcess.qc
+    Classes/ClientDatasourceManager.qc
+    Classes/AbstractQorusDistributedProcessWithDebugProgramControl.qc
+    lib/qorus-cluster-common-server-api.ql
+)
+
+# source files common to qwf and qjob processes only
+set (COMMON_QWF_QJOB_SRC
+    Classes/ClusterServiceManagerClient.qc
+)
+
+# source files common to qorus-core, qorus (master), and qwf processes
+set (QORUS_CORE_MASTER_QWF_SRC
+    lib/cpc-wf-api.ql
+)
+
+# source files common to qorus-core, qorus (master), and qsvc processes
+set (QORUS_CORE_MASTER_QSVC_SRC
+    Classes/QorusMasterCoreQsvcCommon.qc
+    Classes/QorusOptionsBase.qc
+    lib/cpc-svc-api.ql
+)
+
+# source files common to qorus-core, qorus (master), and qjob processes
+set (QORUS_CORE_MASTER_QJOB_SRC
+    lib/cpc-job-api.ql
+)
+
+# source files common to qorus-core and qwf processes
+set (QORUS_CORE_QWF_SRC
+    Classes/Workflow.qc
+    Classes/AbstractWorkflowQueue.qc
+    Classes/WorkflowQueueBase.qc
+    Classes/WFEntry.qc
+    Classes/WFEntryCache.qc
+    Classes/OrderInstanceNotes.qc
+    Classes/AbstractWorkflowExecutionInstance.qc
+    Classes/WorkflowExecutionInstance.qc
+    Classes/WorkflowUniqueKeyHelper.qc
+    Classes/AbstractSegmentWorkflowData.qc
+    Classes/LocalSegmentWorkflowData.qc
+    Classes/ControlBase.qc
+    Classes/SegmentManagerBase.qc
+    Classes/WorkflowApi.qc
+    Classes/QorusWorkflow.qc
+    Classes/QorusStepBase.qc
+    Classes/QorusAsyncStepBase.qc
+    Classes/QorusEventStepBase.qc
+    Classes/QorusSubworkflowStepBase.qc
+    Classes/QorusAsyncArrayStep.qc
+    Classes/QorusAsyncStep.qc
+    Classes/QorusEventArrayStep.qc
+    Classes/QorusEventStep.qc
+    Classes/QorusNormalArrayStep.qc
+    Classes/QorusNormalStep.qc
+    Classes/QorusSubworkflowArrayStep.qc
+    Classes/QorusSubworkflowStep.qc
+    Classes/StepDataHelper.qc
+    Classes/TempDataHelper.qc
+    Classes/DynamicDataHelper.qc
+    Classes/SensitiveDataHelper.qc
+    lib/qorus-wf-core-system.ql
+)
+
+# source files common to qorus-core and qsvc
+set (QORUS_CORE_QSVC_SRC
+    Classes/AbstractQorusService.qc
+    Classes/LocalQorusService.qc
+    Classes/AbstractServiceResource.qc
+    Classes/ServiceThreadContextHelper.qc
+    Classes/AbstractFtpHandler.qc
+    Classes/ServiceTemplateManager.qc
+    Classes/AbstractServiceHttpHandler.qc
+    Classes/ServiceResources.qc
+    Classes/DefaultQorusRBACAuthenticator.qc
+    Classes/ServiceApi.qc
+    Classes/QorusService.qc
+    Classes/QorusParametrizedAuthenticator.qc
+    Classes/QorusIndependentProcess.qc
+    Classes/QorusAbstractApiManager.qc
+    Classes/QorusHttpApiManagementHandler.qc
+    Classes/QorusSwaggerApiManager.qc
+    Classes/QorusSoapApiManager.qc
+    Classes/QorusRestApiManagementHandler.qc
+    Classes/AbstractServiceEventObserver.qc
+    Classes/ServiceEventMethodObserver.qc
+    Classes/ServiceEventFsmObserver.qc
+    lib/qorus-svc-core-system.ql
+)
+
+# source files common to qorus-core and qjob
+set (QORUS_CORE_QJOB_SRC
+    Classes/JobApi.qc
+    Classes/QorusJob.qc
+    Classes/LocalQorusJob.qc
+    Classes/AbstractQorusJob.qc
+    Classes/CronTimer.qc
+    lib/qorus-job-core-system.ql
+)
+
+# source files unique for qorus-core
+set (QORUS_CORE_QORE_SRC
+    Classes/Orders.qc
+    Classes/WorkflowStatusData.qc
+    Classes/AsyncQueueManager.qc
+    Classes/Control.qc
+    Classes/FtpServer.qc
+    Classes/RemoteFtpHandler.qc
+    Classes/AbstractCoreSegmentWorkflowData.qc
+    Classes/SegmentWorkflowData.qc
+    Classes/RemoteSegmentWorkflowData.qc
+    Classes/SegmentManager.qc
+    Classes/ServiceManager.qc
+    Classes/AbstractQorusCoreService.qc
+    Classes/RemoteQorusService.qc
+    Classes/RemoteServiceRestHandler.qc
+    Classes/RemoteServiceSoapHandler.qc
+    Classes/RemoteServiceWebSocketHandler.qc
+    Classes/Service.qc
+    Classes/RemoteServiceStream.qc
+    Classes/SoapServiceResource.qc
+    Classes/HttpUserServiceResource.qc
+    Classes/FtpServiceResource.qc
+    Classes/AbstractHttpServiceResourceBase.qc
+    Classes/AbstractHttpServiceResource.qc
+    Classes/HttpListenerServiceResource.qc
+    Classes/HttpSoapListenerServiceResource.qc
+    Classes/HttpGlobalHandlerServiceResource.qc
+    Classes/QorusUiExtensionResource.qc
+    Classes/QorusStreamHandlerResource.qc
+    Classes/ErrorStreamHandler.qc
+    Classes/ServiceResourceHelper.qc
+    Classes/QorusSystemUiExtensionHandler.qc
+    Classes/RemoteHandlerBase.qc
+    Classes/RemoteRestStreamRequestHandler.qc
+    Classes/RemoteHttpRequestHandler.qc
+    Classes/RemoteExtensionHandler.qc
+    Classes/RemoteServiceAuthenticator.qc
+    Classes/RemoteRestSchemaValidator.qc
+    Classes/RemoteSoapServiceAuthenticator.qc
+    Classes/RemoteFtpServiceAuthenticator.qc
+    Classes/RemotePersistentDataHelper.qc
+    Classes/CoreServerSession.qc
+    Classes/AbstractCoreWorkflowExecutionInstance.qc
+    Classes/CoreWorkflowExecutionInstance.qc
+    Classes/RemoteWorkflowExecutionInstance.qc
+    Classes/ClusterWorkflowRestartState.qc
+    Classes/WorkflowQueue.qc
+    Classes/RemoteWorkflowQueue.qc
+    Classes/QorusRestApiHandlerPublic.qc
+    Classes/QorusRestApiHandler.qc
+    Classes/QorusRestApiHandlerV2.qc
+    Classes/QorusRestApiHandlerV3.qc
+    Classes/QorusRestApiHandlerV4.qc
+    Classes/QorusRestApiHandlerV5.qc
+    Classes/QorusRestApiHandlerV6.qc
+    Classes/QorusRestApiHandlerV7.qc
+    Classes/QorusCreatorRestApiHandler.qc
+    Classes/GrafanaReverseProxy.qc
+    Classes/QorusOptions.qc
+    Classes/RBAC.qc
+    Classes/QorusEventManager.qc
+    Classes/SyncEventManager.qc
+    Classes/QorusSystemAPI.qc
+    Classes/AbstractQorusCoreJob.qc
+    Classes/Job.qc
+    Classes/RemoteQorusJob.qc
+    Classes/JobManager.qc
+    Classes/ErrorManager.qc
+    Classes/ServerErrorManager.qc
+    Classes/AuditLocal.qc
+    Classes/AlertManager.qc
+    Classes/QorusMapManager.qc
+    Classes/AtomicClassActionHelper.qc
+    Classes/DatasourceManager.qc
+    Classes/QorusOracleDatasourcePool.qc
+    Classes/Props.qc
+    Classes/QorusHttpServer.qc
+    Classes/QorusWebDavHandler.qc
+    Classes/QorusDebugHandler.qc
+    Classes/ConnectionsServer.qc
+    Classes/QorusUserConnections.qc
+    Classes/RemoteMonitor.qc
+    Classes/ConnectionDependencyManager.qc
+    Classes/DatasourceConnection.qc
+    Classes/WorkflowOrderStats.qc
+    Classes/SchemaSnapshots.qc
+    Classes/FSA.qc
+    Classes/ProcessFSA.qc
+    Classes/RemoteDevelopment/RemoteDevelopmentHandler.qc
+    Classes/RemoteDevelopment/FSA/FileUploadProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/DeployProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/DeleteProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/ReleaseProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/TestProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/QoreTestProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/PythonTestProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/JavaTestProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/JavaCompileProcessFSA.qc
+    Classes/RemoteDevelopment/FSA/QoreSchemaProcessFSA.qc
+    Classes/RemoteDevelopment/API/DeployRestClass.qc
+    Classes/RemoteDevelopment/API/DeleteRestClass.qc
+    Classes/RemoteDevelopment/API/ReleaseRestClass.qc
+    Classes/RemoteDevelopment/API/TestRestClass.qc
+    Classes/RemoteDevelopment/API/RemoteDevelopmentRestClass.qc
+    Classes/RemoteDevelopment/RemoteDevelopment.qc
+    Classes/RemoteDevelopment/RemoteDevelopmentOptionHelper.qc
+    Classes/Metrics/API/MetricsRestClass.qc
+    Classes/LoggerController.qc
+    Classes/QorusPluginService.qc
+    Classes/QorusSystemService.qc
+    Classes/QwfClient.qc
+    Classes/QsvcClient.qc
+    Classes/QjobClient.qc
+    Classes/QorusRawRemoteFileRequestHandler.qc
+    Classes/QorusRemoteWebSocketHandler.qc
+    Classes/QorusCreatorWebSocketHandler.qc
+    lib/qorus-client.ql
+    lib/qorus-system.ql
+    lib/qorus-logger.ql
+    lib/qorus-common-server-api.ql
+    bin/qorus-core.q
+)
+
+# source files common to qctl, and qbugreport
+set (COMMON_QCTL_QBUG_SRC
+    Classes/QorusOptionsBase.qc
+    Classes/ClientProcessBase.qc
+)
+
+set (QORUS_CLIENT
+    lib/qorus-client.ql
+    # generated by qccp qlib-qorus/QorusClientCore.qm
+)
+
+set(QORUS_QCCP_SRC
+    qlib-qorus/QorusClientBase.qm
+    qlib-qorus/QorusClientCore.qm
+    qlib-qorus/QorusVersion.qm
+)
+
+set (QORUS_QORE_SRC
+    bin/qorus.q
+    Classes/AbstractQorusExternProcess.qc
+    Classes/AbstractQorusInterfaceProcess.qc
+    Classes/AbstractQorusInternProcess.qc
+    Classes/AbstractQorusProcess.qc
+    Classes/LogPipeWrapper.qc
+    Classes/ConfFileFromTemplate.qc
+    Classes/PrometheusProcess.qc
+    Classes/GrafanaProcess.qc
+    Classes/QdspProcess.qc
+    Classes/QjobProcess.qc
+    Classes/QorusCoreProcess.qc
+    Classes/QorusProcessManager.qc
+    Classes/QsvcProcess.qc
+    Classes/QwfProcess.qc
+    Classes/QorusPassiveMasterProcess.qc
+)
+
+set (QDSP_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qdsp_main.cpp
+)
+
+set (QDSP_QORE_SRC
+    Classes/QorusOracleDatasourcePool.qc
+    bin/qdsp
+)
+
+set (QJOB_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qjob_main.cpp
+)
+
+set (QJOB_QORE_SRC
+    Classes/QjobServerSession.qc
+    Classes/ClusterQorusJob.qc
+    lib/qorus-job-system.ql
+    bin/qjob
+)
+
+set (COMMON_QPP
+    exec/ql_omqlib.qpp
+)
+
+set (QSVC_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qsvc_main.cpp
+)
+
+set (QSVC_QORE_SRC
+    Classes/ClusterServiceManager.qc
+    Classes/ClusterQorusService.qc
+    Classes/DummyListenerInterface.qc
+    lib/qorus-svc-system.ql
+    bin/qsvc
+)
+
+set (QWF_SOURCES
+    exec/QC_SegmentEventQueue.h
+    exec/SegmentEventQueue.cpp
+    exec/SegmentEventQueue.h
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qwf_main.cpp
+)
+
+set (QWF_QORE_SRC
+    Classes/ClusterWorkflowQueue.qc
+    Classes/ClusterWorkflowExecutionInstance.qc
+    Classes/ClusterControl.qc
+    Classes/QwfServerSession.qc
+    Classes/ClusterSegmentManager.qc
+    Classes/ClusterSegmentWorkflowData.qc
+    lib/qorus-wf-system.ql
+    bin/qwf
+)
+
+set (QWF_QPP
+    exec/QC_TimedWorkflowCache.qpp
+    exec/QC_SegmentEventQueue.qpp
+)
+
+set (QCTL_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qctl_main.cpp
+)
+
+set (QCTL_QORE_SRC
+    bin/qctl
+)
+
+set (QBUGREPORT_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qbugreport_main.cpp
+)
+
+set (QBUGREPORT_QORE_SRC
+    bin/qbugreport
+)
+
+set (QORUS_LIB_ITERN
+    # QLIBS
+    Classes/CronTimer.qc
+    Classes/ThreadLocalData.qc
+    Classes/Session.qc
+)
+
+set (QORUS_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_lib.h
+    exec/qorus_main.cpp
+)
+
+set (QORUS_CORE_SOURCES
+    exec/qorus_lib.cpp
+    exec/qorus_core_main.cpp
+    exec/SegmentEventQueue.cpp
+    exec/PerformanceCache.cpp
+)
+
+set (QORUS_CORE_QPP
+    exec/QC_PerformanceCacheManager.qpp
+    exec/QC_PerformanceCache.qpp
+    exec/QC_TimedWorkflowCache.qpp
+    exec/QC_TimedSyncCache.qpp
+    exec/QC_OrderExpiryCache.qpp
+    exec/QC_SegmentEventQueue.qpp
+)
+
+set (QORUS_SYSTEM
+    # services
+    system/arch-v6.0.qsd
+    system/fs-v6.0.qsd
+    system/info-v6.0.qsd
+    system/sqlutil-v6.0.qsd
+
+    # jobs
+    system/qorus-archiver-v6.0.qjob
+    system/qorus-sensitive-data-v6.0.qjob
+    system/qorus-log-rotator-v6.0.qjob
+)
+
+foreach (it ${QORUS_SYSTEM})
+    set (QORUS_SYSTEM_YAML ${QORUS_SYSTEM_YAML} ${it}.yaml)
+endforeach (it)
+# add group file manually
+set (QORUS_SYSTEM_YAML ${QORUS_SYSTEM_YAML} system/qorus-admin.qgroup.yaml)
+
+set (QORUS_TEMPLATES_SH
+    templates/install.sh
+    templates/install.sh-system
+)
+
+set (QORUS_TEMPLATES_SQL
+    templates/mysql-omq-db.sql
+    templates/mysql-omquser-db.sql
+    templates/oracle-omq-db.sql
+    templates/oracle-omquser-db.sql
+    templates/pgsql-omq-db.sql
+    templates/pgsql-omquser-db.sql
+)
+
+set(QORUS_DOCS_SOURCES
+    ${QORUS_SYSTEM}
+    ${QORUS_MODULES}
+    ${QORUS_OBJECT_PARSER_SOURCES}
+    ${QORUS_OBJECT_PARSER_QYAML_SOURCES}
+    qlib-qorus/QorusClientBase.qm
+    qlib-qorus/QorusClientCore.qm
+    doxygen/client-mainpage.doxygen.tmpl
+    doxygen/command-line-mainpage.doxygen.tmpl
+    doxygen/common-server-api.doxygen.tmpl
+    doxygen/develguide-mainpage.doxygen.tmpl
+    doxygen/installation-mainpage.doxygen.tmpl
+    doxygen/job-api-mainpage.doxygen.tmpl
+    doxygen/operations-mainpage.doxygen.tmpl
+    doxygen/qorus-api-mainpage.doxygen.tmpl
+    doxygen/releasenotes-mainpage.doxygen.tmpl
+    doxygen/service-api-mainpage.doxygen.tmpl
+    doxygen/systemref-mainpage.doxygen.tmpl
+    doxygen/system-services-mainpage.doxygen.tmpl
+    doxygen/workflow-api-mainpage.doxygen.tmpl
+    # note: doxygen/qorus-mainpage.doxygen.tmpl has to be processed at the end of tmpl files
+    doxygen/qorus-mainpage.doxygen.tmpl
+    Classes/DefaultQorusRBACAuthenticator.qc
+    Classes/AbstractFtpHandler.qc
+    Classes/AbstractServiceHttpHandler.qc
+    Classes/Connections.qc
+    Classes/QorusSystemAPI.qc
+    Classes/Mappers.qc
+    Classes/Streams.qc
+    Classes/QorusOracleDatasourcePool.qc
+    Classes/QorusParametrizedAuthenticator.qc
+    Classes/UserApi.qc
+    Classes/WorkflowApi.qc
+    Classes/MapperApi.qc
+    Classes/QorusConfigurationItemProvider.qc
+    Classes/QorusWorkflow.qc
+    Classes/QorusStepBase.qc
+    Classes/QorusAsyncStepBase.qc
+    Classes/QorusEventStepBase.qc
+    Classes/QorusSubworkflowStepBase.qc
+    Classes/QorusAsyncArrayStep.qc
+    Classes/QorusAsyncStep.qc
+    Classes/QorusEventArrayStep.qc
+    Classes/QorusEventStep.qc
+    Classes/QorusNormalArrayStep.qc
+    Classes/QorusNormalStep.qc
+    Classes/QorusSubworkflowArrayStep.qc
+    Classes/QorusSubworkflowStep.qc
+    Classes/ServiceApi.qc
+    Classes/QorusService.qc
+    Classes/JobApi.qc
+    Classes/QorusJob.qc
+    Classes/StepDataHelper.qc
+    Classes/TempDataHelper.qc
+    Classes/DynamicDataHelper.qc
+    Classes/SensitiveDataHelper.qc
+    Classes/QorusMethodGateHelper.qc
+    Classes/QorusServiceHelper.qc
+    Classes/QorusSystemRestHelperBase.qc
+    Classes/QorusSystemAPIHelperBase.qc
+    Classes/QorusRemoteServiceHelper.qc
+    Classes/ObserverPattern.qc
+    Classes/QorusLocalRestHelper.qc
+    Classes/QorusRestartableTransaction.qc
+    lib/qorus.ql
+    lib/qorus-client.ql
+    lib/qorus-common-master-core-client.ql
+    lib/qorus-common-server-api.ql
+    lib/misc.ql
+)
+
+set(QORUS_DOCS_REST_SOURCES
+    Classes/QorusRestApiHandler.qc
+    Classes/QorusRestApiHandlerV2.qc
+    Classes/QorusRestApiHandlerV3.qc
+    Classes/QorusRestApiHandlerV4.qc
+    Classes/QorusRestApiHandlerV5.qc
+    Classes/QorusRestApiHandlerV6.qc
+    Classes/QorusRestApiHandlerV7.qc
+    Classes/QorusRestApiHandlerPublic.qc
+    Classes/QorusCreatorRestApiHandler.qc
+    Classes/RemoteDevelopment/API/DeployRestClass.qc
+    Classes/RemoteDevelopment/API/DeleteRestClass.qc
+    Classes/RemoteDevelopment/API/ReleaseRestClass.qc
+    Classes/RemoteDevelopment/API/TestRestClass.qc
+    Classes/RemoteDevelopment/API/RemoteDevelopmentRestClass.qc
+    Classes/Metrics/API/MetricsRestClass.qc
+)
+
+# to find qore-jni.jar by user's request first
+if(DEFINED ENV{QORE_JNI_JAR})
+    set(QORE_JNI_JAR "$ENV{QORE_JNI_JAR}")
+elseif(EXISTS "$ENV{QORE_GIT_ROOT}/module-jni/build/qore-jni.jar")
+    set(QORE_JNI_JAR "$ENV{QORE_GIT_ROOT}/module-jni/build/qore-jni.jar")
+else()
+    get_filename_component(QORE_JNI_JAR ${QORE_EXECUTABLE} DIRECTORY)
+    file(TO_CMAKE_PATH "${QORE_JNI_JAR}/../share/qore/java/qore-jni.jar" QORE_JNI_JAR)
+
+    if (NOT EXISTS ${QORE_JNI_JAR})
+        message(FATAL_ERROR "cannot find qore-jni.jar; set the QORE_JNI_JAR environment variable to the location of this file and run cmake again")
+    endif()
+endif()
+
+# to find qore-jni-compiler.jar by user's request first
+if(DEFINED ENV{QORE_JNI_COMPILER_JAR})
+    set(QORE_JNI_COMPILER_JAR "$ENV{QORE_JNI_COMPILER_JAR}")
+elseif(EXISTS "$ENV{QORE_GIT_ROOT}/module-jni/build/qore-jni-compiler.jar")
+    set(QORE_JNI_COMPILER_JAR "$ENV{QORE_GIT_ROOT}/module-jni/build/qore-jni-compiler.jar")
+else()
+    get_filename_component(QORE_JNI_COMPILER_JAR ${QORE_EXECUTABLE} DIRECTORY)
+    file(TO_CMAKE_PATH "${QORE_JNI_COMPILER_JAR}/../share/qore/java/qore-jni-compiler.jar" QORE_JNI_COMPILER_JAR)
+
+    if (NOT EXISTS ${QORE_JNI_COMPILER_JAR})
+        message(FATAL_ERROR "cannot find qore-jni-compiler.jar; set the QORE_JNI_COMPILER_JAR environment variable to the location of this file and run cmake again")
+    endif()
+endif()
+
+# to find qjavac by user's request first
+if(DEFINED ENV{QORE_QJAVAC})
+    set(QORE_QJAVAC "$ENV{QORE_QJAVAC}")
+elseif(EXISTS "$ENV{QORE_GIT_ROOT}/module-jni/bin/qjavac")
+    set(QORE_QJAVAC "$ENV{QORE_GIT_ROOT}/module-jni/bin/qjavac")
+else()
+    get_filename_component(QORE_QJAVAC ${QORE_EXECUTABLE} DIRECTORY)
+    file(TO_CMAKE_PATH "${QORE_QJAVAC}/qjavac" QORE_QJAVAC)
+
+    if (NOT EXISTS ${QORE_QJAVAC})
+        message(FATAL_ERROR "cannot find qjavac; set the QORE_QJAVAC environment variable to the location of this file and run cmake again")
+    endif()
+endif()
+
+# to find qjava2jar by user's request first
+if(DEFINED ENV{QORE_QJAVA2JAR})
+    set(QORE_QJAVA2JAR "$ENV{QORE_QJAVA2JAR}")
+elseif(EXISTS "$ENV{QORE_GIT_ROOT}/module-jni/bin/qjava2jar")
+    set(QORE_QJAVA2JAR "$ENV{QORE_GIT_ROOT}/module-jni/bin/qjava2jar")
+else()
+    get_filename_component(QORE_QJAVA2JAR ${QORE_EXECUTABLE} DIRECTORY)
+    file(TO_CMAKE_PATH "${QORE_QJAVA2JAR}/qjava2jar" QORE_QJAVA2JAR)
+
+    if (NOT EXISTS ${QORE_QJAVA2JAR})
+        message(FATAL_ERROR "cannot find qjava2jar; set the QORE_QJAVA2JAR environment variable to the location of this file and run cmake again")
+    endif()
+endif()
+
+# to find the python modules
+IF(DEFINED ENV{QORE_PYTHON_MOD})
+    SET(QORE_PYTHON_MOD "$ENV{QORE_PYTHON_MOD}")
+ELSE()
+    FILE(GLOB PY_MOD "$ENV{QORE_GIT_ROOT}/module-python/build/python-api-*.qmod")
+    IF(PY_MOD)
+        LIST(GET PY_MOD 0 QORE_PYTHON_MOD)
+        MESSAGE(STATUS "Found Python mod '${QORE_PYTHON_MOD}'")
+    ENDIF()
+ENDIF()
+IF(NOT DEFINED QORE_PYTHON_MOD)
+    EXECUTE_PROCESS(COMMAND bash "-c" "qore -ne 'try {load_module(\"python\"); printf(\"%s\", get_module_hash().python.filename);} catch () {}'"
+        OUTPUT_VARIABLE QORE_PYTHON_MOD)
+    MESSAGE(STATUS "Using Qore Python mod '${QORE_PYTHON_MOD}'")
+ENDIF()
+
+IF(QORE_PYTHON_MOD MATCHES "^$")
+    MESSAGE(WARNING "cannot find Qore Python module")
+ENDIF()
+
+install(FILES ${QORE_PYTHON_MOD} DESTINATION ${CMAKE_INSTALL_PREFIX}/python RENAME qoreloader.so)
+
+install(FILES ${QORE_JNI_JAR} ${QORE_JNI_COMPILER_JAR} DESTINATION ${CMAKE_INSTALL_PREFIX}/jar)
+
+# build jar for dynamic APIs
+add_custom_target(qorus-dynamic-api ALL
+    COMMAND QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -o qorus-dynamic-api.jar -i ${CMAKE_BINARY_DIR}/java
+    DEPENDS ${QORUS_FAKE_API_MODULE_TARGETS} qorus-fake-apis
+    COMMENT "Building jar for dynamically-imported Qore APIs"
+    VERBATIM
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/qorus-dynamic-api.jar ${CMAKE_BINARY_DIR}/java
+)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/qorus-dynamic-api.jar DESTINATION ${CMAKE_INSTALL_PREFIX}/jar)
+
+execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --abbrev-ref HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE res
+        OUTPUT_VARIABLE QORUS_GIT_BRANCH
+        ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+message(STATUS "Build git branch: ${QORUS_GIT_BRANCH}")
+# a clever UI handling:
+#   if we are in develop branch, use UI master
+#   else use the same branch
+set(UI_GIT_BRANCH ${QORUS_GIT_BRANCH})
+string(COMPARE EQUAL "${QORUS_GIT_BRANCH}" "develop" _cmp)
+if (_cmp)
+    set(UI_GIT_BRANCH "master")
+endif()
+message(STATUS "UI git branch: ${UI_GIT_BRANCH}")
+
+add_custom_target(installui
+    ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/webapp/
+    COMMAND rm -rf ${UI_GIT_BRANCH} qorus-webapp-${UI_GIT_BRANCH}.zip
+    COMMAND wget https://hq.qoretechnologies.com/~pchalupny/ui-builds/qorus-webapp-${UI_GIT_BRANCH}.zip
+    COMMAND unzip ${CMAKE_BINARY_DIR}/qorus-webapp-${UI_GIT_BRANCH}.zip
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_BINARY_DIR}/${UI_GIT_BRANCH}/ ${CMAKE_INSTALL_PREFIX}/webapp/
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMENT "user interface app installation" VERBATIM
+)
+
+# create the fake API modules immediately for use in the next step
+execute_process(
+    COMMAND sh -c "QORE_INCLUDE_DIR=${QORE_INCLUDE_DIR_PATHS} QORE_MODULE_DIR=${QORE_MODULE_DIR_PATHS} ${CMAKE_SOURCE_DIR}/tools/qccp -a ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}"
+)
+
+FOREACH (it ${QORUS_FAKE_API_MODULES})
+    SET(QORUS_FAKE_API_MODULE_TARGETS ${QORUS_FAKE_API_MODULE_TARGETS} ${CMAKE_BINARY_DIR}/${it})
+
+    get_filename_component(fake_api_module ${it} NAME_WE)
+
+    # get output files
+    message(STATUS "Calculating Java output for Qorus fake API module ${it}")
+    execute_process(
+        COMMAND sh -c "QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -d -m ${fake_api_module}"
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        OUTPUT_VARIABLE FAKE_OUTPUT
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
+    # convert to a cmake list
+    string(REPLACE "\n" ";" FAKE_OUTPUT "${FAKE_OUTPUT}")
+
+    # remove any cpuset error strings
+    # https://bugs.openjdk.java.net/browse/JDK-8272121
+    # https://bugs.openjdk.java.net/browse/JDK-8153723
+    string(REGEX REPLACE "\\[[0-9]+\\.[0-9]+s\\][^;]*" "" FAKE_OUTPUT "${FAKE_OUTPUT}")
+    #message(STATUS "FAKE_OUTPUT: ${FAKE_OUTPUT}")
+
+    add_custom_command(OUTPUT ${FAKE_OUTPUT}
+        DEPENDS ${CMAKE_BINARY_DIR}/${it}
+        COMMAND QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -m ${fake_api_module}
+        COMMENT "Building class files for code completion for fake API module ${it}"
+        VERBATIM
+    )
+
+    add_custom_target(qorus-dynamic-api-${fake_api_module}
+        DEPENDS ${CMAKE_BINARY_DIR}/${it} ${FAKE_OUTPUT}
+    )
+    add_dependencies(qorus-dynamic-api qorus-dynamic-api-${fake_api_module})
+ENDFOREACH()
+message(STATUS "Fake API targets: ${QORUS_FAKE_API_MODULE_TARGETS}")
+
+FOREACH (it ${QORE_CMAKE_MODS} ${QORE_AUTOTOOLS_MODS} reflection astparser)
+    # test if module is available
+    execute_process(COMMAND qore -l ${it} -nX 1
+        RESULT_VARIABLE mod
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if (mod EQUAL "0")
+        # get output files
+        message(STATUS "Calculating Java output for Qore API module ${it}")
+        execute_process(
+            COMMAND sh -c "QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -d -m ${it}"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            OUTPUT_VARIABLE FAKE_OUTPUT
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        # convert to a cmake list
+        string(REPLACE "\n" ";" FAKE_OUTPUT "${FAKE_OUTPUT}")
+
+        # remove any cpuset error strings
+        # https://bugs.openjdk.java.net/browse/JDK-8272121
+        # https://bugs.openjdk.java.net/browse/JDK-8153723
+        string(REGEX REPLACE "\\[[0-9]+\\.[0-9]+s\\][^;]*" "" FAKE_OUTPUT "${FAKE_OUTPUT}")
+
+        if (FAKE_OUTPUT STREQUAL "")
+            continue()
+        endif()
+
+        add_custom_command(OUTPUT ${FAKE_OUTPUT}
+            COMMAND QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -m ${it}
+            COMMENT "Building class files for code completion for Qore API module ${it}"
+            VERBATIM
+        )
+
+        add_custom_target(qorus-dynamic-api-${it}
+            DEPENDS ${FAKE_OUTPUT}
+        )
+        add_dependencies(qorus-dynamic-api qorus-dynamic-api-${it})
+    endif()
+ENDFOREACH()
+
+# generate qore java files
+# get output files
+message(STATUS "Calculating Java output for Qore language API")
+execute_process(
+    COMMAND sh -c "${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -d -m qore"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    OUTPUT_VARIABLE FAKE_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+# convert to a cmake list
+string(REPLACE "\n" ";" FAKE_OUTPUT "${FAKE_OUTPUT}")
+
+# remove any warnings from the JVM (ex: "[0.001s][warning][os,container] Duplicate cpuset controllers detecte")
+# https://bugs.openjdk.java.net/browse/JDK-8272121
+# https://bugs.openjdk.java.net/browse/JDK-8153723
+string(REGEX REPLACE "\\[[0-9]+\\.[0-9]+s\\][^;]*" "" FAKE_OUTPUT "${FAKE_OUTPUT}")
+
+add_custom_command(OUTPUT ${FAKE_OUTPUT}
+    COMMAND QORE_MODULE_DIR=${CMAKE_BINARY_DIR} ${QORE_QJAR_EXECUTABLE} -i ${CMAKE_BINARY_DIR}/java -m qore
+    COMMENT "Building class files for code completion for Qore"
+    VERBATIM
+)
+add_custom_target(qorus-dynamic-api-qore
+    DEPENDS ${FAKE_OUTPUT}
+)
+add_dependencies(qorus-dynamic-api qorus-dynamic-api-qore)
+
+set(FAKE_API_DEPENDS
+    ${CMAKE_SOURCE_DIR}/Classes/AbstractFtpHandler.qc
+    ${CMAKE_SOURCE_DIR}/Classes/AbstractServiceHttpHandler.qc
+    ${CMAKE_SOURCE_DIR}/Classes/DynamicDataHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/JobApi.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusSystemRestHelperBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusSystemAPIHelperBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusMethodGateHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusServiceHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusAsyncArrayStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusAsyncStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusAsyncStepBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusConfigurationItemProvider.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusEventArrayStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusEventStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusEventStepBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusJob.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusNormalArrayStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusNormalStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusRemoteServiceHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusService.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusStepBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusSubworkflowArrayStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusSubworkflowStep.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusSubworkflowStepBase.qc
+    ${CMAKE_SOURCE_DIR}/Classes/QorusWorkflow.qc
+    ${CMAKE_SOURCE_DIR}/Classes/SensitiveDataHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/ServiceApi.qc
+    ${CMAKE_SOURCE_DIR}/Classes/StepDataHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/TempDataHelper.qc
+    ${CMAKE_SOURCE_DIR}/Classes/ThreadLocalData.qc
+    ${CMAKE_SOURCE_DIR}/Classes/UserApi.qc
+    ${CMAKE_SOURCE_DIR}/Classes/WorkflowApi.qc
+    ${CMAKE_SOURCE_DIR}/Classes/Map.qc
+    ${CMAKE_SOURCE_DIR}/lib/qorus.ql
+    ${CMAKE_SOURCE_DIR}/lib/qorus-common-server-api.ql
+    ${CMAKE_SOURCE_DIR}/lib/misc.ql
+    ${CMAKE_SOURCE_DIR}/tools/qccp
+)
+
+add_custom_target(qorus-fake-apis
+    DEPENDS ${FAKE_API_DEPENDS}
+)
+
+add_custom_command(OUTPUT ${QORUS_FAKE_API_MODULE_TARGETS}
+    COMMAND QORE_INCLUDE_DIR=${QORE_INCLUDE_DIR_PATHS} QORE_MODULE_DIR=${QORE_MODULE_DIR_PATHS} ${CMAKE_SOURCE_DIR}/tools/qccp -a ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR}
+    DEPENDS ${FAKE_API_DEPENDS}
+    COMMENT building fake API modules
+)
+
+add_custom_target(fakeapis ALL
+    DEPENDS ${QORUS_FAKE_API_MODULE_TARGETS} qorus-fake-apis
+)
+
+# Qorus binary ##############################
+# create derived files
+qorus_qore2cpp(QORUS_SHARED_SRC_X "${QORUS_SHARED_SRC}")
+qorus_qore2cpp(COMMON_INTERFACE_CORE_SRC_X "${COMMON_INTERFACE_CORE_SRC}")
+qorus_qore2cpp(COMMON_INTERFACE_CORE_QDSP_SRC_X "${COMMON_INTERFACE_CORE_QDSP_SRC}")
+qorus_qore2cpp(COMMON_INTERFACE_QDSP_SRC_X "${COMMON_INTERFACE_QDSP_SRC}")
+qorus_qore2cpp(COMMON_INTERFACE_SRC_X "${COMMON_INTERFACE_SRC}")
+qorus_qore2cpp(COMMON_QWF_QJOB_SRC_X "${COMMON_QWF_QJOB_SRC}")
+qorus_qore2cpp(COMMON_IX_CORE_MASTER_QCTL_QBUG_SRC_X "${COMMON_IX_CORE_MASTER_QCTL_QBUG_SRC}")
+qorus_qore2cpp(COMMON_IX_CORE_QWF_QJOB_SRC_X "${COMMON_IX_CORE_QWF_QJOB_SRC}")
+qorus_qore2cpp(COMMON_QCTL_QBUG_SRC_X "${COMMON_QCTL_QBUG_SRC}")
+qorus_qore2cpp(QORUS_CORE_MASTER_SRC_X "${QORUS_CORE_MASTER_SRC}")
+qorus_qore2cpp(QORUS_CORE_MASTER_QWF_SRC_X "${QORUS_CORE_MASTER_QWF_SRC}")
+qorus_qore2cpp(QORUS_CORE_MASTER_QSVC_SRC_X "${QORUS_CORE_MASTER_QSVC_SRC}")
+qorus_qore2cpp(QORUS_CORE_MASTER_QJOB_SRC_X "${QORUS_CORE_MASTER_QJOB_SRC}")
+qorus_qore2cpp(QORUS_CORE_QWF_SRC_X "${QORUS_CORE_QWF_SRC}")
+qorus_qore2cpp(QORUS_CORE_QSVC_SRC_X "${QORUS_CORE_QSVC_SRC}")
+qorus_qore2cpp(QORUS_CORE_QJOB_SRC_X "${QORUS_CORE_QJOB_SRC}")
+qorus_qore2cpp(QORUS_CORE_QORE_SRC_X "${QORUS_CORE_QORE_SRC}")
+qorus_qoremod2cpp(QORUS_CORE_MODULES_X "${QORUS_CORE_MODULES_BUILTIN_SRC}")
+qorus_qore2cpp(QORUS_QORE_SRC_X "${QORUS_QORE_SRC}")
+qorus_qore2cpp(QDSP_QORE_SRC_X "${QDSP_QORE_SRC}")
+qorus_qore2cpp(QWF_QORE_SRC_X "${QWF_QORE_SRC}")
+qorus_qore2cpp(QSVC_QORE_SRC_X "${QSVC_QORE_SRC}")
+qorus_qore2cpp(QJOB_QORE_SRC_X "${QJOB_QORE_SRC}")
+qorus_qore2cpp(QCTL_QORE_SRC_X "${QCTL_QORE_SRC}")
+qorus_qore2cpp(QBUGREPORT_QORE_SRC_X "${QBUGREPORT_QORE_SRC}")
+qorus_doc_api_filter(QORUS_DOCS_SOURCES_X "${QORUS_DOCS_SOURCES}")
+qorus_doc_api_rest_filter(QORUS_DOCS_REST_SOURCES_X "${QORUS_DOCS_REST_SOURCES}")
+qorus_qccp(QORUS_QCCP_SRC_X "${QORUS_QCCP_SRC}")
+qore_wrap_qpp_value(QORUS_CORE_SOURCES_QPP ${QORUS_CORE_QPP})
+qore_wrap_qpp_value(QWF_SOURCES_QPP ${QWF_QPP})
+qore_wrap_qpp_value(COMMON_SOURCES_QPP ${COMMON_QPP})
+
+include_directories(${QORE_INCLUDE_DIRS}
+                    ${ZLIB_INCLUDE_DIRS}
+                    ${CMAKE_SOURCE_DIR}/exec
+                    ${CMAKE_BINARY_DIR}
+                )
+
+add_definitions(-DQORUS_BUILD_USER="${QORUS_BUILD_USER}"
+                -DQORUS_BUILD_HOST="${QORUS_BUILD_HOST}"
+                -DQORUS_BUILD_TIME=${QORUS_BUILD_TIME}
+                -DQORUS_REVISION="${QORUS_REVISION}"
+            )
+
+# extend stuff for various systems to follow legacy makeconf-* includes
+# CMAKE_SYSTEM_NAME is basically wrapper around 'uname -s'
+# NOTE: at some point, we would like to enable other warnings like -Wextra or -Wpedantic,
+# but for now it is not possible also due to Qore headers included.
+if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
+    add_definitions(-D_THREAD_SAFE -D_GNU_SOURCE)
+endif ()
+
+if (${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror")
+    add_definitions(-D_THREAD_SAFE)
+endif ()
+
+# build source files only once
+add_library(QORUS_SHARED_LIB OBJECT ${QORUS_SHARED_SRC_X})
+add_library(COMMON_INTERFACE_CORE_LIB OBJECT ${COMMON_INTERFACE_CORE_SRC_X})
+add_library(COMMON_INTERFACE_CORE_QDSP_LIB OBJECT ${COMMON_INTERFACE_CORE_QDSP_SRC_X})
+add_library(COMMON_INTERFACE_QDSP_LIB OBJECT ${COMMON_INTERFACE_QDSP_SRC_X})
+add_library(COMMON_INTERFACE_LIB OBJECT ${COMMON_INTERFACE_SRC_X})
+add_library(COMMON_QWF_QJOB_LIB OBJECT ${COMMON_QWF_QJOB_SRC_X})
+add_library(COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB OBJECT ${COMMON_IX_CORE_MASTER_QCTL_QBUG_SRC_X})
+add_library(COMMON_IX_CORE_QWF_QJOB_LIB OBJECT ${COMMON_IX_CORE_QWF_QJOB_SRC_X})
+add_library(COMMON_QCTL_QBUG_LIB OBJECT ${COMMON_QCTL_QBUG_SRC_X})
+add_library(QORUS_CORE_MASTER_QWF_LIB OBJECT ${QORUS_CORE_MASTER_QWF_SRC_X})
+add_library(QORUS_CORE_MASTER_QSVC_LIB OBJECT ${QORUS_CORE_MASTER_QSVC_SRC_X})
+add_library(QORUS_CORE_MASTER_QJOB_LIB OBJECT ${QORUS_CORE_MASTER_QJOB_SRC_X})
+add_library(QORUS_CORE_QWF_LIB OBJECT ${QORUS_CORE_QWF_SRC_X})
+add_library(QORUS_CORE_QSVC_LIB OBJECT ${QORUS_CORE_QSVC_SRC_X})
+add_library(QORUS_CORE_QJOB_LIB OBJECT ${QORUS_CORE_QJOB_SRC_X})
+add_library(COMMON_QPP_LIB OBJECT ${COMMON_SOURCES_QPP})
+
+add_executable(qorus
+                ${QORUS_SOURCES}
+                ${QORUS_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QWF_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QSVC_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QJOB_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+)
+
+add_executable(qorus-core
+                ${QORUS_CORE_SOURCES}
+                ${QORUS_CORE_SOURCES_QPP}
+                ${QORUS_CORE_MODULES_X}
+                ${QORUS_CORE_QORE_SRC_X}
+                ${QORUS_DOCS_SOURCES_X} # docs sources are dependencies for Qorus binary to keep the generated files up-to-date
+                ${QORUS_DOCS_REST_SOURCES_X}
+                ${QORUS_ETC_REST_SCHEMA_TARGETS}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QWF_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QSVC_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QJOB_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QWF_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QSVC_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QJOB_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_QWF_QJOB_LIB>
+)
+
+add_executable(qdsp
+                ${QDSP_SOURCES}
+                ${QDSP_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+)
+
+add_executable(qwf
+                ${QWF_SOURCES}
+                ${QWF_SOURCES_QPP}
+                ${QWF_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_LIB>
+                $<TARGET_OBJECTS:COMMON_QWF_QJOB_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QWF_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QWF_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_QWF_QJOB_LIB>
+)
+
+add_executable(qsvc
+                ${QSVC_SOURCES}
+                ${QSVC_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QSVC_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QSVC_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+)
+
+add_executable(qjob
+                ${QJOB_SOURCES}
+                ${QJOB_SOURCES_QPP}
+                ${QJOB_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_CORE_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_QDSP_LIB>
+                $<TARGET_OBJECTS:COMMON_INTERFACE_LIB>
+                $<TARGET_OBJECTS:COMMON_QWF_QJOB_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_QWF_QJOB_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_MASTER_QJOB_LIB>
+                $<TARGET_OBJECTS:QORUS_CORE_QJOB_LIB>
+ )
+
+add_executable(qctl
+                ${QCTL_SOURCES}
+                ${QCTL_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+                $<TARGET_OBJECTS:COMMON_QCTL_QBUG_LIB>
+)
+
+add_executable(qbugreport
+                ${QBUGREPORT_SOURCES}
+                ${QBUGREPORT_QORE_SRC_X}
+                $<TARGET_OBJECTS:QORUS_SHARED_LIB>
+                $<TARGET_OBJECTS:COMMON_QPP_LIB>
+                $<TARGET_OBJECTS:COMMON_IX_CORE_MASTER_QCTL_QBUG_LIB>
+                $<TARGET_OBJECTS:COMMON_QCTL_QBUG_LIB>
+)
+
+target_link_libraries(qorus ${QORE_LIBRARIES}
+                            ${ZLIB_LIBRARIES}
+                            ${CMAKE_THREAD_LIBS_INIT}
+                            ${CMAKE_DL_LIBS}
+                     )
+
+target_link_libraries(qorus-core ${QORE_LIBRARIES}
+                            ${ZLIB_LIBRARIES}
+                            ${CMAKE_THREAD_LIBS_INIT}
+                            ${CMAKE_DL_LIBS}
+                    )
+
+target_link_libraries(qdsp ${QORE_LIBRARIES}
+                    ${ZLIB_LIBRARIES}
+                    ${CMAKE_THREAD_LIBS_INIT}
+                    ${CMAKE_DL_LIBS}
+            )
+
+target_link_libraries(qwf ${QORE_LIBRARIES}
+            ${ZLIB_LIBRARIES}
+            ${CMAKE_THREAD_LIBS_INIT}
+            ${CMAKE_DL_LIBS}
+    )
+
+target_link_libraries(qsvc ${QORE_LIBRARIES}
+    ${ZLIB_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
+    ${CMAKE_DL_LIBS}
+)
+
+target_link_libraries(qjob ${QORE_LIBRARIES}
+    ${ZLIB_LIBRARIES}
+    ${CMAKE_THREAD_LIBS_INIT}
+    ${CMAKE_DL_LIBS}
+)
+
+target_link_libraries(qctl ${QORE_LIBRARIES}
+                    ${ZLIB_LIBRARIES}
+                    ${CMAKE_THREAD_LIBS_INIT}
+                    ${CMAKE_DL_LIBS}
+)
+
+target_link_libraries(qbugreport ${QORE_LIBRARIES}
+        ${ZLIB_LIBRARIES}
+        ${CMAKE_THREAD_LIBS_INIT}
+        ${CMAKE_DL_LIBS}
+)
+
+install(TARGETS qorus qorus-core qdsp qwf qsvc qjob qctl qbugreport DESTINATION bin COMPONENT QorusBinary)
+install(PROGRAMS ${QORE_QJAVAC} ${QORE_QJAVA2JAR} DESTINATION bin COMPONENT QorusBinary)
+install(PROGRAMS ${QORUS_SCRIPTS} DESTINATION bin COMPONENT QorusBinary)
+install(FILES ${QORUS_ETC} DESTINATION etc COMPONENT QorusNoArch)
+install(FILES ${QORUS_ETC_REST_SCHEMA_TARGETS} DESTINATION schema COMPONENT QorusNoArch)
+install(FILES ${QORUS_ETC_GRAFANA} DESTINATION etc/grafana COMPONENT QorusNoArch)
+install(FILES ${QORUS_ETC_PROMETHEUS} DESTINATION etc/prometheus COMPONENT QorusNoArch)
+install(FILES ${QORUS_ETC_IMAGES} DESTINATION etc/images COMPONENT QorusNoArch)
+install(FILES ${QORUS_MODULES_FILES} DESTINATION qlib COMPONENT QorusQlib)
+install(DIRECTORY ${QORUS_MODULES_DIRS} DESTINATION qlib COMPONENT QorusQlib)
+install(FILES ${QORUS_FAKE_API_MODULE_TARGETS} DESTINATION qlib COMPONENT QorusQlib)
+install(FILES ${QORUS_CLIENT} DESTINATION qlib COMPONENT QorusQlib)
+install(FILES lib/README.intern DESTINATION qlib/intern COMPONENT QorusQlib)
+install(FILES ${QORUS_LIB_ITERN} DESTINATION qlib/intern COMPONENT QorusQlib)
+install(FILES ${QORUS_SYSTEM} DESTINATION system COMPONENT QorusNoArch)
+install(FILES ${QORUS_SYSTEM_YAML} DESTINATION system COMPONENT QorusNoArch)
+install(FILES ${QORUS_TEMPLATES_SQL} DESTINATION templates COMPONENT QorusNoArch)
+install(PROGRAMS ${QORUS_TEMPLATES_SH} DESTINATION templates COMPONENT QorusNoArch)
+install(FILES LICENSE THIRD-PARTY-README ${CMAKE_BINARY_DIR}/version.txt
+    DESTINATION ${CMAKE_INSTALL_PREFIX}
+    COMPONENT QorusNoArch
+)
+install(FILES ${QORUS_QCCP_SRC_X} DESTINATION qlib COMPONENT QorusQlib)
+
+install(FILES ${QORUS_OBJECT_PARSER_SOURCES} DESTINATION qlib/QorusObjectParser COMPONENT QorusQlib)
+install(FILES ${QORUS_OBJECT_PARSER_QYAML_SOURCES} DESTINATION qlib/Qyaml COMPONENT QorusQlib)
+install(DIRECTORY ${QORUS_OBJECT_PARSER_QYAML_VALIDATION} DESTINATION qlib/Qyaml COMPONENT QorusQlib)
+
+qore_config_info()
+
+# Qorus documentation
+#
+# Doxyfile requires file list separated with spaces instead cmake's ';'
+string(REPLACE ";" " " QORUS_DOCS_SOURCES_X_STR "${QORUS_DOCS_SOURCES_X};${QORUS_DOCS_REST_SOURCES_X}")
+configure_file(${CMAKE_SOURCE_DIR}/doxygen/Doxyfile.cmake ${CMAKE_BINARY_DIR}/Doxyfile @ONLY)
+set(QORUS_DOCS_DIR "qorus-ce")
+add_custom_command(OUTPUT ${CMAKE_BINARY_DIR}/doxygen/qorus
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doxygen/qorus
+    COMMENT "creating doxygen/qorus folder" VERBATIM
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/doxygen
+)
+
+# FIXME creating manually the links to the modules is not nice, nevertheless I believe better than
+# calling qrb to create them (qrb --module-doc-links). I believe Qorus should be aware of Qore and the modules,
+# since it has to install them to OMQ_DIR anyway (which is not the case with cmake now, see
+# https://bugs.qoretechnologies.com/issues/1429). IF cmake knows about the modules and qore, it should
+# also be able to modify Doxyfile.cmake to point directly to the tag files and vice versa.
+# --PQ 20-Jul-2016
+if (DEFINED ENV{QORE_GIT_ROOT})
+    if (${UNIX})
+        add_custom_target(create-qore-doc-link
+            DEPENDS ${CMAKE_BINARY_DIR}/doxygen/qorus
+            COMMAND ${CMAKE_COMMAND} -E create_symlink $ENV{QORE_GIT_ROOT}/qore/build ${CMAKE_BINARY_DIR}/doxygen/qore
+            COMMAND ${CMAKE_COMMAND} -E create_symlink $ENV{QORE_GIT_ROOT}/qore/build/docs ${CMAKE_BINARY_DIR}/doxygen/qorus/qore
+        )
+        FOREACH (mod ${QORE_CMAKE_MODS})
+            if (IS_DIRECTORY $ENV{QORE_GIT_ROOT}/module-${mod}/build/docs/${mod})
+                add_custom_command(TARGET create-qore-doc-link PRE_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink $ENV{QORE_GIT_ROOT}/module-${mod}/build ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}
+                )
+
+                # iterate all subdirectories in the module's documentation directory
+                set(_curdir ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod})
+                set(_srcdir $ENV{QORE_GIT_ROOT}/module-${mod}/build/docs)
+                FILE(GLOB children RELATIVE ${_srcdir} ${_srcdir}/*)
+                FOREACH(child ${children})
+                    IF (IS_DIRECTORY ${_srcdir}/${child}/html)
+                        MESSAGE(STATUS "ADDING ${mod} -> ${child}")
+                        SET(_mod_output ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child})
+                        SET (QORUS_DOC_MODULE_OUTPUT ${QORUS_DOC_MODULE_OUTPUT} ${_mod_output})
+                        add_custom_command(
+                            TARGET create-qore-doc-link POST_BUILD
+                            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child}
+                            COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}/docs/${child}/html ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child}/html
+                        )
+                    ENDIF()
+                ENDFOREACH(child)
+
+            else()
+                SET(_mod_output ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod})
+                SET (QORUS_DOC_MODULE_OUTPUT ${QORUS_DOC_MODULE_OUTPUT} ${_mod_output})
+                add_custom_command(TARGET create-qore-doc-link PRE_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink $ENV{QORE_GIT_ROOT}/module-${mod}/build ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}
+                    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}
+                    COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}/html ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/html
+                )
+            endif()
+        ENDFOREACH (mod)
+        FOREACH (mod ${QORE_AUTOTOOLS_MODS})
+            add_custom_command(TARGET create-qore-doc-link PRE_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink $ENV{QORE_GIT_ROOT}/module-${mod}/docs ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}
+            )
+
+            # iterate all subdirectories in the module's documentation directory
+            set(_curdir ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod})
+            set(_srcdir $ENV{QORE_GIT_ROOT}/module-${mod}/docs)
+            FILE(GLOB children RELATIVE ${_srcdir} ${_srcdir}/*)
+            FOREACH(child ${children})
+                IF (IS_DIRECTORY ${_srcdir}/${child}/html)
+                    #MESSAGE(STATUS "ADDING ${mod} -> ${child}")
+                    SET(_mod_output ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child})
+                    SET (QORUS_DOC_MODULE_OUTPUT ${QORUS_DOC_MODULE_OUTPUT} ${_mod_output})
+                    add_custom_command(
+                        TARGET create-qore-doc-link POST_BUILD
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child}
+                        COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/doxygen/qorus/${mod}/${child}/html ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/${mod}/${child}/html
+                    )
+                ENDIF()
+            ENDFOREACH(child)
+
+        ENDFOREACH (mod)
+    else ()
+        # FIXME should copy the data instead, or use better TAGFILES in Doxyfile.cmake
+        # --PQ 20-Jul-2016
+        message( WARNING "docs cannot be built on ${CMAKE_SYSTEM_NAME} properly, links to qore and modules will be missing")
+        add_custom_target(create-qore-doc-link
+            COMMENT "cannot create symlink on ${CMAKE_SYSTEM_NAME}"
+        )
+    endif ()
+else ()
+    message( WARNING "docs cannot be built properly without QORE_GIT_ROOT env variable, links to qore and modules will be missing")
+    add_custom_target(create-qore-doc-link
+        COMMENT "missing QORE_GIT_ROOT env variable, cannot build docs properly"
+    )
+endif ()
+
+if (DEFINED ENV{DOXYGEN_EXECUTABLE})
+    set(DOXYGEN_EXECUTABLE $ENV{DOXYGEN_EXECUTABLE})
+endif()
+
+add_custom_target(docs-build
+    DEPENDS ${CMAKE_BINARY_DIR}/doxygen/qorus
+    DEPENDS create-qore-doc-link
+    COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_BINARY_DIR}/Doxyfile
+    COMMAND qdx --post --keep-dollar ${CMAKE_BINARY_DIR}/doxygen/qorus/qorus ${CMAKE_BINARY_DIR}/doxygen/qorus/qorus/search
+    COMMAND ${CMAKE_COMMAND} -E copy ${QORUS_ETC_REST_SCHEMA_TARGETS} ${CMAKE_BINARY_DIR}/doxygen/qorus/qorus
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/doxygen
+    COMMENT "Generating API documentation with Doxygen" VERBATIM
+)
+
+add_custom_target(docs-package-setup
+    DEPENDS docs-build
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/doxygen/qorus-docs
+    COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/doxygen/qorus/qorus ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/qorus
+    COMMAND ${CMAKE_COMMAND} -E create_symlink ${CMAKE_BINARY_DIR}/doxygen/qorus/qore ${CMAKE_BINARY_DIR}/doxygen/qorus-docs/qore
+)
+
+add_custom_target(docs
+    DEPENDS docs-package-setup ${QORUS_DOC_MODULE_OUTPUT} ${QORUS_DOCS_SOURCES_X} ${QORUS_DOCS_REST_SOURCES_X}
+    COMMAND cd ${CMAKE_BINARY_DIR}/doxygen/qorus-docs && tar -cjhf ../${QORUS_DOCS_DIR}.tar.bz2 .
+    COMMENT "Packaging API documentation with tar" VERBATIM
+)
+
+add_custom_target(system
+    COMMAND schema-tool -V
+    COMMAND oload -lRv ${QORUS_SYSTEM_YAML}
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Validating schema; system services/jobs oload" VERBATIM
+)
+
+# installs the “noarch” components directly to $OMQ_DIR
+add_custom_target(install-noarch
+    COMMAND ${CMAKE_COMMAND} -DCOMPONENT=QorusNoArch -P cmake_install.cmake
+    COMMENT "Installing no-arch component"
+)
+
+# installs binaries
+add_custom_target(install-bin
+    COMMAND ${CMAKE_COMMAND} -DCOMPONENT=QorusBinary -P cmake_install.cmake
+    COMMENT "Installing binary component"
+)
+
+# installs libraries and modules
+add_custom_target(install-qlib
+    COMMAND ${CMAKE_COMMAND} -DCOMPONENT=QorusQlib -P cmake_install.cmake
+    DEPENDS ${QORUS_FAKE_API_MODULE_TARGETS} qorus-fake-apis
+    COMMENT "Installing qlib component"
+)
+
+# install regression test suite
+add_custom_target(install-test
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/test/dev-modules/TestJob.qm ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/test/dev-modules/TestService.qm ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/test/dev-modules/TestWorkflow2.qm ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/test/dev-modules/TestWorkflow.qm ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/test/dev-modules/MultiInterface.qm ${CMAKE_INSTALL_PREFIX}/user/modules/
+    COMMAND oload -A -lR ${CMAKE_SOURCE_DIR}/test/qorus-tests.qrf
+    COMMENT "Deploying regression tests into current OMQ_DIR instance"
+)
+
+# dependencies
+add_dependencies(docs qorus-core)
+

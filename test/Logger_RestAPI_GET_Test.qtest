@@ -1,0 +1,111 @@
+#!/usr/bin/env qore
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%include Logger/AbstractLoggerRestApiTest.qc
+
+%exec-class LoggerRestApiGetTest
+
+class LoggerRestApiGetTest inherits AbstractLoggerRestApiTest {
+    constructor() : AbstractLoggerRestApiTest("LoggerRestApiGetTest") {
+
+        # qrest get workflows/4/logger
+        addTestCase("getLoggerInfoTest", \getLoggerInfoTest());
+        # qrest get system/audit/logger
+        addTestCase("getSystemLoggerInfoTest", \getSystemLoggerInfoTest());
+
+        # qrest get workflows?action=defaultLogger
+        addTestCase("getDefLoggerInfoTest", \getDefLoggerInfoTest());
+        # qrest get system?action=defaultLogger
+        addTestCase("getDefSystemLoggerInfoTest", \getDefSystemLoggerInfoTest());
+
+        # qrest get workflows/4/logger/appenders
+        addTestCase("getAppendersTest", \getAppendersTest());
+        # qrest get workflows?action=defaultLoggerAppenders
+        addTestCase("getDefAppendersTest", \getDefAppendersTest());
+
+        # qrest get system/audit/logger/appenders
+        addTestCase("getSystemAppendersTest", \getSystemAppendersTest());
+        # qrest get system?action=defaultLoggerAppenders
+        addTestCase("getDefSystemAppendersTest", \getDefSystemAppendersTest());
+
+        # qrest get system/loggers
+        addTestCase("getSystemLoggersTest", \getSystemLoggersTest());
+
+        set_return_value(main());
+    }
+
+    getLoggerInfoTest() {
+        foreach string url in (INTERFACE_URLS) {
+            *hash<auto> loggerInfo = qrest.get(url);
+            assertEq(defParams{url}, loggerInfo{"params"});
+        }
+    }
+
+    getSystemLoggerInfoTest() {
+        foreach string url in (SYSTEM_URLS) {
+            *hash<auto> loggerInfo = qrest.get(url);
+            assertEq(defParams{SYSTEM_URL}, loggerInfo{"params"});
+        }
+    }
+
+    getDefLoggerInfoTest() {
+        foreach string url in (INTERFACES_URLS) {
+            *hash<auto> loggerInfo = qrest.get(url + "?action=defaultLogger");
+            assertEq(defParams{url}, loggerInfo{"params"});
+        }
+    }
+
+    getDefSystemLoggerInfoTest() {
+        *hash<auto> loggerInfo = qrest.get(SYSTEM_URL + "?action=defaultLogger");
+        assertEq(defParams{SYSTEM_URL}, loggerInfo{"params"});
+
+        # try to access logger through bad url
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 404 received",
+                        \qrest.get(), (SYSTEM_URL + "/logger",));
+    }
+
+    getAppendersTest() {
+        foreach string url in (INTERFACE_URLS) {
+            *list<auto> loggerInfo = qrest.get(url + "/appenders");
+            assertEq(defAppParams{url}, loggerInfo.first(){"params"});
+        }
+
+        # try to access appenders through bad url
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                        "HTTP status code 404 received",
+                        \qrest.get(), (INTERFACE_URLS[0] + "/appender",));
+    }
+
+    getSystemAppendersTest() {
+        foreach string url in (SYSTEM_URLS) {
+            *list<auto> loggerInfo = qrest.get(url + "/appenders");
+            assertEq(defAppParams{SYSTEM_URL}, loggerInfo.first(){"params"});
+
+            # try to access appenders through bad url
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                            "HTTP status code 404 received",
+                            \qrest.get(), (url + "/appender",));
+        }
+    }
+
+    getDefAppendersTest() {
+        foreach string url in (INTERFACES_URLS) {
+            *list<auto> loggerInfo = qrest.get(url + "?action=defaultLoggerAppenders");
+            assertEq(defAppParams{url}, loggerInfo.first(){"params"});
+        }
+    }
+
+    getDefSystemAppendersTest() {
+        *list<auto> loggerInfo = qrest.get(SYSTEM_URL + "?action=defaultLoggerAppenders");
+        assertEq(defAppParams{SYSTEM_URL}, loggerInfo.first(){"params"});
+    }
+
+    getSystemLoggersTest() {
+        *list<auto> loggerInfo = qrest.get(SYSTEM_URL + "/loggers");
+        assertEq(defParams{SYSTEM_URL}, loggerInfo.first(){"params"});
+    }
+}

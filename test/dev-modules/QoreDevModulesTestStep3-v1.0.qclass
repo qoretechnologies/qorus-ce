@@ -1,0 +1,17 @@
+# name: QoreDevModulesTestStep3
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreDevModulesTestStep3 inherits TestAsyncStep, QoreTest {
+    primaryImpl() {
+        assertTrue(True);
+        skipAsyncStep();
+    }
+}
+# END

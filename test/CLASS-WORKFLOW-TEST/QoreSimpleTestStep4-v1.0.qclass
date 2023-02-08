@@ -1,0 +1,18 @@
+# name: QoreSimpleTestStep4
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreSimpleTestStep4 inherits QorusNormalArrayStep {
+    softlist<auto> array() {
+        return ("val1", "val2");
+    }
+
+    primary(auto array_arg) {
+    }
+}
+# END

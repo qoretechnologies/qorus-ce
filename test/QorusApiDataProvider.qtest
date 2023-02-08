@@ -1,0 +1,429 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+%requires QorusAllDataProviders
+
+%exec-class QorusApiDataProviderTest
+class QorusApiDataProviderTest inherits Test {
+    public {
+        const WorkflowName = "DUMMY-TEST";
+
+        const PollInterval = 250ms;
+    }
+
+    constructor(): Test("QorusApiDataProviderTest", "1.0", \ARGV) {
+        addTestCase("util test", \utilTest());
+        addTestCase("dataprovider test", \dataProviderTest());
+        addTestCase("workflow test", \workflowTest());
+        addTestCase("service test", \serviceTest());
+        addTestCase("job test", \jobTest());
+        set_return_value(main());
+    }
+
+    private utilTest() {
+        # disable error logging in the UserApi class for this test
+        UserApi::verbose = LoggerLevel::FATAL;
+        on_exit UserApi::verbose = LoggerLevel::ERROR;
+
+        {
+            AbstractDataProvider post = DataProvider::getFactoryObjectFromString("qorus-api/util/post-sla-success");
+            assertFalse(post.doRequest({
+                "sla": "xxxxx-invalid-xxxxx",
+                "value": 1.5n,
+            }).result);
+        }
+
+        {
+            AbstractDataProvider post = DataProvider::getFactoryObjectFromString("qorus-api/util/post-sla-error");
+            assertFalse(post.doRequest({
+                "sla": "xxxxx-invalid-xxxxx",
+                "value": 1.5n,
+                "err": "test",
+                "desc": "x",
+            }).result);
+        }
+
+        {
+            AbstractDataProvider brk = DataProvider::getFactoryObjectFromString("qorus-api/util/break");
+            assertThrows("FSM-BREAK", \brk.doRequest());
+        }
+
+        {
+            AbstractDataProvider cont = DataProvider::getFactoryObjectFromString("qorus-api/util/continue");
+            assertThrows("FSM-CONTINUE", \cont.doRequest());
+        }
+
+        {
+            AbstractDataProvider thr = DataProvider::getFactoryObjectFromString("qorus-api/util/throw-exception");
+            assertThrows("TEST-ERROR", "test", \thr.doRequest(), {
+                "err": "TEST-ERROR",
+                "desc": "test",
+            });
+        }
+
+        {
+            AbstractDataProvider prov = DataProvider::getFactoryObjectFromString("qorus-api/util/workflow/leave-feedback");
+            assertThrows("FEEDBACK-ERROR", \prov.doRequest(), {
+                "key": "key",
+                "value": "x",
+            });
+        }
+
+        {
+            AbstractDataProvider prov = DataProvider::getFactoryObjectFromString("qorus-api/util/workflow/get-feedback");
+            assertThrows("FEEDBACK-ERROR", \prov.doRequest(), {
+                "key": "key",
+            });
+        }
+
+        {
+            AbstractDataProvider get_data = DataProvider::getFactoryObjectFromString("qorus-api/util/get-data");
+            assertEq(1, get_data.doRequest(1));
+        }
+
+        AbstractDataProvider write_output = DataProvider::getFactoryObjectFromString("qorus-api/util/write-output");
+        # NOTE: the write output hash arg should not be quoted when executed in the client
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \write_output.doRequest(), {
+            'val': '$static:record',
+        });
+
+        AbstractDataProvider get_data = DataProvider::getFactoryObjectFromString("qorus-api/util/get-data");
+        string str = get_random_string();
+        auto v = get_data.doRequest({
+            "str": str,
+        });
+        assertEq(str, v.str);
+
+        AbstractDataProvider set_autostart =
+            DataProvider::getFactoryObjectFromString("qorus-api/workflows/set-autostart");
+        hash<auto> res = set_autostart.doRequest({
+            "workflow": "ASYNC-TEST",
+            "autostart": 1,
+        });
+        assertEq(1, res.autostart);
+        on_exit {
+            res = set_autostart.doRequest({
+                "workflow": "ASYNC-TEST",
+                "autostart": 0,
+            });
+            assertEq(0, res.autostart);
+        }
+
+        AbstractDataProvider create_order =
+            DataProvider::getFactoryObjectFromString("qorus-api/workflows/create-order");
+        string key = get_random_string(50);
+        res = create_order.doRequest({
+            "workflow": "ASYNC-TEST",
+            "staticdata": {
+                "key": key,
+            },
+        });
+        assertEq(Type::Int, res.workflow_instanceid.type());
+        assertFalse(res.duplicate);
+
+        int wfiid = res.workflow_instanceid;
+
+        waitForStatus("util", wfiid, OMQ::StatAsyncWaiting);
+
+        AbstractDataProvider post_async_queue =
+            DataProvider::getFactoryObjectFromString("qorus-api/util/post-async-queue");
+        v = post_async_queue.doRequest({
+            "queue": "async-test",
+            "key": key,
+            "data": {},
+        });
+        assertNothing(v);
+
+        waitForStatus("util", wfiid);
+
+        {
+            # create a loopback REST connection
+            string url = UserApi::qorusGetLocalUrl();
+            url =~ s/^http/rest/;
+            string conn = sprintf("rest-%s", get_random_string());
+            qrest.post("connections", {
+                "name": conn,
+                "url": url,
+                "desc": "test connection",
+            });
+            on_exit qrest.del("connections/" + conn);
+
+            AbstractDataProvider rest_request =
+                DataProvider::getFactoryObjectFromString("qorus-api/util/rest-request");
+            v = rest_request.doRequest({
+                "connection": conn,
+                "method": "GET",
+                "uri-path": "api/public/info",
+            });
+            assertEq(200, v."response-code");
+            assertEq(Type::String, v.body."instance-key".type());
+        }
+    }
+
+    private dataProviderTest() {
+        AbstractDataProvider create = DataProvider::getFactoryObjectFromString("qorus-api/data-provider/create");
+        AbstractDataProvider del = DataProvider::getFactoryObjectFromString("qorus-api/data-provider/delete");
+
+        string path = "datasource/omq/connections";
+        string name = "test-conn-" + get_random_string();
+
+        hash<auto> record = {
+            "name": name,
+            "description": "test",
+            "url": "db://pgsql:deleteme/abc@deleteme",
+            "connection_type": "DATASOURCE",
+        };
+
+        # create a temporary connection
+        auto rec = create.doRequest({
+            "provider-path": path,
+            "record-data": record,
+        });
+        on_exit {
+            auto v = del.doRequest({
+                "provider-path": path,
+                "where": record{"name",}
+            });
+            assertEq({"records-deleted": 1}, v);
+        }
+        assertEq(record, rec);
+
+        AbstractDataProvider update = DataProvider::getFactoryObjectFromString("qorus-api/data-provider/update");
+        string new_desc = get_random_string();
+        auto v = update.doRequest({
+            "provider-path": path,
+            "set": {
+                "description": new_desc,
+            },
+            "where": record{"name",}
+        });
+        assertEq({"records-updated": 1}, v);
+
+        AbstractDataProvider search = DataProvider::getFactoryObjectFromString("qorus-api/data-provider/search");
+        v = search.doRequest({
+            "provider-path": path,
+            "where": record{"name",},
+        });
+        assertEq(1, v.lsize());
+        assertEq(new_desc, v[0].description);
+
+        AbstractDataProvider search_bulk =
+            DataProvider::getFactoryObjectFromString("qorus-api/data-provider/search-bulk-iterator");
+        AbstractDataProviderBulkRecordInterface i = search_bulk.doRequest({
+            "provider-path": path,
+            "where": record{"name",},
+        });
+        assertTrue(i.valid());
+        assertEq(1000, i.getBlockSize());
+        v = i.getValue();
+        assertEq(1, v.description.lsize());
+        assertEq((new_desc,), v.description);
+        assertNothing(i.getValue());
+
+        # teset upserting / merging
+        record.description = get_random_string();
+        rec = create.doRequest({
+            "provider-path": path,
+            "record-data": record,
+            "upsert": True,
+        });
+        assertEq(record, rec);
+        v = search.doRequest({
+            "provider-path": path,
+            "where": record{"name",},
+        });
+        assertEq(1, v.lsize());
+        assertEq(record.description, v[0].description);
+
+        AbstractDataProvider do_request =
+            DataProvider::getFactoryObjectFromString("qorus-api/data-provider/do-request");
+        assertThrows("INVALID-OPERATION", \do_request.doRequest(), {
+            "provider-path": path,
+        });
+    }
+
+    private workflowTest() {
+        AbstractDataProvider dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/create-order");
+        assertThrows("INVALID-REQUEST", \dp.doRequest());
+        assertThrows("INVALID-REQUEST", \dp.doRequest(), {"workflow": 1});
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", \dp.doRequest(), {"workflow": "XYZ", "staticdata": {}});
+
+        hash<auto> res = dp.doRequest({
+            "workflow": WorkflowName,
+            "staticdata": {},
+            "scheduled": now_us() + 1M,
+        });
+
+        on_exit {
+            qrest.put("orders/" + res.workflow_instanceid + "/cancel");
+        }
+
+        assertEq(2, res.size());
+        assertEq(Type::Int, res.workflow_instanceid.type());
+        assertFalse(res.duplicate);
+
+        hash<auto> wf = qrest.get("orders/" + res.workflow_instanceid);
+        assertEq(WorkflowName, wf.name);
+        assertEq(StatScheduled, wf.workflowstatus);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/cancel-order");
+        dp.doRequest({"workflow_instanceid": res.workflow_instanceid});
+
+        AbstractDataProvider dp_get_order_info =
+            DataProvider::getFactoryObjectFromString("qorus-api/workflows/get-order-info");
+        hash<auto> info = dp_get_order_info.doRequest({"workflow_instanceid": res.workflow_instanceid});
+        assertEq(OMQ::StatCanceled, info.workflowstatus);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/uncancel-order");
+        dp.doRequest({"workflow_instanceid": res.workflow_instanceid});
+
+        info = dp_get_order_info.doRequest({"workflow_instanceid": res.workflow_instanceid});
+        assertNeq(OMQ::StatCanceled, info.workflowstatus);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/block-order");
+        dp.doRequest({"workflow_instanceid": res.workflow_instanceid});
+
+        info = dp_get_order_info.doRequest({"workflow_instanceid": res.workflow_instanceid});
+        assertEq(OMQ::StatBlocked, info.workflowstatus);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/unblock-order");
+        dp.doRequest({"workflow_instanceid": res.workflow_instanceid});
+
+        info = dp_get_order_info.doRequest({"workflow_instanceid": res.workflow_instanceid});
+        assertNeq(OMQ::StatBlocked, info.workflowstatus);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/list");
+        auto v = dp.getChildProviderNames();
+        assertEq(Type::List, v.type());
+        assertGt(0, v.lsize());
+
+        AbstractDataProvider dp_wf_info =
+            DataProvider::getFactoryObjectFromString("qorus-api/workflows/list/DUMMY-TEST/info");
+        info = dp_wf_info.doRequest();
+        assertTrue(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/list/DUMMY-TEST/disable");
+        v = dp.doRequest();
+        assertEq("DUMMY-TEST", v.name);
+
+        info = dp_wf_info.doRequest();
+        assertFalse(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/list/DUMMY-TEST/enable");
+        v = dp.doRequest();
+        assertEq("DUMMY-TEST", v.name);
+
+        info = dp_wf_info.doRequest();
+        assertTrue(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/list/DUMMY-TEST/exec-sync");
+        v = dp.doRequest({"staticdata": {}});
+        assertEq(OMQ::StatComplete, v.status);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/workflows/list/DUMMY-TEST/exec-async");
+        v = dp.doRequest({"staticdata": {}});
+        assertEq(Type::Int, v.workflow_instanceid.type());
+    }
+
+    private serviceTest() {
+        AbstractDataProvider dp = DataProvider::getFactoryObjectFromString("qorus-api/services/list");
+        auto v = dp.getChildProviderNames();
+        assertEq(Type::List, v.type());
+        assertGt(0, v.lsize());
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/services/list/http-test/load");
+        hash<auto> info = dp.doRequest();
+        assertEq(Type::String, info.info.type());
+
+        on_exit {
+            qrest.put("services/http-test/unload");
+        }
+
+        AbstractDataProvider dp_svc_info =
+            DataProvider::getFactoryObjectFromString("qorus-api/services/list/http-test/info");
+        info = dp_svc_info.doRequest();
+        assertEq("loaded", info.status);
+        assertTrue(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/services/list/http-test/call-method");
+        v = dp.doRequest({"method": "echo", "args": "hi"});
+        assertEq(("hi",), v);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/services/list/http-test/disable");
+        v = dp.doRequest();
+        assertEq("http-test", v.name);
+
+        info = dp_svc_info.doRequest();
+        assertEq("unloaded", info.status);
+        assertFalse(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/services/list/http-test/enable");
+        v = dp.doRequest();
+        assertEq("http-test", v.name);
+
+        info = dp_svc_info.doRequest();
+        assertEq("unloaded", info.status);
+        assertTrue(info.enabled);
+    }
+
+    private jobTest() {
+        AbstractDataProvider dp = DataProvider::getFactoryObjectFromString("qorus-api/jobs/list");
+        auto v = dp.getChildProviderNames();
+        assertEq(Type::List, v.type());
+        assertGt(0, v.lsize());
+
+        AbstractDataProvider dp_job_info =
+            DataProvider::getFactoryObjectFromString("qorus-api/jobs/list/test-shortrun/info");
+        hash<auto> info = dp_job_info.doRequest();
+        assertEq("test-shortrun", info.name);
+        assertTrue(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/jobs/list/test-shortrun/run");
+        info = dp.doRequest();
+        assertEq(OMQ::StatComplete, info.status);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/jobs/list/test-shortrun/disable");
+        v = dp.doRequest();
+        assertEq("test-shortrun", v.name);
+
+        info = dp_job_info.doRequest();
+        assertFalse(info.enabled);
+
+        dp = DataProvider::getFactoryObjectFromString("qorus-api/jobs/list/test-shortrun/enable");
+        v = dp.doRequest();
+        assertEq("test-shortrun", v.name);
+
+        info = dp_job_info.doRequest();
+        assertTrue(info.enabled);
+    }
+
+    private waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status) {
+                break;
+            }
+
+            if (exists errors && inlist(h.workflowstatus, errors)) {
+                break;
+            }
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        assertEq(h.workflowstatus, status, testname);
+    }
+}

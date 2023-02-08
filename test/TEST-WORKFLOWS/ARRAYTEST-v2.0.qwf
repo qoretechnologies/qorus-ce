@@ -1,0 +1,80 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$queues."async-test" = (
+    "desc" : "asynchronous test queue",
+    "service" : "async-test",
+    );
+
+$options = (
+    "array-size"      : "the number of elements in the array_test_f1 array step",
+    "no-errors"       : "disable error generation",
+    "no-async-errors" : "no errors in async steps",
+    "fast-exec"       : "skip all async step operations and all subworkflow bind operations",
+    "skip-subworkflow": "skip all subworkflow bind operations",
+    "skip-async"      : "skip all async steps",
+    "no-init-error"   : "disable random onetimeinit error generation",
+    );
+
+const array_test_f1 = (
+    "name"         : "array_test_f1:1.0",
+    "valname"      : "test_validation:1.0",
+    "arrayname"    : "array_test_array:1.0",
+    );
+
+const array_test_async = (
+    "name"         : "array_test_async:1.0",
+    "endname"      : "async_test_f1_end:1.0",
+    "valname"      : "async_validation:1.0",
+    "arrayname"    : "array_test_array:1.0",
+    "queue"        : "async-test",
+    );
+
+const array_subworkflow = (
+    "name"         : "array_subworkflow:2.0",
+    "arrayname"    : "array_test_array:1.0",
+    "subworkflow"  : True,
+    );
+
+const test_subworkflow = (
+    "name"         : "test_subworkflow:2.0",
+    "subworkflow"  : True,
+    );
+
+# here we use the "test_function_2()" function v 1.0 a second time
+# in the same flow by creating another step
+const test_step_2 = (
+    "name"         : "test_step_2:1.0",
+    "funcname"     : "test_function_2:1.0",
+    );
+
+# and similarly with "test_function_1()" v1.0
+const test_step_3 = (
+    "name"         : "test_step_3:1.0",
+    "funcname"     : "test_function_1:1.0",
+ );
+
+$array = ( "test_function_1:1.0",
+           ( array_test_f1, (array_test_async, "test_function_2:1.0"), array_subworkflow ),
+           ( test_step_2, "test_function_3:1.0" ),
+	   test_subworkflow, test_step_3 );
+
+$workflows.ARRAYTEST."2.0" = (
+    "desc"          : "workflow testing many step types",
+    "author"        : "Qore Technologies, sro",
+    "patch"         : "p1",
+    "steps"         : $array,
+    "attach"        : "test_init:1.0",
+    "detach"        : "array_detach_test:1.0",
+    "onetimeinit"   : "test_onetimeinitialization:1.0",
+    "functions"     : "doTest",
+    "options"       : $options,
+    "errorfunction" : "test_errors:2.0",
+    "groups"        : "test",
+ );

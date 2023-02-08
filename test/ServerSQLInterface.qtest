@@ -1,0 +1,1919 @@
+#!/usr/bin/env qore
+
+%requires QUnit
+%requires QorusClientCore
+%requires QorusSchema
+%requires SqlUtil
+%requires BulkSqlUtil
+
+%new-style
+%strict-args
+%require-types
+%exec-class Main
+
+sub QDBG_TEST_CLUSTER_FAILOVER() {}
+
+# A workaround for Qorus4 process split
+class QdspClient inherits DatasourcePool{
+    constructor(AbstractDatasource ds) : DatasourcePool(ds.getConfigString()) {}
+}
+
+sub qlog(int level, string msg) {
+    printf("qlog: %d: %s\n", now(), vsprintf(msg, argv));
+}
+
+# this one overrides system get_sql_table_system to speed up tests
+# using internal caching - to construct new Table object is very expensive.
+our hash sys_table_cache;
+SqlUtil::AbstractTable sub get_sql_table_system(AbstractDatasource ds, string table_name) {
+    if (!sys_table_cache.hasKey(table_name)) {
+        #printf("new cache: %s\n", table_name);
+        SqlUtil::Table t(ds, table_name);
+        sys_table_cache{table_name} = t.getTable();
+    }
+    return sys_table_cache{table_name};
+}
+
+SqlUtil::AbstractTable sub get_sql_table_system_trans(AbstractDatasource ds, string table_name) {
+    return get_sql_table_system(ds, table_name);
+}
+
+%include ../Classes/ServerSQLInterface.qc
+
+
+class Main inherits QUnit::Test {
+
+    private {
+        QdspClient m_ds;
+        ServerSQLInterface m_sqlif;
+
+        const NOT_EXISTING_OBJECT = -100000;
+
+        const REF_WORKFLOW = {
+            "workflowid": -1,
+            "name": "SERVERSQLINTERFACE-TEST",
+            "version": "1.0",
+            "patch": NOTHING,
+            "description": "a test workflow for ServerSQLInterface unit test",
+            "author": "Qore Technologies",
+            "remote": 1,
+            "open": 1,
+            "autostart": 0,
+            "manual_autostart": 0,
+            "max_instances": 10,
+            "enabled": 1,
+            "sla_threshold": 200,
+            "manual_sla_threshold": 0,
+            "errorfunction_instanceid": NOTHING,
+            "attach_func_instanceid": NOTHING,
+            "detach_func_instanceid": NOTHING,
+            "onetimeinit_func_instanceid": NOTHING,
+            "errhandler_func_instanceid": NOTHING,
+            "deprecated": 0,
+            "created": now_ms(),
+            "modified": now_ms(),
+        };
+
+        const REF_SERVICE = {
+            "serviceid": -1,
+            "service_type": "USER",
+            "name": "serversqlinterface-test",
+            "version": "1.0",
+            "patch": NOTHING,
+            "description": "a test service for ServerSQLInterface unit test",
+            "author": "Qore Technologies",
+            "parse_options": NOTHING,
+            "remote": 0,
+            "autostart": 1,
+            "manual_autostart": 0,
+            "enabled": 1,
+            "created": now_ms(),
+            "modified": now_ms(),
+        };
+
+        const REF_JOB = {
+            "jobid": -1,
+            "name": "serversqlinterface-test",
+            "description": "a test job for ServerSQLInterface unit test",
+            "version": "1.0",
+            "author": "Qore Technologies",
+            "sessionid": 0,
+            "active": 0,
+            "remote": 0,
+            "run_skipped": 0,
+            "enabled": 0,
+            "code": "# nothing here",
+            "month": "*",
+            "day": "*",
+            "wday": "*",
+            "hour": "*",
+            "minute": "*",
+            "recurring": NOTHING,
+            "last_executed": NOTHING,
+            "expiry_date": NOTHING,
+            "manually_updated": 0,
+            "custom_trigger": NOTHING,
+            "slaid": NOTHING,
+            "created": now_ms(),
+            "modified": now_ms(),
+        };
+
+        const REF_ORDER_INSTANCE = {
+            "workflow_instanceid": -1,
+            "external_order_instanceid": "testref",
+            "staticdata": "test staticdata",
+            "dynamicdata": "test dynamicdata",
+            "created": now_ms(),
+            "modified": now_ms(),
+        };
+
+        const REF_WFIID = {
+            "workflow_instanceid": REF_ORDER_INSTANCE.workflow_instanceid,
+            "workflowid": REF_WORKFLOW.workflowid,
+            "workflowstatus": "Y",
+            "status_sessionid": 0,
+            "parent_workflow_instanceid": NOTHING,
+            "subworkflow": 0,
+            "synchronous": 0,
+            "warnings": 0,
+            "errors": 0,
+            "retries": 0,
+            "note_count": 0,
+            "business_error": NOTHING,
+            "workflowstatus_orig": NOTHING,
+            "custom_status": NOTHING,
+            "scheduled": NOTHING,
+            "priority": 1,
+            "started": now_ms(),
+            "completed": NOTHING,
+            "modified": now_ms(),
+            "operator_lock": NOTHING,
+        };
+
+        const REF_FUNCTION_INSTANCE = {
+            "function_instanceid": -1,
+            "function_type": "STEP",
+            "name": "serversqlinterface1",
+            "version": "1.0",
+            "body": "# no text",
+            "created": now_ms(),
+        };
+
+        const REF_STEP = {
+            "stepid": -1,
+            "steptype": "NORMAL",
+            "arraytype": "NONE",
+            "name": "serversqlinterface1",
+            "version": "1.0",
+            "stepfunction_instanceid": -1,
+            "created": now_ms(),
+        };
+
+        const REF_STEP_INSTANCE = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "stepid": REF_STEP.stepid,
+            "ind": 0,
+            "stepstatus": "E",
+            "retries": 0,
+            "skip": 0,
+            "started": now_ms(),
+        };
+
+        const REF_QUEUE = {
+            "queueid": -1,
+            "name": "serversqlinterface-test",
+            "description": "a test queue",
+            #serviceid            number(14)
+            "created": now_ms(),
+        };
+
+        const REF_QUEUE_DATA = {
+            "queueid": REF_QUEUE.queueid,
+            "queuekey": "foo",
+            "queue_data_status": "W",
+            "data": "xxx",
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "stepid": REF_STEP_INSTANCE.stepid,
+            "ind": 0,
+            "corrected": 0,
+            "created": now_ms(),
+        };
+    }
+
+    constructor() : Test("ServerSQLInterface", OMQ::version) {
+        QorusClient::init2();
+
+        try {
+            qrest.get("remote");
+            throw "QORUS-IS-RUNNING", "This test can run only with Qorus off";
+        }
+        catch (hash ex) {
+            if (ex.err != "SOCKET-CONNECT-ERROR") {
+                rethrow;
+            }
+        }
+
+        m_ds = new QdspClient(omqclient.getSQLIF().omqp);
+        on_exit m_ds.rollback();
+        switch (m_ds.getDriverName()) {
+            case "oracle" : m_sqlif = new OracleServerSQLInterface(m_ds); break;
+            case "pgsql"  : m_sqlif = new PostgreServerSQLInterface(m_ds); break;
+            case "mysql"  : m_sqlif = new MySQLServerSQLInterface(m_ds); break;
+            default:
+                throw "DATASOURCE-ERROR", sprintf("driver %y is not supported for the Qorus system schema", m_ds.getDriverName());
+        }
+
+        addTestCase("insertSla", \insertSla());
+        addTestCase("sessionReopen", \sessionReopen());
+        addTestCase("sessionOpen2", \sessionOpen2());
+        addTestCase("commitUpdateWorkflowSlaStatus", \commitUpdateWorkflowSlaStatus());
+        addTestCase("commitUpdateWorkflowRemoteStatus", \commitUpdateWorkflowRemoteStatus());
+        addTestCase("commitUpdateServiceRemoteStatus", \commitUpdateServiceRemoteStatus());
+        addTestCase("commitUpdateJobRemoteStatus", \commitUpdateJobRemoteStatus());
+        addTestCase("smReplaceExternalData", \smReplaceExternalData());
+        addTestCase("smReplaceExternalDataUpdate", \smReplaceExternalDataUpdate());
+        addTestCase("smWorkflowInstanceLock", \smWorkflowInstanceLock());
+        addTestCase("smRetryWorkflowInstanceUpdate", \smRetryWorkflowInstanceUpdate());
+        addTestCase("smCommitBlockOrCancel", \smCommitBlockOrCancel());
+        addTestCase("smSetErrorIntern", \smSetErrorIntern());
+        addTestCase("smSkipStepSQL", \smSkipStepSQL());
+        addTestCase("smGetSubWorkflowStatus", \smGetSubWorkflowStatus());
+        addTestCase("smGetWorkflowInstanceStatusSQL", \smGetWorkflowInstanceStatusSQL());
+        addTestCase("smGetWorkflowInstanceStatusSQLContextSeg", \smGetWorkflowInstanceStatusSQLContextSeg());
+        addTestCase("smGetWorkflowInstanceStatusSQLContextStep", \smGetWorkflowInstanceStatusSQLContextStep());
+        addTestCase("smGetAllSubWorkflowInfo", \smGetAllSubWorkflowInfo());
+        addTestCase("smGetDBErrors", \smGetDBErrors());
+        addTestCase("smGetWorkflowInstanceInfoSQLIntern", \smGetWorkflowInstanceInfoSQLIntern());
+        addTestCase("smGetParentInfo", \smGetParentInfo());
+        addTestCase("smGetTreeWithWorkflowInstanceIntern", \smGetTreeWithWorkflowInstanceIntern());
+        addTestCase("smGetOrderInfoFromQueryResults", \smGetOrderInfoFromQueryResults());
+        addTestCase("smGetOrderInfoSQL", \smGetOrderInfoSQL());
+        addTestCase("smQueueEventsIntern", \smQueueEventsIntern());
+        addTestCase("rescheduleWorkflow", \rescheduleWorkflow());
+        addTestCase("reprioritizeWorkflow", \reprioritizeWorkflow());
+        addTestCase("lockOrderNoCommit", \lockOrderNoCommit());
+        addTestCase("unlockOrderNoCommit", \unlockOrderNoCommit());
+        addTestCase("breakOrderLockNoCommit", \breakOrderLockNoCommit());
+        addTestCase("rescheduleWorkflowUnconditional", \rescheduleWorkflowUnconditional());
+        addTestCase("reprioritizeWorkflowUnconditional", \reprioritizeWorkflowUnconditional());
+        addTestCase("workflowQueueInitWorkflowInstanceQueue", \workflowQueueInitWorkflowInstanceQueue());
+        addTestCase("workflowQueueInitCommonSegments", \workflowQueueInitCommonSegments());
+        addTestCase("rbacLoad", \rbacLoad());
+        addTestCase("updateSyntheticGroup", \updateSyntheticGroup());
+        addTestCase("commitGroupStatus", \commitGroupStatus());
+        addTestCase("commitJobActiveStatus", \commitJobActiveStatus());
+        addTestCase("commitJobExpiry", \commitJobExpiry());
+        addTestCase("commitJobCustomTrigger", \commitJobCustomTrigger());
+        addTestCase("insertJobError", \insertJobError());
+        addTestCase("insertJobInstance", \insertJobInstance());
+        addTestCase("updateJobInstanceInfo", \updateJobInstanceInfo());
+        addTestCase("updateFinalJobInstanceStatus", \updateFinalJobInstanceStatus());
+        addTestCase("commitJobSchedule", \commitJobSchedule());
+        addTestCase("commitJobRecurring", \commitJobRecurring());
+        addTestCase("updateInterfaceOption", \updateInterfaceOption());
+        addTestCase("insertInterfaceOption", \insertInterfaceOption());
+        addTestCase("deleteInterfaceOption", \deleteInterfaceOption());
+        addTestCase("updateWorkflowDeprecated", \updateWorkflowDeprecated());
+        addTestCase("updateWorkflowAutostart", \updateWorkflowAutostart());
+        addTestCase("bulkFlushWorkflowStatus", \bulkFlushWorkflowStatus());
+        addTestCase("getPriorityWorkflowIDAndParentTrans", \getPriorityWorkflowIDAndParentTrans());
+        addTestCase("getWorkflowIDAndPriorityTrans", \getWorkflowIDAndPriorityTrans());
+        addTestCase("getOrderKeysTrans", \getOrderKeysTrans());
+        addTestCase("getSubWorkflowStepTrans", \getSubWorkflowStepTrans());
+        addTestCase("getSubworkflowParentAndGrandparentInfoTrans", \getSubworkflowParentAndGrandparentInfoTrans());
+        addTestCase("getQueueAndWorkflowInfoTrans", \getQueueAndWorkflowInfoTrans());
+        addTestCase("getParentAndStatusFromQueueTrans", \getParentAndStatusFromQueueTrans());
+        addTestCase("cacheSteps", \cacheSteps());
+        addTestCase("insertStep", \insertStep());
+        addTestCase("updateStepStatus", \updateStepStatus());
+        addTestCase("updateStep", \updateStep());
+        addTestCase("insertSegment", \insertSegment());
+        addTestCase("updateSegment", \updateSegment());
+        addTestCase("markReadyWorkflowAsError", \markReadyWorkflowAsError());
+        addTestCase("insertArrayStep", \insertArrayStep());
+        addTestCase("insertSubWorkflowInstance", \insertSubWorkflowInstance());
+        addTestCase("insertStepInstanceEvent", \insertStepInstanceEvent());
+        addTestCase("setWorkflowInstanceInProgress", \setWorkflowInstanceInProgress());
+        addTestCase("updateFinalWorkflowStatus", \updateFinalWorkflowStatus());
+        addTestCase("grabWorkflow", \grabWorkflow());
+        addTestCase("insertQueueData", \insertQueueData());
+        addTestCase("insertOrUpdateQueueData", \insertOrUpdateQueueData());
+        addTestCase("insertCorrectedQueueData", \insertCorrectedQueueData());
+        addTestCase("insertOrUpdateCorrectedQueueData", \insertOrUpdateCorrectedQueueData());
+        addTestCase("correctQueueData", \correctQueueData());
+        addTestCase("correctQueueDataCheck", \correctQueueDataCheck());
+        addTestCase("updateQueueData", \updateQueueData());
+        addTestCase("discardQueueDataUnconditional", \discardQueueDataUnconditional());
+        addTestCase("discardQueueDataCheck", \discardQueueDataCheck());
+        addTestCase("getQueueInfo", \getQueueInfo());
+        addTestCase("updateQueueKey", \updateQueueKey());
+        addTestCase("queueGetInfo", \queueGetInfo());
+        addTestCase("queueGetInfoFromQueueKey", \queueGetInfoFromQueueKey());
+        addTestCase("queueStatus", \queueStatus());
+        addTestCase("queueGetQueueInfo", \queueGetQueueInfo());
+        addTestCase("insertErrorInstance", \insertErrorInstance());
+        addTestCase("deleteOrderKey", \deleteOrderKey());
+        addTestCase("updateOrderKey", \updateOrderKey());
+        addTestCase("cacheSegments", \cacheSegments());
+        addTestCase("cacheWorkflowData", \cacheWorkflowData());
+        addTestCase("setWorkflowInstanceError", \setWorkflowInstanceError());
+        addTestCase("updateWorkflowStatus", \updateWorkflowStatus());
+        addTestCase("setQueueDataError", \setQueueDataError());
+        addTestCase("workflowReadyQueueInit", \workflowReadyQueueInit());
+        addTestCase("workflowEventQueueInit", \workflowEventQueueInit());
+        addTestCase("workflowDestructorQueueInit", \workflowDestructorQueueInit());
+        addTestCase("workflowReadyQueueConstructor", \workflowReadyQueueConstructor());
+        addTestCase("workflowEventQueueConstructor", \workflowEventQueueConstructor());
+        addTestCase("workflowQueueDestructor", \workflowQueueDestructor());
+        addTestCase("workflowQueueInitCommonSubAsync", \workflowQueueInitCommonSubAsync());
+        addTestCase("workflowInstanceCleanupSynchronous", \workflowInstanceCleanupSynchronous());
+        addTestCase("workflowInstanceExecuteSubWorkflowStep", \workflowInstanceExecuteSubWorkflowStep());
+        addTestCase("workflowInstanceGetStepInstanceEvent", \workflowInstanceGetStepInstanceEvent());
+        addTestCase("getWorkflowEventStatus", \getWorkflowEventStatus());
+        addTestCase("createWorkflowEvent", \createWorkflowEvent());
+        addTestCase("postWorkflowEvent", \postWorkflowEvent());
+        addTestCase("getStepInstanceEventList", \getStepInstanceEventList());
+        addTestCase("workflowLoadFunctionID", \workflowLoadFunctionID());
+        addTestCase("workflowLoadFunctionIDs", \workflowLoadFunctionIDs());
+        addTestCase("serviceManagerAutoStart", \serviceManagerAutoStart());
+        addTestCase("serviceManagerSetAutostartStatus", \serviceManagerSetAutostartStatus());
+        addTestCase("controlExecSynchronousWorkflowOnExistingOrder", \controlExecSynchronousWorkflowOnExistingOrder());
+        addTestCase("instanceDataSaveData", \instanceDataSaveData());
+        addTestCase("wfEntryReplaceStaticData", \wfEntryReplaceStaticData());
+        addTestCase("orderInstanceNotesSave", \orderInstanceNotesSave());
+        addTestCase("orderInstanceNotesGet", \orderInstanceNotesGet());
+        addTestCase("sessionClose", \sessionClose());
+        addTestCase("upsertFeedback", \upsertFeedback());
+
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        on_error {
+            on_exit m_ds.rollback();
+        }
+        on_success {
+            m_ds.commit();
+        }
+
+        # just to be sure all is empty at the beginning
+        globalTearDown();
+
+        insertRefData("workflows", REF_WORKFLOW);
+        insertRefData("services", REF_SERVICE);
+        insertRefData("jobs", REF_JOB);
+        insertRefData("workflow_instance", REF_WFIID);
+        insertRefData("order_instance", REF_ORDER_INSTANCE);
+        insertRefData("function_instance", REF_FUNCTION_INSTANCE);
+        insertRefData("steps", REF_STEP);
+        insertRefData("step_instance", REF_STEP_INSTANCE);
+        insertRefData("queues", REF_QUEUE);
+        insertRefData("queue_data", REF_QUEUE_DATA);
+    }
+
+    private insertRefData(string table_name, hash ref_data) {
+        #printf("inserting ref data into %s\n", table_name);
+        AbstractTable t = get_sql_table_system(m_ds, table_name);
+        t.insert(ref_data);
+    }
+
+    globalTearDown() {
+        on_error {
+            on_exit m_ds.rollback();
+        }
+        on_success {
+            m_ds.commit();
+        }
+
+        oloadX("workflow", "workflowid", REF_WORKFLOW.workflowid);
+        oloadX("job", "jobid", REF_JOB.jobid);
+        oloadX("service", "serviceid", REF_SERVICE.serviceid);
+
+        SqlUtil::Tables schema(m_ds, get_schema_object(m_ds).getTables());
+        foreach AbstractTable t in (schema.dropIterator()) {
+            deleteByColumn(t, "objectid", REF_WFIID.workflow_instanceid);
+            deleteByColumn(t, "objectid", REF_JOB.jobid);
+            deleteByColumn(t, "workflow_instanceid", REF_WFIID.workflow_instanceid);
+            deleteByColumn(t, "workflowid", REF_WORKFLOW.workflowid);
+            deleteByColumn(t, "serviceid", REF_SERVICE.serviceid);
+            deleteByColumn(t, "jobid", REF_JOB.jobid);
+            deleteByColumn(t, "queueid", REF_QUEUE_DATA.queueid);
+            deleteByColumn(t, "function_instanceid", REF_FUNCTION_INSTANCE.function_instanceid);
+            deleteByColumn(t, "stepid", REF_STEP.stepid);
+        }
+    }
+
+    private deleteByColumn(AbstractTable t, string column_name, auto value) {
+        if (t.describe().hasKey(column_name)) {
+            #printf("deleting %s from %s\n", column_name, t.getName());
+            t.del({column_name: value});
+        }
+    }
+
+    private oloadX(string table_name, string column_name, auto id) {
+        *hash<auto> r = m_ds.selectRow("select name, version from %ss where %s = %v", table_name, column_name, id);
+        if (!exists r) {
+            return;
+        }
+
+        # Qorus is not running, therefore we do not need to disable the interface first
+        string cmd = sprintf("oload -X %s:%s:%s", table_name, r.name, r.version);
+        #printf("%s\n", cmd);
+        int rc;
+        string cout = backquote(cmd, \rc);
+        if (rc) {
+            printf("ERROR: %s\n", cout);
+        }
+    }
+
+    private insertSla() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.insertSla("foo", "foo", "test sla");
+        assertEq(True, ret > 0, "returned SLA id");
+    }
+
+    private sessionReopen() {
+        on_exit m_ds.rollback();
+        m_sqlif.sessionReopen(-1, "test", "localhost", "localhost");
+    }
+
+    private sessionOpen2() {
+        on_exit m_ds.rollback();
+
+        int ret = m_sqlif.sessionOpen2("foo", "localhost", "localhost");
+
+        assertEq(True, ret > 0);
+        AbstractTable t = get_sql_table_system(m_ds, "sessions");
+        hash row = t.selectRow({"where": {"sessionid": ret}});
+        assertEq("ACTIVE", row.sessionstatus);
+        assertEq("foo", row.instancekey);
+        assertEq("localhost", row.hostname);
+        assertEq("localhost", row.xmlrpc_server);
+        assertEq(OMQ::version, row.version);
+    }
+
+    private commitUpdateWorkflowSlaStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitUpdateWorkflowSlaStatus(REF_WORKFLOW.workflowid, 1);
+        AbstractTable t = get_sql_table_system(m_ds, "workflows");
+        hash row = t.selectRow({"where": {"workflowid": REF_WORKFLOW.workflowid}});
+        assertEq(1, row.manual_sla_threshold);
+        assertEq(1, row.sla_threshold);
+    }
+
+    private commitUpdateWorkflowRemoteStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitUpdateWorkflowRemoteStatus(REF_WORKFLOW.workflowid, True);
+
+        AbstractTable t = get_sql_table_system(m_ds, "workflows");
+        hash row = t.selectRow({"where": {"workflowid": REF_WORKFLOW.workflowid}});
+        assertEq(1, row.remote);
+
+        m_sqlif.commitUpdateWorkflowRemoteStatus(REF_WORKFLOW.workflowid, False);
+        row = t.selectRow({"where": {"workflowid": REF_WORKFLOW.workflowid}});
+        assertEq(0, row.remote);
+    }
+
+    private commitUpdateServiceRemoteStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitUpdateServiceRemoteStatus(REF_SERVICE.serviceid, True);
+
+        AbstractTable t = get_sql_table_system(m_ds, "services");
+        hash row = t.selectRow({"where": {"serviceid": REF_SERVICE.serviceid}});
+        assertEq(1, row.remote);
+
+        m_sqlif.commitUpdateServiceRemoteStatus(REF_SERVICE.serviceid, False);
+        row = t.selectRow({"where": {"serviceid": REF_SERVICE.serviceid}});
+        assertEq(0, row.remote);
+    }
+
+    private commitUpdateJobRemoteStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitUpdateJobRemoteStatus(REF_JOB.jobid, True);
+
+        AbstractTable t = get_sql_table_system(m_ds, "jobs");
+        hash row = t.selectRow({"where": {"jobid": REF_JOB.jobid}});
+        assertEq(1, row.remote);
+
+        m_sqlif.commitUpdateJobRemoteStatus(REF_JOB.jobid, False);
+        row = t.selectRow({"where": {"jobid": REF_JOB.jobid}});
+        assertEq(0, row.remote);
+    }
+
+    private smReplaceExternalData() {
+        on_exit m_ds.rollback();
+
+        # there is selectRow("... for update"). And qorus itself has begiNTransaction() in server code.
+        # And it's correct. beginTransaction() is needed here
+        m_ds.beginTransaction();
+
+        assertThrows("REPLACE-EXTERNAL-DATA-ERROR",
+                     \m_sqlif.smReplaceExternalData(),
+                     ("foo", REF_WFIID.workflow_instanceid));
+
+        *hash ret = m_sqlif.smReplaceExternalData("staticdata", REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(NOTHING, ret.dynamicdata);
+        assertEq(REF_ORDER_INSTANCE.staticdata, ret.staticdata);
+
+        ret = m_sqlif.smReplaceExternalData("dynamicdata", REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(NOTHING, ret.staticdata);
+        assertEq(REF_ORDER_INSTANCE.dynamicdata, ret.dynamicdata);
+    }
+
+    private smReplaceExternalDataUpdate() {
+        on_exit m_ds.rollback();
+
+        assertThrows("REPLACE-EXTERNAL-DATA-ERROR",
+                     \m_sqlif.smReplaceExternalDataUpdate(),
+                     ("foo", "bar", REF_WFIID.workflow_instanceid));
+
+        AbstractTable t = get_sql_table_system(m_ds, "order_instance");
+
+        m_sqlif.smReplaceExternalDataUpdate("staticdata", "bar", REF_WFIID.workflow_instanceid);
+        *hash row = t.selectRow({"where": {"workflow_instanceid": REF_WFIID.workflow_instanceid}});
+        assertEq(True, exists row);
+        assertEq("bar", row.staticdata);
+
+        m_sqlif.smReplaceExternalDataUpdate("dynamicdata", "bar", REF_WFIID.workflow_instanceid);
+        row = t.selectRow({"where": {"workflow_instanceid": REF_WFIID.workflow_instanceid}});
+        assertEq(True, exists row);
+        assertEq("bar", row.dynamicdata);
+    }
+
+    private smWorkflowInstanceLock() {
+        on_exit m_ds.rollback();
+        *hash row = m_sqlif.smWorkflowInstanceLock(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists row);
+        assertEq(REF_WFIID.workflowid, row.workflowid);
+        assertEq(REF_WFIID.workflowstatus, row.workflowstatus);
+        assertEq(REF_WFIID.status_sessionid, row.status_sessionid);
+    }
+
+    private smRetryWorkflowInstanceUpdate() {
+        on_exit m_ds.rollback();
+
+        assertThrows("STATUS-ERROR",
+                     \m_sqlif.smRetryWorkflowInstanceUpdate(),
+                     (REF_WFIID.workflow_instanceid,));
+
+        AbstractTable t = get_sql_table_system(m_ds, "segment_instance");
+        hash ins = {
+            "workflowid": REF_WFIID.workflowid,
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "segmentid": -1,
+            "segmentstatus": "E",
+        };
+        t.insert(ins);
+
+        int ret = m_sqlif.smRetryWorkflowInstanceUpdate(REF_WFIID.workflow_instanceid);
+        assertEq(1, ret);
+
+        hash wh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(wh);
+        assertEq("R", row.workflowstatus);
+
+        row = t.selectRow(wh);
+        assertEq("R", row.segmentstatus);
+    }
+
+    private smCommitBlockOrCancel() {
+        on_exit m_ds.rollback();
+
+        # not existing wfiid
+        assertThrows("CANCEL-WORKFLOW-ERROR",
+                     \m_sqlif.smCommitBlockOrCancel(),
+                     (NOT_EXISTING_OBJECT, 0, "CANCELED", False, True));
+        assertThrows("BLOCK-WORKFLOW-ERROR",
+                     \m_sqlif.smCommitBlockOrCancel(),
+                     (NOT_EXISTING_OBJECT, 0, "BLOCKED", True, True));
+
+        AbstractTable t = get_sql_table_system(m_ds, "workflow_instance");
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+
+        # cancel
+        m_sqlif. smCommitBlockOrCancel(REF_WFIID.workflow_instanceid,
+                                       REF_WFIID.status_sessionid,
+                                       "CANCELED",
+                                       True,
+                                       False,
+                                    );
+        hash row = t.selectRow(sh);
+        assertEq(REF_WFIID.workflowstatus, row.workflowstatus_orig);
+        assertEq("X", row.workflowstatus);
+        assertEq(0, row.status_sessionid);
+
+        # block of canceled
+        m_sqlif. smCommitBlockOrCancel(REF_WFIID.workflow_instanceid,
+                                       REF_WFIID.status_sessionid,
+                                       "BLOCKED",
+                                       True,
+                                       False,
+                                    );
+        row = t.selectRow(sh);
+        assertEq(REF_WFIID.workflowstatus, row.workflowstatus_orig);
+        assertEq("B", row.workflowstatus);
+        assertEq(0, row.status_sessionid);
+
+        # restore
+        m_sqlif. smCommitBlockOrCancel(REF_WFIID.workflow_instanceid,
+                                       REF_WFIID.status_sessionid,
+                                       "BLOCKED",
+                                       False,
+                                       False,
+                                   );
+        row = t.selectRow(sh);
+        assertEq(REF_WFIID.workflowstatus, row.workflowstatus);
+        assertEq(NULL, row.workflowstatus_orig);
+        assertEq(0, row.status_sessionid);
+    }
+
+    private smSetErrorIntern() {
+        on_exit m_ds.rollback();
+
+        string status = "A";
+        AbstractTable t_wfiid = get_sql_table_system(m_ds, "workflow_instance");
+        t_wfiid.update({"workflowstatus": status},
+                       {"workflow_instanceid": REF_WFIID.workflow_instanceid});
+
+        hash ret = m_sqlif.smSetErrorIntern(REF_WFIID.workflow_instanceid,
+                                            REF_WFIID.status_sessionid);
+
+        assertEq(True, ret.hasKey("stepcount"));
+        assertEq(True, ret.hasKey("segcount"));
+
+        hash row = t_wfiid.selectRow({"where": {"workflow_instanceid": REF_WFIID.workflow_instanceid}});
+        assertEq("E", row.workflowstatus);
+    }
+
+    private smSkipStepSQL() {
+        on_exit m_ds.rollback();
+
+        AbstractTable t = get_sql_table_system(m_ds, "step_instance");
+
+        # real call
+        m_sqlif.smSkipStepSQL(REF_WFIID.workflow_instanceid,
+                              -1, # stepid
+                              0, # ind
+                              REF_WFIID.status_sessionid,
+                              False,
+                            );
+
+        list rows = t.selectRows({"where": {"workflow_instanceid": REF_WFIID.workflow_instanceid}});
+        assertEq(1, rows.size());
+        assertEq(1, rows[0].skip);
+    }
+
+    private smGetSubWorkflowStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetSubWorkflowStatus(REF_WFIID.workflow_instanceid, -1, 0);
+    }
+
+    private smGetWorkflowInstanceStatusSQL() {
+        on_exit m_ds.rollback();
+
+        *hash ret = m_sqlif.smGetWorkflowInstanceStatusSQL(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(True, ret.hasKey("wq"));
+        assertEq(True, ret.hasKey("seg"));
+    }
+
+    private smGetWorkflowInstanceStatusSQLContextSeg() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetWorkflowInstanceStatusSQLContextSeg(REF_WORKFLOW.workflowid, 1);
+    }
+
+    private smGetWorkflowInstanceStatusSQLContextStep() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetWorkflowInstanceStatusSQLContextStep(REF_WFIID.workflow_instanceid);
+    }
+
+    private smGetAllSubWorkflowInfo() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetAllSubWorkflowInfo(REF_WFIID.workflow_instanceid);
+    }
+
+    private smGetDBErrors() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetDBErrors(REF_WFIID.workflow_instanceid, NOTHING, 1000);
+        m_sqlif.smGetDBErrors(REF_WFIID.workflow_instanceid, 1, 1000);
+    }
+
+    private smGetWorkflowInstanceInfoSQLIntern() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.smGetWorkflowInstanceInfoSQLIntern(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(REF_WORKFLOW.name, ret.name);
+        assertEq(REF_WORKFLOW.version, ret.version);
+        assertEq(REF_WORKFLOW.author, ret.author);
+        assertEq(REF_WFIID.workflowstatus, ret.workflowstatus);
+    }
+
+    private smGetParentInfo() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.smGetParentInfo(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(NULL, ret.parent_workflow_instanceid);
+        assertEq(REF_WFIID.subworkflow, ret.subworkflow);
+        assertEq(REF_WFIID.priority, ret.priority);
+    }
+
+    private smGetTreeWithWorkflowInstanceIntern() {
+        on_exit m_ds.rollback();
+        m_sqlif.smGetTreeWithWorkflowInstanceIntern((REF_WFIID.workflow_instanceid,));
+    }
+
+    private smGetOrderInfoFromQueryResults() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.smGetOrderInfoFromQueryResults(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(True, (exists ret.firstValue()));
+        assertEq(REF_WORKFLOW.name, ret.name[0]);
+        assertEq(REF_WORKFLOW.version, ret.version[0]);
+        assertEq(REF_WORKFLOW.workflowid, ret.workflowid[0]);
+        assertEq(REF_WFIID.workflowstatus, ret.workflowstatus[0]);
+    }
+
+    private smGetOrderInfoSQL() {
+        on_exit m_ds.rollback();
+        assertThrows("GET-ORDER-INFO-SQL-ERROR", \m_sqlif.smGetOrderInfoSQL(), ("foo", 1));
+
+        *list ret = m_sqlif.smGetOrderInfoSQL("workflow_instanceid", REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(1, ret.size());
+
+        ret = m_sqlif.smGetOrderInfoSQL("external_order_instanceid",
+                                        REF_ORDER_INSTANCE.external_order_instanceid);
+        assertEq(True, exists ret);
+        assertEq(1, ret.size());
+    }
+
+    private smQueueEventsIntern() {
+        on_exit m_ds.rollback();
+        hash ret = m_sqlif.smQueueEventsIntern(REF_WFIID.workflow_instanceid);
+        assertEq(5, ret.size());
+        assertEq(True, ret.hasKey("segmentids"));
+        assertEq(True, ret.hasKey("subworkflows"));
+        assertEq(True, ret.hasKey("asyncs"));
+        assertEq(True, ret.hasKey("retries"));
+        assertEq(True, ret.hasKey("syncs"));
+    }
+
+    private rescheduleWorkflow() {
+        on_exit m_ds.rollback();
+
+        date new_date = now() + 10s;
+
+        bool ret = m_sqlif.rescheduleWorkflow(REF_WFIID.workflow_instanceid,
+                                              new_date,
+                                              REF_WFIID.status_sessionid
+                                              );
+
+        assertEq(False, ret);
+
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(new_date, row.scheduled);
+        assertEq("S", row.workflowstatus);
+    }
+
+    private reprioritizeWorkflow() {
+        on_exit m_ds.rollback();
+
+        bool ret = m_sqlif.reprioritizeWorkflow(REF_WFIID.workflow_instanceid,
+                                                6, # new priority
+                                                REF_WFIID.status_sessionid);
+        assertEq(True, ret);
+
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(6, row.priority);
+    }
+
+    private lockOrderNoCommit() {
+        on_exit m_ds.rollback();
+        string user = "test user";
+        bool ret = m_sqlif.lockOrderNoCommit(REF_WFIID.workflow_instanceid,
+                                             user,
+                                             REF_WFIID.status_sessionid);
+
+        assertEq(True, ret);
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(user, row.operator_lock);
+    }
+
+    private unlockOrderNoCommit() {
+        on_exit m_ds.rollback();
+        string user = "test user";
+        # fake data
+        get_sql_table_system(m_ds, "workflow_instance").update({"operator_lock": user},
+                                                            {"workflow_instanceid": REF_WFIID.workflow_instanceid}
+                                                            );
+
+
+        bool ret = m_sqlif.unlockOrderNoCommit(REF_WFIID.workflow_instanceid,
+                                               user,
+                                               REF_WFIID.status_sessionid);
+
+        assertEq(True, ret);
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(NULL, row.operator_lock);
+    }
+
+    private breakOrderLockNoCommit() {
+        on_exit m_ds.rollback();
+        string user = "test user";
+        # fake data
+        get_sql_table_system(m_ds, "workflow_instance").update({"operator_lock": user},
+                                                            {"workflow_instanceid": REF_WFIID.workflow_instanceid}
+                                                            );
+
+        bool ret = m_sqlif.breakOrderLockNoCommit(REF_WFIID.workflow_instanceid,
+                                                  REF_WFIID.status_sessionid);
+
+        assertEq(True, ret);
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(NULL, row.operator_lock);
+    }
+
+    private rescheduleWorkflowUnconditional() {
+        on_exit m_ds.rollback();
+        date new_date = now() + 1m;
+
+        m_sqlif.rescheduleWorkflowUnconditional(REF_WFIID.workflow_instanceid, new_date);
+
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(new_date, row.scheduled);
+
+        m_sqlif.rescheduleWorkflowUnconditional(REF_WFIID.workflow_instanceid);
+        row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(NULL, row.scheduled);
+    }
+
+    private reprioritizeWorkflowUnconditional() {
+        on_exit m_ds.rollback();
+        m_sqlif.reprioritizeWorkflowUnconditional(REF_WFIID.workflow_instanceid, 6);
+
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(6, row.priority);
+    }
+
+    private workflowQueueInitWorkflowInstanceQueue() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.workflowQueueInitWorkflowInstanceQueue(REF_WFIID.workflow_instanceid - 10,
+                                                                   REF_WFIID.workflow_instanceid + 10,
+                                                                   REF_WFIID.status_sessionid,
+                                                                   REF_WFIID.workflowid);
+        assertEq(1, ret.firstValue().size());
+    }
+
+    private workflowQueueInitCommonSegments() {
+        on_exit m_ds.rollback();
+        m_sqlif.workflowQueueInitCommonSegments(0, 10, 0, 1);
+    }
+
+    private rbacLoad() {
+        on_exit m_ds.rollback();
+        hash ret = m_sqlif.rbacLoad();
+        assertEq(True, ret.hasKey("groups"));
+        assertEq(True, ret.hasKey("group_services"));
+        assertEq(True, ret.hasKey("group_workflows"));
+        assertEq(True, ret.hasKey("group_jobs"));
+        assertEq(True, ret.hasKey("group_mappers"));
+        assertEq(True, ret.hasKey("group_vmaps"));
+    }
+
+    private updateSyntheticGroup() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateSyntheticGroup("workflow", REF_WORKFLOW.workflowid, True);
+        m_sqlif.updateSyntheticGroup("workflow", REF_WORKFLOW.workflowid, False);
+    }
+
+    private commitGroupStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitGroupStatus(-1, True);
+        m_sqlif.commitGroupStatus(-1, False);
+    }
+
+    private commitJobActiveStatus() {
+        on_exit m_ds.rollback();
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+
+        m_sqlif.commitJobActiveStatus(REF_JOB.jobid, False);
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(0, row.active);
+
+        m_sqlif.commitJobActiveStatus(REF_JOB.jobid, True);
+        row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(1, row.active);
+    }
+
+    private commitJobExpiry() {
+        on_exit m_ds.rollback();
+        date new_date = now() + 1m;
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+
+        m_sqlif.commitJobExpiry(REF_JOB.jobid, new_date);
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(new_date, row.expiry_date);
+        assertEq(1, row.manually_updated);
+
+        m_sqlif.commitJobExpiry(REF_JOB.jobid);
+        row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(NULL, row.expiry_date);
+        assertEq(1, row.manually_updated);
+    }
+
+    private commitJobCustomTrigger() {
+        on_exit m_ds.rollback();
+        date new_date = now() + 1m;
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+
+        m_sqlif.commitJobCustomTrigger(REF_JOB.jobid, new_date);
+
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(new_date, row.custom_trigger);
+    }
+
+    private insertJobError() {
+        on_exit m_ds.rollback();
+
+        int jjid = -1;
+
+        hash ins = {
+            "job_instanceid": jjid,
+            "jobid": REF_JOB.jobid,
+            "sessionid": REF_WFIID.status_sessionid,
+            "jobstatus": "I",
+            "started": now(),
+        };
+        get_sql_table_system(m_ds, "job_instance").insert(ins);
+
+        auto ret = m_sqlif.insertJobError(jjid, "INFO", "an error", "desc", {"info":1}, True);
+        assertEq(True, ret > 0, sprintf("%n", ret));
+        ret = m_sqlif.insertJobError(NOTHING, "INFO", "an error", "desc", {"info":1}, 1);
+        assertEq(True, ret > 0, sprintf("%n", ret));
+        ret = m_sqlif.insertJobError(jjid, "INFO", "an error", strmul("a", 500), {"info":1}, False);
+        assertEq(True, ret > 0, sprintf("%n", ret));
+    }
+
+    private insertJobInstance() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.insertJobInstance(REF_JOB.jobid, REF_WFIID.status_sessionid);
+        assertEq(True, ret > 0, sprintf("%n", ret));
+    }
+
+    private updateJobInstanceInfo() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateJobInstanceInfo(-1, {"foo": now()});
+    }
+
+    private updateFinalJobInstanceStatus() {
+        on_exit m_ds.rollback();
+        date new_date = now() + 1m;
+        m_sqlif.updateFinalJobInstanceStatus(REF_JOB.jobid, -1, "E", new_date);
+
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(new_date, row.last_executed);
+    }
+
+    private commitJobSchedule() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitJobSchedule(REF_JOB.jobid, "m", "h", "d", "M", "W");
+
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq("m", row.minute);
+        assertEq("h", row.hour);
+        assertEq("d", row.day);
+        assertEq("M", row.month);
+        assertEq("W", row.wday);
+        assertEq(1, row.manually_updated);
+    }
+
+    private commitJobRecurring() {
+        on_exit m_ds.rollback();
+        m_sqlif.commitJobRecurring(REF_JOB.jobid, 6);
+
+        hash sh = {
+            "where": {"jobid": REF_JOB.jobid},
+        };
+        hash row = get_sql_table_system(m_ds, "jobs").selectRow(sh);
+        assertEq(6, row.recurring);
+        assertEq(NULL, row.minute);
+        assertEq(NULL, row.hour);
+        assertEq(NULL, row.day);
+        assertEq(NULL, row.month);
+        assertEq(NULL, row.wday);
+        assertEq(1, row.manually_updated);
+    }
+
+    private updateInterfaceOption() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateInterfaceOption("workflow", REF_WORKFLOW.workflowid, REF_WORKFLOW.name, {"foo":1});
+    }
+
+    private insertInterfaceOption() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertInterfaceOption("workflow", REF_WORKFLOW.workflowid, REF_WORKFLOW.name, "bar", True, {"foo":1});
+    }
+
+    private deleteInterfaceOption() {
+        on_exit m_ds.rollback();
+        m_sqlif.deleteInterfaceOption("workflow", REF_WORKFLOW.workflowid, "foo");
+    }
+
+    private updateWorkflowDeprecated() {
+        on_exit m_ds.rollback();
+        AbstractTable t = get_sql_table_system(m_ds, "workflows");
+        hash sh = {
+            "where": {"workflowid": REF_WORKFLOW.workflowid},
+        };
+
+        auto ret = m_sqlif.updateWorkflowDeprecated(REF_WORKFLOW.workflowid, True);
+        assertEq(1, ret);
+
+        *hash row = t.selectRow(sh);
+        assertEq(0, row.autostart);
+        assertEq(1, row.manual_autostart);
+        assertEq(1, row.deprecated);
+
+        m_sqlif.updateWorkflowDeprecated(REF_WORKFLOW.workflowid, False);
+        row = t.selectRow(sh);
+        assertEq(0, row.deprecated);
+    }
+
+    private updateWorkflowAutostart() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateWorkflowAutostart(REF_WORKFLOW.workflowid, 10);
+
+        AbstractTable t = get_sql_table_system(m_ds, "workflows");
+        hash sh = {
+            "where": {"workflowid": REF_WORKFLOW.workflowid},
+        };
+        *hash row = t.selectRow(sh);
+        assertEq(10, row.autostart);
+        assertEq(1, row.manual_autostart);
+    }
+
+    private bulkFlushWorkflowStatus() {
+        on_exit {
+            # there is a commit inside the sqlif object method. So the data must be cleared
+            # and comitted
+            get_sql_table_system(m_ds, "order_instance_notes").del({"workflow_instanceid": REF_WFIID.workflow_instanceid});
+            get_sql_table_system(m_ds, "segment_instance").del({"workflowid": REF_WFIID.workflowid});
+            m_ds.commit();
+        }
+        date dt = now() + 1h;
+        hash ins = {
+            "workflowid": REF_WFIID.workflowid,
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "segmentid": -1,
+            "segmentstatus": "I",
+        };
+        get_sql_table_system(m_ds, "segment_instance").insert(ins);
+
+        list l = (
+            {
+                "segments": (
+                    {
+                        "segmentid": ins.segmentid,
+                        "segmentstatus": "E",
+                        "custom_status": "a",
+                        "retry_delay": dt,
+                    },
+                ),
+                "steps": (
+                    {
+                        "stepid": REF_STEP.stepid,
+                        "ind": REF_STEP_INSTANCE.ind,
+                        "stepstatus": "E",
+                        "retries": 1,
+                        "custom_status": "a",
+                        "skip": 0,
+                        "completed": NOTHING,
+                    },
+                ),
+                "workflowstatus": "Y",
+                "workflowstatus_orig": "I",
+                "business_error": 1,
+                "custom_status": "a",
+                "reschedule": dt,
+                "operator_lock": "foo",
+                "audit": {
+                    "workflowid": REF_WORKFLOW.workflowid,
+                    "oldstatus": "I",
+                    "newstatus": "E",
+                    "who": "Qorus",
+                    "source": "lorem ipsum",
+                },
+                "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            },
+        );
+
+        m_sqlif.bulkFlushWorkflowStatus(l);
+
+        hash sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+        *list rows = get_sql_table_system(m_ds, "segment_instance").selectRows(sh);
+        assertEq(True, exists rows);
+        assertEq(1, rows.size());
+        assertEq(l[0].segments[0].segmentid, rows[0].segmentid);
+        assertEq(l[0].segments[0].segmentstatus, rows[0].segmentstatus);
+        assertEq(l[0].segments[0].custom_status, rows[0].custom_status);
+        assertEq(l[0].segments[0].retry_delay, rows[0].retry_trigger);
+
+        rows = get_sql_table_system(m_ds, "step_instance").selectRows(sh);
+        assertEq(True, exists rows);
+        assertEq(1, rows.size());
+        assertEq(l[0].steps[0].stepid, rows[0].stepid);
+        assertEq(l[0].steps[0].ind, rows[0].ind);
+        assertEq(l[0].steps[0].stepstatus, rows[0].stepstatus);
+        assertEq(l[0].steps[0].retries, rows[0].retries);
+        assertEq(l[0].steps[0].custom_status, rows[0].custom_status);
+        assertEq(l[0].steps[0].skip, rows[0].skip);
+
+        hash row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(l[0].workflowstatus, row.workflowstatus);
+        assertEq(l[0].workflowstatus_orig, row.workflowstatus_orig);
+        assertEq(l[0].business_error, row.business_error);
+        assertEq(l[0].custom_status, row.custom_status);
+        assertEq(l[0].reschedule, row.scheduled);
+        assertEq(l[0].operator_lock, row.operator_lock);
+
+        row = get_sql_table_system(m_ds, "audit_events").selectRow(sh);
+        assertEq(l[0].audit.workflowid, row.workflowid);
+        assertEq(l[0].audit.oldstatus, row.info1);
+        assertEq(l[0].audit.newstatus, row.info2);
+        assertEq(l[0].audit.who, row.who);
+        assertEq(l[0].audit.source, row.source);
+    }
+
+    private getPriorityWorkflowIDAndParentTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getPriorityWorkflowIDAndParentTrans(REF_WFIID.workflow_instanceid);
+    }
+
+    private getWorkflowIDAndPriorityTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getWorkflowIDAndPriorityTrans(REF_WFIID.workflow_instanceid);
+    }
+
+    private getOrderKeysTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getOrderKeysTrans(REF_WFIID.workflow_instanceid);
+    }
+
+    private getSubWorkflowStepTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getSubWorkflowStepTrans(REF_WFIID.workflow_instanceid);
+    }
+
+    private getSubworkflowParentAndGrandparentInfoTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getSubworkflowParentAndGrandparentInfoTrans(REF_WFIID.workflow_instanceid);
+    }
+
+    private getQueueAndWorkflowInfoTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getQueueAndWorkflowInfoTrans(REF_QUEUE_DATA.queueid, REF_QUEUE_DATA.queuekey);
+    }
+
+    private getParentAndStatusFromQueueTrans() {
+        on_exit m_ds.rollback();
+        m_sqlif.getParentAndStatusFromQueueTrans(REF_QUEUE_DATA.queueid, REF_QUEUE_DATA.queuekey);
+    }
+
+    private cacheSteps() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.cacheSteps(REF_WFIID.workflow_instanceid);
+        assertEq(REF_STEP.stepid, ret.stepid[0]);
+    }
+
+    private insertStep() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertStep(REF_WFIID.workflow_instanceid, REF_STEP.stepid, 1);
+    }
+
+    private updateStepStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateStepStatus(REF_WFIID.workflow_instanceid,
+                                 REF_STEP.stepid,
+                                 REF_STEP_INSTANCE.ind,
+                                 "E");
+
+        hash sh = {
+            "where": {
+                "workflow_instanceid": REF_WFIID.workflow_instanceid,
+                "stepid": REF_STEP.stepid,
+                "ind": REF_STEP_INSTANCE.ind,
+            },
+        };
+        auto ret = get_sql_table_system(m_ds, "step_instance").selectRow(sh);
+        assertEq("E", ret.stepstatus);
+    }
+
+    private updateStep() {
+        on_exit m_ds.rollback();
+        AbstractTable t = get_sql_table_system(m_ds, "step_instance");
+
+        m_sqlif.updateStep(REF_WFIID.workflow_instanceid,
+                           REF_STEP.stepid,
+                           REF_STEP_INSTANCE.ind,
+                           "W", # status
+                           5, # retries
+                           "W" # custom status
+                        );
+
+        hash sh = {
+            "where": {
+                "workflow_instanceid": REF_WFIID.workflow_instanceid,
+                "stepid": REF_STEP.stepid,
+                "ind": REF_STEP_INSTANCE.ind,
+            },
+        };
+        hash row = t.selectRow(sh);
+        assertEq("W", row.stepstatus);
+        assertEq("W", row.custom_status);
+        assertEq(5, row.retries);
+    }
+
+    private insertSegment() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertSegment(REF_WFIID.workflowid, REF_WFIID.workflow_instanceid, 0);
+    }
+
+    private updateSegment() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateSegment(REF_WFIID.workflowid, 1, "W", "w", now());
+    }
+
+    private markReadyWorkflowAsError() {
+        on_exit m_ds.rollback();
+        m_sqlif.markReadyWorkflowAsError(REF_WFIID.workflowid, REF_WFIID.workflow_instanceid);
+    }
+
+    private insertArrayStep() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertArrayStep(REF_WFIID.workflow_instanceid, REF_STEP.stepid, 10);
+    }
+
+    private insertSubWorkflowInstance() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertSubWorkflowInstance(REF_WFIID.workflow_instanceid,
+                                          REF_STEP.stepid,
+                                          REF_STEP_INSTANCE.ind,
+                                          REF_WFIID.workflow_instanceid # pinting to the same wfiid. We are testing just a plain SQL here
+                                         );
+    }
+
+    private insertStepInstanceEvent() {
+        on_exit m_ds.rollback();
+        hash ins = {
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+            "event_posted": 1,
+            "created": now_ms(),
+        };
+        get_sql_table_system(m_ds, "workflow_events").insert(ins);
+
+        m_sqlif.insertStepInstanceEvent(REF_WFIID.workflow_instanceid,
+                                        REF_STEP.stepid,
+                                        REF_STEP_INSTANCE.ind,
+                                        ins.workflow_event_typeid,
+                                        ins.eventkey);
+    }
+
+    private setWorkflowInstanceInProgress() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.setWorkflowInstanceInProgress(REF_WFIID.workflow_instanceid,
+                                                         REF_WFIID.status_sessionid);
+        assertEq(True, ret);
+    }
+
+    private updateFinalWorkflowStatus() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.updateFinalWorkflowStatus(REF_WFIID.workflow_instanceid,
+                                                     REF_WFIID.status_sessionid,
+                                                     "W");
+        assertEq(True, ret);
+    }
+
+    private grabWorkflow() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.grabWorkflow(REF_WFIID.workflow_instanceid, REF_WFIID.status_sessionid);
+        assertEq(1, ret);
+    }
+
+    private insertQueueData() {
+        on_exit m_ds.rollback();
+        # we have to delete ref data first to insert them again
+        get_sql_table_system(m_ds, "queue_data").del({"queueid": REF_QUEUE.queueid});
+
+        m_sqlif.insertQueueData(REF_WFIID.workflow_instanceid,
+                                REF_STEP.stepid,
+                                REF_STEP_INSTANCE.ind,
+                                REF_QUEUE.queueid,
+                                REF_QUEUE_DATA.queuekey);
+    }
+
+    private insertOrUpdateQueueData() {
+        on_exit m_ds.rollback();
+        # we have to delete ref data first to insert them again
+        get_sql_table_system(m_ds, "queue_data").del({"queueid": REF_QUEUE.queueid});
+
+        m_sqlif.insertOrUpdateQueueData(REF_WFIID.workflow_instanceid,
+                                        REF_STEP.stepid,
+                                        REF_STEP_INSTANCE.ind,
+                                        REF_QUEUE.queueid,
+                                        REF_QUEUE_DATA.queuekey);
+    }
+
+    private insertCorrectedQueueData() {
+        on_exit m_ds.rollback();
+        # we have to delete ref data first to insert them again
+        get_sql_table_system(m_ds, "queue_data").del({"queueid": REF_QUEUE.queueid});
+
+        m_sqlif.insertCorrectedQueueData(REF_WFIID.workflow_instanceid,
+                                         REF_STEP.stepid,
+                                         REF_STEP_INSTANCE.ind,
+                                         REF_QUEUE.queueid,
+                                         REF_QUEUE_DATA.queuekey);
+    }
+
+    private insertOrUpdateCorrectedQueueData() {
+        on_exit m_ds.rollback();
+        m_sqlif.insertOrUpdateCorrectedQueueData(REF_WFIID.workflow_instanceid,
+                                                 REF_STEP.stepid,
+                                                 REF_STEP_INSTANCE.ind,
+                                                 REF_QUEUE.queueid,
+                                                 REF_QUEUE_DATA.queuekey);
+    }
+
+    private correctQueueData() {
+        on_exit m_ds.rollback();
+        m_sqlif.correctQueueData(REF_WFIID.workflow_instanceid, REF_STEP.stepid, REF_STEP_INSTANCE.ind);
+    }
+
+    private correctQueueDataCheck() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.correctQueueDataCheck(REF_WFIID.workflow_instanceid, REF_STEP.stepid, REF_STEP_INSTANCE.ind);
+        assertEq(False, ret.hasKey("err"));
+        assertEq(True, ret.hasKey("rowcount"));
+        assertEq(REF_QUEUE_DATA.queuekey, ret.queuekey);
+        assertEq(REF_WFIID.workflowid, ret.workflowid);
+    }
+
+    private updateQueueData() {
+        on_exit m_ds.rollback();
+        get_sql_table_system(m_ds, "queue_data").update({"queue_data_status": "W"},
+                                                        {"queueid": REF_QUEUE.queueid});
+        auto ret = m_sqlif.updateQueueData(REF_QUEUE.name, REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey, "X");
+        assertEq(False, ret.hasKey("err"));
+        assertEq(True, ret.hasKey("rowcount"));
+        assertEq(REF_QUEUE_DATA.queue_data_status, ret.queue_data_status);
+        assertEq(REF_WFIID.workflowid, ret.workflowid);
+    }
+
+    private discardQueueDataUnconditional() {
+        on_exit m_ds.rollback();
+        m_sqlif.discardQueueDataUnconditional(REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey);
+        m_sqlif.discardQueueDataUnconditional(REF_QUEUE.queueid, (REF_QUEUE_DATA.queuekey, REF_QUEUE_DATA.queuekey));
+    }
+
+    private discardQueueDataCheck() {
+        on_exit m_ds.rollback();
+        get_sql_table_system(m_ds, "queue_data").update({"queue_data_status": "W"},
+                                                        {"queueid": REF_QUEUE.queueid});
+        auto ret = m_sqlif.discardQueueDataCheck(REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey);
+        assertEq(False, ret.hasKey("err"));
+        assertEq(True, ret.hasKey("rowcount"));
+    }
+
+    private getQueueInfo() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.getQueueInfo(REF_WFIID.workflow_instanceid, REF_STEP.stepid, REF_STEP_INSTANCE.ind);
+        assertEq(True, exists ret);
+    }
+
+    private updateQueueKey() {
+        on_exit {
+            get_sql_table_system(m_ds, "queue_data").update({"queuekey": REF_QUEUE_DATA.queuekey,},
+                                                            {"queueid": REF_QUEUE.queueid});
+            m_ds.commit();
+        }
+        # fake data first
+        get_sql_table_system(m_ds, "queue_data").update({"queue_data_status": "W"},
+                                                        {"queueid": REF_QUEUE.queueid});
+
+        auto ret = m_sqlif.updateQueueKey(REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey, REF_QUEUE_DATA.queuekey+"xxx");
+        assertEq(1, ret);
+    }
+
+    private queueGetInfo() {
+        on_exit m_ds.rollback();
+        auto ret = m_sqlif.queueGetInfo(REF_WFIID.workflow_instanceid,
+                                         REF_STEP.stepid,
+                                         REF_STEP_INSTANCE.ind);
+        assertEq(True, exists ret);
+        assertEq(NT_LIST, ret.typeCode());
+        assertEq(1, ret.size());
+        assertEq(REF_QUEUE_DATA.queuekey, ret[0].queuekey);
+
+        auto ret2 = m_sqlif.queueGetInfo(REF_WFIID.workflow_instanceid,
+                                         REF_STEP.stepid);
+        assertEq(True, exists ret2);
+        assertEq(NT_LIST, ret2.typeCode());
+        assertEq(1, ret2.size());
+
+
+        auto ret3 = m_sqlif.queueGetInfo(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret3);
+        assertEq(NT_LIST, ret3.typeCode());
+        assertEq(1, ret3.size());
+
+        # negative test
+        auto ret4 = m_sqlif.queueGetInfo(-11111111);
+        assertEq(True, exists ret4);
+        assertEq(NT_LIST, ret4.typeCode());
+        assertEq(0, ret4.size());
+    }
+
+    private queueGetInfoFromQueueKey() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.queueGetInfoFromQueueKey(REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey);
+        assertEq(True, exists ret);
+        assertEq(REF_WFIID.workflow_instanceid, ret.workflow_instanceid);
+    }
+
+    private queueStatus() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.queueStatus(REF_QUEUE.queueid);
+        assertEq(True, exists ret);
+    }
+
+    private queueGetQueueInfo() {
+        on_exit m_ds.rollback();
+        *list ret = m_sqlif.queueGetQueueInfo(REF_QUEUE.queueid, {"status": REF_QUEUE_DATA.queue_data_status});
+        assertEq(True, exists ret);
+
+        # now fake data for negative test/condition
+        get_sql_table_system(m_ds, "queue_data").update({"queue_data_status": "X"},
+                                                        {"queueid": REF_QUEUE.queueid});
+
+        ret = m_sqlif.queueGetQueueInfo(REF_QUEUE.queueid);
+        assertEq(False, exists ret && ret.size() != 0);
+    }
+
+    private insertErrorInstance() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.insertErrorInstance(REF_WFIID.workflow_instanceid,
+                                              REF_STEP.stepid,
+                                              REF_STEP_INSTANCE.ind,
+                                              "FATAL",
+                                              "E",
+                                              "foo",
+                                              "bar",
+                                              {"info": 1});
+        assertEq(True, ret > 0);
+    }
+
+    private deleteOrderKey() {
+        on_exit m_ds.rollback();
+        m_sqlif.deleteOrderKey(REF_WFIID.workflow_instanceid, "foo", "val");
+    }
+
+    private updateOrderKey() {
+        on_exit m_ds.rollback();
+        m_sqlif.updateOrderKey(REF_WFIID.workflow_instanceid, "foo", "val1", "val2", True);
+    }
+
+    private cacheSegments() {
+        on_exit m_ds.rollback();
+        *hash ret = m_sqlif.cacheSegments(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+    }
+
+    private cacheWorkflowData() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "keyname": REF_WORKFLOW.name,
+            "info": "xxx",
+        };
+        get_sql_table_system(m_ds, "workflow_feedback").insert(ins);
+
+        ins = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "skey": "foo",
+            "svalue": "foo",
+            "data": binary("a"),
+            "iv": binary("a"),
+            "mac": binary("a"),
+        };
+        get_sql_table_system(m_ds, "sensitive_order_data").insert(ins);
+
+        *hash<auto> ret = m_sqlif.cacheWorkflowData(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(REF_WFIID.workflowid, ret.workflowid);
+        assertEq(True, ret.hasKey("feedback"));
+        assertEq(True, ret.hasKey("sensitive_data"));
+    }
+
+    private setWorkflowInstanceError() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflowid": REF_WFIID.workflowid,
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "segmentid": -1,
+            "segmentstatus": "I",
+        };
+        get_sql_table_system(m_ds, "segment_instance").insert(ins);
+
+        *int ret = m_sqlif.setWorkflowInstanceError(REF_WFIID.workflow_instanceid,
+                                                    -1,
+                                                    REF_STEP.stepid,
+                                                    REF_STEP_INSTANCE.ind,
+                                                    REF_WFIID.status_sessionid,
+                                                   );
+        assertEq(True, !exists ret || ret != -1);
+    }
+
+    private updateWorkflowStatus() {
+        on_exit m_ds.rollback();
+        bool ret = m_sqlif.updateWorkflowStatus(REF_WFIID.workflow_instanceid, "E");
+        assertEq(True, ret);
+    }
+
+    private setQueueDataError() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.setQueueDataError(REF_QUEUE.queueid, REF_QUEUE_DATA.queuekey);
+        assertEq(True, ret == 1);
+    }
+
+    private workflowReadyQueueInit() {
+        on_exit m_ds.rollback();
+        hash<auto> upd = {
+            "workflowstatus": "S",
+            "status_sessionid": 0,
+        };
+        hash<auto> wh = {
+            "workflowid": REF_WORKFLOW.workflowid,
+        };
+        get_sql_table_system(m_ds, "workflow_instance").update(upd, wh);
+
+        hash<auto> ret = m_sqlif.workflowReadyQueueInit(REF_WORKFLOW.workflowid);
+        assertEq(REF_WFIID.workflow_instanceid, ret.minimum);
+        assertEq(REF_WFIID.workflow_instanceid, ret.maximum);
+        assertEq(1, ret.count);
+    }
+
+    private workflowEventQueueInit() {
+        on_exit m_ds.rollback();
+        hash<auto> upd = {
+            "workflowstatus": "E",
+            "status_sessionid": 0,
+        };
+        hash<auto> wh = {
+            "workflowid": REF_WORKFLOW.workflowid,
+        };
+        get_sql_table_system(m_ds, "workflow_instance").update(upd, wh);
+
+        hash<auto> ret = m_sqlif.workflowEventQueueInit(REF_WORKFLOW.workflowid);
+        assertEq(REF_WFIID.workflow_instanceid, ret.minimum);
+        assertEq(REF_WFIID.workflow_instanceid, ret.maximum);
+        assertEq(1, ret.count);
+    }
+
+    private workflowDestructorQueueInit() {
+        on_exit m_ds.rollback();
+        hash<auto> ret = m_sqlif.workflowDestructorQueueInit(REF_WORKFLOW.workflowid,
+                                                       REF_WFIID.status_sessionid);
+        assertEq(REF_WFIID.workflow_instanceid, ret.minimum);
+        assertEq(REF_WFIID.workflow_instanceid, ret.maximum);
+        assertEq(1, ret.count);
+    }
+
+    private workflowReadyQueueConstructor() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.workflowReadyQueueConstructor(REF_WFIID.workflow_instanceid,
+                                                        REF_WFIID.workflow_instanceid,
+                                                        0,
+                                                        REF_WFIID.workflowid);
+        assertEq(1, ret);
+    }
+
+    private workflowEventQueueConstructor() {
+        on_exit m_ds.rollback();
+        hash<auto> upd = {
+            "workflowstatus": "E",
+            "status_sessionid": 0,
+        };
+        hash<auto>wh = {
+            "workflowid": REF_WORKFLOW.workflowid,
+        };
+        get_sql_table_system(m_ds, "workflow_instance").update(upd, wh);
+
+        int ret = m_sqlif.workflowEventQueueConstructor(REF_WFIID.workflow_instanceid,
+                                                        REF_WFIID.workflow_instanceid,
+                                                        0,
+                                                        REF_WFIID.workflowid);
+        assertEq(1, ret);
+    }
+
+    private workflowQueueDestructor() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.workflowQueueDestructor(REF_WFIID.workflow_instanceid,
+                                                  REF_WFIID.workflow_instanceid,
+                                                  0,
+                                                  REF_WFIID.workflowid);
+        assertEq(1, ret);
+    }
+
+    private workflowQueueInitCommonSubAsync() {
+        on_exit m_ds.rollback();
+        hash<auto> ret = m_sqlif.workflowQueueInitCommonSubAsync(REF_WFIID.workflow_instanceid,
+                                                           REF_WFIID.workflow_instanceid,
+                                                           0,
+                                                           REF_WFIID.workflowid);
+        assertEq(True, ret.hasKey("subwf"));
+        assertEq(True, ret.hasKey("queue"));
+        assertEq(True, ret.hasKey("sync"));
+    }
+
+    private workflowInstanceCleanupSynchronous() {
+        on_exit m_ds.rollback();
+        m_sqlif.workflowInstanceCleanupSynchronous(REF_WFIID.workflow_instanceid);
+    }
+
+    private workflowInstanceExecuteSubWorkflowStep() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "stepid": REF_STEP.stepid,
+            "ind": REF_STEP_INSTANCE.ind,
+            "subworkflow_instanceid": REF_WFIID.workflow_instanceid,
+            "corrected": 0,
+        };
+        get_sql_table_system(m_ds, "subworkflow_instance").insert(ins);
+
+        *hash<auto> ret = m_sqlif.workflowInstanceExecuteSubWorkflowStep(REF_WFIID.workflow_instanceid,
+                                                                   REF_STEP.stepid,
+                                                                   REF_STEP_INSTANCE.ind);
+        assertEq(True, exists ret);
+        assertEq(0, ret.corrected);
+        assertEq(REF_WFIID.workflow_instanceid, ret.subworkflow_instanceid);
+    }
+
+    private workflowInstanceGetStepInstanceEvent() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+            "event_posted": 1,
+            "created": now_ms(),
+        };
+        get_sql_table_system(m_ds, "workflow_events").insert(ins);
+        ins = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "stepid": REF_STEP.stepid,
+            "ind": REF_STEP_INSTANCE.ind,
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+        };
+        get_sql_table_system(m_ds, "step_instance_events").insert(ins);
+
+        *hash<auto> ret = m_sqlif.workflowInstanceGetStepInstanceEvent(REF_WFIID.workflow_instanceid,
+                                                                 REF_STEP.stepid,
+                                                                 REF_STEP_INSTANCE.ind);
+        assertEq(True, exists ret);
+        assertEq(REF_WORKFLOW.name, ret.eventkey);
+        assertEq(0, ret.workflow_event_typeid);
+    }
+
+    private getWorkflowEventStatus() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+            "event_posted": 1,
+            "created": now_ms(),
+        };
+        get_sql_table_system(m_ds, "workflow_events").insert(ins);
+
+        *bool ret = m_sqlif.getWorkflowEventStatus(ins.workflow_event_typeid, ins.eventkey);
+        assertEq(True, ret);
+    }
+
+    private createWorkflowEvent() {
+        on_exit m_ds.rollback();
+        m_sqlif.createWorkflowEvent(0, REF_WORKFLOW.name, True);
+        m_ds.rollback();
+        m_sqlif.createWorkflowEvent(0, REF_WORKFLOW.name, False);
+    }
+
+    private postWorkflowEvent() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+            "event_posted": 0,
+            "created": now_ms(),
+        };
+        get_sql_table_system(m_ds, "workflow_events").insert(ins);
+
+        int ret = m_sqlif.postWorkflowEvent(ins.workflow_event_typeid, ins.eventkey);
+        assertEq(1, ret);
+    }
+
+    private getStepInstanceEventList() {
+        on_exit m_ds.rollback();
+        hash<auto> ins = {
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+            "event_posted": 1,
+            "created": now_ms(),
+        };
+        get_sql_table_system(m_ds, "workflow_events").insert(ins);
+        ins = {
+            "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            "stepid": REF_STEP.stepid,
+            "ind": REF_STEP_INSTANCE.ind,
+            "workflow_event_typeid": 0,
+            "eventkey": REF_WORKFLOW.name,
+        };
+        get_sql_table_system(m_ds, "step_instance_events").insert(ins);
+
+        hash<string, list<auto>> ret = m_sqlif.getStepInstanceEventList(ins.workflow_event_typeid, REF_WORKFLOW.name);
+        assertEq(1, ret.size());
+    }
+
+    private workflowLoadFunctionID() {
+        on_exit m_ds.rollback();
+        *hash<auto> ret = m_sqlif.workflowLoadFunctionID(REF_FUNCTION_INSTANCE.function_instanceid);
+        assertEq(True, exists ret);
+        assertEq(REF_FUNCTION_INSTANCE.name, ret.name);
+        assertEq(REF_FUNCTION_INSTANCE.version, ret.version);
+        assertEq(REF_FUNCTION_INSTANCE.body, ret.body);
+    }
+
+    private workflowLoadFunctionIDs() {
+        on_exit m_ds.rollback();
+        *hash<auto> ret = m_sqlif.workflowLoadFunctionIDs((REF_FUNCTION_INSTANCE.function_instanceid,));
+        assertEq(True, exists ret);
+        assertEq(1, ret.name.size());
+        assertEq(REF_FUNCTION_INSTANCE.name, ret.name[0]);
+    }
+
+    private serviceManagerAutoStart() {
+        on_exit m_ds.rollback();
+        *hash<auto> ret = m_sqlif.serviceManagerAutoStart();
+
+        bool found = False;
+        context (ret) {
+            if (%serviceid == REF_SERVICE.serviceid
+                && %name == REF_SERVICE.name
+                && %service_type == REF_SERVICE.service_type) {
+                found = True;
+                break;
+            }
+        }
+        assertEq(True, found);
+    }
+
+    private serviceManagerSetAutostartStatus() {
+        on_exit m_ds.rollback();
+        m_sqlif.serviceManagerSetAutostartStatus(False, REF_SERVICE.serviceid);
+
+        hash<auto> sh = {
+            "where": {"serviceid": REF_SERVICE.serviceid},
+        };
+        hash<auto> row = get_sql_table_system(m_ds, "services").selectRow(sh);
+        assertEq(0, row.autostart);
+        assertEq(1, row.manual_autostart);
+    }
+
+    private controlExecSynchronousWorkflowOnExistingOrder() {
+        on_exit m_ds.rollback();
+        *hash<auto> ret = m_sqlif.controlExecSynchronousWorkflowOnExistingOrder(REF_WFIID.workflow_instanceid);
+        assertEq(True, exists ret);
+        assertEq(REF_WORKFLOW.name, ret.name);
+        assertEq(REF_WORKFLOW.version, ret.version);
+        assertEq(REF_WORKFLOW.workflowid, ret.workflowid);
+    }
+
+    private instanceDataSaveData() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.instanceDataSaveData("dyndata", REF_WFIID.workflow_instanceid);
+        assertEq(1, ret);
+    }
+
+    private wfEntryReplaceStaticData() {
+        on_exit m_ds.rollback();
+        int ret = m_sqlif.wfEntryReplaceStaticData("statdata", REF_WFIID.workflow_instanceid);
+        assertEq(1, ret);
+    }
+
+    private orderInstanceNotesSave() {
+        on_exit m_ds.rollback();
+        AbstractTable t = get_sql_table_system(m_ds, "order_instance_notes");
+        hash<auto> sh = {
+            "columns": cop_as(cop_count(), "cnt"),
+            "where": {
+                "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            },
+        };
+
+        list<hash<auto>> notes = (
+            {"username": "test", "note": "lorem ipsum 1", "saved": now()},
+            {"username": "test", "note": "lorem ipsum 2", "saved": now()},
+            {"username": "test", "note": "lorem ipsum 3", "saved": now()},
+        );
+
+        int ret = m_sqlif.orderInstanceNotesSave(REF_WFIID.workflow_instanceid, notes);
+        assertEq(notes.size(), ret);
+        int cnt = t.selectRow(sh).cnt;
+        assertEq(notes.size(), cnt);
+
+        # 2nd run to test count updates
+        ret = m_sqlif.orderInstanceNotesSave(REF_WFIID.workflow_instanceid, notes);
+        assertEq(notes.size(), ret);
+        cnt = t.selectRow(sh).cnt;
+        assertEq(notes.size()*2, cnt);
+
+        sh = {
+            "where": {
+                "workflow_instanceid": REF_WFIID.workflow_instanceid,
+            },
+        };
+        hash<auto> row = get_sql_table_system(m_ds, "workflow_instance").selectRow(sh);
+        assertEq(notes.size()*2, row.note_count);
+    }
+
+    private orderInstanceNotesGet() {
+        on_exit m_ds.rollback();
+        m_sqlif.orderInstanceNotesGet(REF_WFIID.workflow_instanceid);
+    }
+
+    private sessionClose() {
+        on_exit m_ds.rollback();
+        m_sqlif.sessionClose(REF_WFIID.status_sessionid);
+    }
+
+    private upsertFeedback() {
+        on_exit m_ds.rollback();
+
+        AbstractTable t = get_sql_table_system(m_ds, "workflow_feedback");
+        hash<auto> sh = {
+            "where": {"workflow_instanceid": REF_WFIID.workflow_instanceid},
+        };
+
+        # insert
+        m_sqlif.upsertFeedback(REF_WFIID.workflow_instanceid, REF_WORKFLOW.name, "xxx");
+        *hash<auto> row = t.selectRow(sh);
+        assertEq(True, exists row);
+        assertEq("xxx", row.info);
+
+        # update
+        m_sqlif.upsertFeedback(REF_WFIID.workflow_instanceid, REF_WORKFLOW.name, "yyy");
+        row = t.selectRow(sh);
+        assertEq("yyy", row.info);
+    }
+} # class Main

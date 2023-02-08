@@ -1,0 +1,24 @@
+# name: recurring-test
+# version: 1.0
+# desc: recurring test job
+# author: Qore Technologies, s.r.o.
+# duration: 999999
+# active: false
+# run-skipped: false
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: regression, test
+# class-name: RecurringTest
+# class-based: true
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class RecurringTest inherits QorusJob {
+    run() {
+        saveInfo({"test": "test"});
+    }
+}
+# END

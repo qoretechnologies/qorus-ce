@@ -1,0 +1,32 @@
+type: class
+name: issue3303class
+version: "1.0"
+desc: test class
+author:
+  - Qore Technologies, s.r.o.
+class-name: issue3303class
+code: issue3303class.qclass
+config-items:
+  - name: issue-3303-test-config-item-1
+    type: "*int"
+    default_value: 1213
+    allowed_values:
+      - null
+      - 1213
+      - 1235
+      - 5534
+      - 1232
+      - 0
+    description: parent test config item of type *int
+    config_group: Test Group
+    strictly_local: false
+  - name: issue-3303-test-config-item-2
+    type: string
+    default_value: test_2
+    allowed_values:
+      - test_1
+      - test_2
+      - test_3
+    description: parent test config item of type string
+    config_group: Test Group
+    strictly_local: false

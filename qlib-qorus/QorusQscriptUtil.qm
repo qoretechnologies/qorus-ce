@@ -1,0 +1,128 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusQscriptUtil.qm Qorus utility module for QScripts
+
+/*  QorusQscriptUtil.qm Copyright (C) 2023 Qore Technologies, sro
+*/
+
+%requires qore >= 1.0
+%requires(reexport) QorusClientCore
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+module QorusQscriptUtil {
+    version = "1.0";
+    desc = "Qorus utility module for QScripts";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+    init = sub () {
+        QorusClient::init2();
+    };
+}
+
+# ssh module is always available in Qorus envs
+%requires ssh2
+
+/** @page qorusqscriptutil_module QorusQscriptUtil Module
+
+    @tableofcontents
+
+    @section QorusQscriptUtil_intro QorusQscriptUtil Module Introduction
+
+    The %QorusQscriptUtil module provides an API for utilities used
+    in @ref customqscripts
+
+    API provided by this module is highly bound to Qorus features.
+    Qorus client is initialized in this module.
+
+    All the public symbols in the module are defined in
+    the QorusQscriptUtil namespace
+
+    Functions:
+    - @ref QorusQscriptUtil::fs_dirs()
+    - @ref QorusQscriptUtil::sftp_dirs()
+
+    @section QorusQscriptUtil_relnotes Release Notes
+
+    @subsection QorusQscriptUtil_relnotes_1.0 QorusQscriptUtil v1.0
+    - the initial version of the QorusQscriptUtil module
+ */
+
+#! the QorusQscriptUtil namespace contains all the objects in the QorusQscriptUtil module
+public namespace QorusQscriptUtil {
+#! creates directory tree in the user connection location
+/** Given \c directories element are automatically prefixed with
+    Dir base path.
+
+    All missing sub-paths are created too.
+
+    @param user_connection name of the user connection. SFTP connection is expected
+    @param directories a list of strings containing directory names
+    @param mode an octal number holding directory access rights
+ */
+public sub fs_dirs(string user_connection, list<string> directories, int mode = 0755) {
+
+    printf("Filesystem tree check: %s\n", user_connection);
+
+    Dir dir = get_user_connection(user_connection);
+    printf("base path: %s\n", dir.path());
+
+    ListIterator it(directories);
+    while (it.next()) {
+        string path = normalize_dir(dir.path() + "/" + it.getValue());
+        Dir d();
+        d.chdir(path);
+
+        if (!d.exists()) {
+            printf("Creating dir: %s, mode %n\n", path, mode);
+            int i = d.create(mode);
+            printf("   count created: %d\n", i);
+        }
+    }
+} # sub fs_dirs
+
+#! creates directory tree in the user connection location
+/** Given \c directories element are automatically prefixed with
+    SftpClient base path.
+
+    All missing sub-paths are created too.
+
+    @param user_connection name of the user connection. SFTP connection is expected
+    @param directories a list of strings containing directory names
+    @param mode an octal number holding directory access rights
+ */
+public sub sftp_dirs(string user_connection, list<string> directories, int mode = 0755) {
+    printf("SFTP tree check: %s\n", user_connection);
+
+    SFTPClient sftp = get_user_connection(user_connection);
+    printf("base path: %s\n", sftp.info().path);
+
+    # SFTPClient cannot create dir tree. We have to simulate it per partes
+    hash normalized_dirs = hash();
+
+    # split paths like foo/bar/xxx into:
+    # foo, foo/bar, foo/bar/xxx and make it unique (hash)
+    # to create complex dir-trees by calling SFTPClient::mkdir() per dir (sub)path
+    ListIterator it(directories);
+    while (it.next()) {
+        list segments = it.getValue().split("/");
+        for (int i = 0; i < segments.size(); i++) {
+            string part = segments[0..i].join("/");
+            normalized_dirs{part} = True;
+        }
+    }
+
+    HashKeyIterator hit(normalized_dirs);
+    while (hit.next()) {
+        string fn = hit.getValue();
+
+        if (!sftp.stat(fn)) {
+            printf("Creating dir: %s, mode %n\n", fn, mode);
+            sftp.mkdir(fn, mode);
+        }
+    }
+
+} # sub sftp_dirs
+} # namespace QorusQscriptUtil

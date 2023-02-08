@@ -1,0 +1,14 @@
+# This is a generated file, don't edit!
+type: step
+name: Issue3593Step
+desc: >-
+    empty step for #3593:
+    https://git.qoretechnologies.com/qorus/issues/-/issues/3593
+lang: qore
+base-class-name: QorusNormalStep
+class-name: Issue3593Step
+version: "1.0"
+author:
+  - Qore Technologies, s.r.o.
+steptype: NORMAL
+code: Issue3593Step-1.0.qstep

@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: fsm
+name: issue-3563-pipeline-fsm
+desc: test
+states:
+    '1':
+        position:
+            x: 390
+            'y': 218
+        initial: true
+        name: State 1
+        desc: ''
+        type: state
+        id: wkxqJVhIv
+        action:
+            type: pipeline
+            value: issue-3563-pipeline
+        execution_order: 1

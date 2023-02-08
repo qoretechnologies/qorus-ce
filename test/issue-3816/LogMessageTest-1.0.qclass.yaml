@@ -1,0 +1,39 @@
+# This is a generated file, don't edit!
+type: class
+name: LogMessageTest
+desc: logs a message according to the config
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: logMessage
+    type: input-output
+    method: logMessage
+version: '1.0'
+code: LogMessageTest-1.0.qclass
+config-items:
+  - name: test-log-message-level
+    default_value:
+        "INFO"
+    description: The log level for the log message
+    allowed_values:
+      - "ALL"
+      - "TRACE"
+      - "DEBUG"
+      - "INFO"
+      - "WARN"
+      - "ERROR"
+      - "FATAL"
+    config_group: Log Message Config
+    strictly_local: true
+  - name: test-log-message-string
+    description: The actual message to be logged
+    config_group: Log Message Config
+    strictly_local: true
+  - name: test-log-message-args
+    default_value:
+        null
+    description: Any argument(s) for the log message
+    config_group: Log Message Config
+    strictly_local: true
+    type: "*string"

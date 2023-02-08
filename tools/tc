@@ -1,0 +1,3 @@
+#!/bin/sh
+
+tar cvjf qs.tar.bz2 --exclude=\*.svn\* --exclude=\*~ --exclude=\*.o --exclude=.\* --exclude=\*.nfs\* --exclude=\*.old --exclude=\*.bz2 --exclude=\*.gz --exclude=t --exclude=\*.pdf * $*

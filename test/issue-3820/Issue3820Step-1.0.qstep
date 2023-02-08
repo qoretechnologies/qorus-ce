@@ -1,0 +1,25 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3820Step inherits QorusNormalStep, QoreTest {
+    public {
+        const VarName = "issue3820";
+        const Transient = "$transient:{" + VarName + "}";
+        const Var = "$var:{" + VarName + "}";
+    }
+
+    primary() {
+        # ensure values are not set
+        assertNothing(UserApi::expandTemplatedValue(Transient));
+        assertNothing(UserApi::expandTemplatedValue(Var));
+
+        int i = rand();
+        # set and check values
+        UserApi::updateOutputData({VarName: i}, {VarName: Transient});
+        UserApi::updateOutputData({VarName: i}, {VarName: Var});
+        assertEq(i, UserApi::expandTemplatedValue(Transient));
+        assertEq(i, UserApi::expandTemplatedValue(Var));
+    }
+}

@@ -1,0 +1,35 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: STEP
+# version: 1.0
+# desc: recovery step 1
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+# sleep for 5 minutes
+const Delay = 5m;
+
+sub recovery_1() {
+    UserApi::logInfo("sleeping for: %y", Delay);
+    UserApi::sleep(Delay);
+    throw "ERROR";
+}
+# END
+
+# type: VALIDATION
+# name: recovery_1_val
+# version: 1.0
+# desc: validation for recovery step 1
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+string sub recovery_1_val() {
+    return OMQ::StatComplete;
+}
+# END

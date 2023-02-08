@@ -1,0 +1,27 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3563-pipeline
+desc: test
+lang: qore
+base-class-name: QorusJob
+class-name: Issue3563Pipeline
+schedule:
+    minutes: "0"
+    hours: "*"
+    days: "*"
+    months: "*"
+    dow: "*"
+version: "1.0"
+active: false
+fsm:
+    [
+        {
+            "name": "issue-3563-pipeline-fsm",
+            "triggers": [
+                {
+                    "method": "run"
+                }
+            ]
+        }
+    ]
+code: issue-3563-pipeline-1.0.qjob

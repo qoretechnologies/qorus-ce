@@ -1,0 +1,10 @@
+type: step
+steptype: NORMAL
+name: Issue3420Step
+class-name: Issue3420Step
+version: "1.0"
+desc: issue3420 array test step
+author:
+  - Qore Technologies, s.r.o.
+code: Issue3420Step.java
+lang: java

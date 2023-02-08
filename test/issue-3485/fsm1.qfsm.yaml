@@ -1,0 +1,111 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm1
+desc: fsm 1
+groups:
+  - regression
+  - test
+states:
+    '1':
+        name: initState
+        initial: true
+        execution_order: 1
+        action:
+            type: pipeline
+            value: pipeline1
+        id: state1
+        position:
+            x: 175.125
+            'y': 30.17578125
+        transitions:
+            -
+                state: '2'
+                condition: 84/2 != 43
+            -
+                state: '3'
+                condition:
+                    class: Issue3485Conditional
+                    connector: condition2
+        type: state
+    '2':
+        name: state2
+        action:
+            type: pipeline
+            value: pipeline1
+        id: state2
+        position:
+            x: 76.125
+            'y': 150.17578125
+        transitions:
+            -
+                state: '4'
+                condition:
+                    class: Issue3485Conditional
+                    connector: condition
+        type: state
+    '3':
+        name: state3
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state3
+        position:
+            x: 283.125
+            'y': 147.17578125
+        transitions:
+            -
+                state: '5'
+                condition: round(nlog(1000) + 500) == 507
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm1\\.state3}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '4':
+        name: state4
+        action:
+            type: connector
+            value:
+                class: Issue3485Action
+                connector: action1
+        id: state4
+        position:
+            x: 75.125
+            'y': 308.17578125
+        type: state
+    '5':
+        name: state5
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state5
+        position:
+            x: 287.125
+            'y': 255.17578125
+        transitions:
+            -
+                state: '6'
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm1\\.state5}":true,"$pstate:{fsm.fsm1}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '6':
+        id: state6
+        name: fsm2
+        type: fsm
+        position:
+            x: 290.125
+            'y': 358.17578125

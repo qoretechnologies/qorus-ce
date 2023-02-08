@@ -1,0 +1,7 @@
+type: workflow
+name: ISSUE-3325-WORKFLOW
+version: "1.0"
+desc: ISSUE-3325-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+steps: ["issue3325step:1.0"]

@@ -1,0 +1,28 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#
+# Qorus Integration Engine
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups."BASIC-TRAINING-EXCHANGE-APP".desc = "Basic training exchange application objects";
+
+const simple_step = {
+    "name": "basics_simple_workflow_step:1.0",
+};
+
+const steps = (
+    simple_step,
+);
+
+our hash<auto> workflows."BASICS-SIMPLE-WORKFLOW"."1.0" = {
+    "desc"      : "Simple workflow example",
+    "author"    : "Qore Technologies, s.r.o.",
+    "steps"     : steps,
+    "groups"    : ("BASIC-TRAINING-EXCHANGE-APP",),
+    "autostart" : 0,
+};

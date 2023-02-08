@@ -1,0 +1,32 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$events."feedback-detach-child".desc = "test event type for the FEEDBACK-DETACH-CHILD workflow";
+
+const wait_event = (
+    "name": "feedback_detach_child_1:1.0",
+    "eventtype": "feedback-detach-child",
+);
+
+const leave_feedback = (
+    "name": "feedback_detach_child_2:1.0",
+);
+
+$steps = (
+    wait_event,
+    leave_feedback,
+);
+
+$workflows."FEEDBACK-DETACH-CHILD"."1.0" = (
+    "desc": "feedback detach child",
+    "author": "Qore Technologies, sro",
+    "steps": $steps,
+    "groups": "test",
+    "attach": "feedback_detach_attach:1.0",
+);

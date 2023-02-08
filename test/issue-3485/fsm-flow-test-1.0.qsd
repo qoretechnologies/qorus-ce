@@ -1,0 +1,21 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class FsmFlowTest inherits QorusService {
+    test1() {
+    }
+
+    test2() {
+    }
+
+    test3() {
+    }
+
+    test4() {
+    }
+
+    test5() {
+    }
+}

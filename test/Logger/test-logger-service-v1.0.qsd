@@ -1,0 +1,24 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: test-logger-service
+# serviceversion: 1.0
+# servicedesc: help service for LoggerRestInterfaceTest unit test
+# serviceauthor: Taras Petrychkovych (Qore Technologies)
+# autostart: false
+# define-group: test: test interfaces
+# groups: test
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+sub init() {
+    UserApi::logFatal("log Fatal message");
+    UserApi::logError("log Error message");
+    UserApi::logWarn("log Warn message");
+    UserApi::logInfo("log Info message");
+    UserApi::logDebug("log Debug message");
+    UserApi::logTrace("log Trace message");
+}
+# END

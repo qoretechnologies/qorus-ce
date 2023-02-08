@@ -1,0 +1,20 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3257class1
+# version: 1.0
+# desc: issue 3257 class 1
+# author: Qore Technologies, s.r.o.
+# requires: issue3257class2
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class issue3257class1 inherits issue3257class2 {
+    string test() {
+        string test_val = issue3257class2::test();
+        return test_val + "issue3257class1_";
+    }
+}
+# END

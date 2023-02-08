@@ -1,0 +1,120 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: stream-test
+# serviceversion: 1.0
+# servicedesc: HTTP chunked data / streaming test service
+# serviceauthor: Qore Technologies, s.r.o.
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the stream-test service
+class TestPersistentDataHelper inherits AbstractPersistentDataHelper {
+    public {
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractPersistentDataHelper(cx, ah) {
+        UserApi::logInfo("%y: started persistent transaction; requestor: %s", self.uniqueHash(), ServiceApi::getCallContextString(cx));
+    }
+
+    destructor() {
+        UserApi::logInfo("%y: persistent request closing", self.uniqueHash());
+    }
+
+    connectionTerminated() {
+        UserApi::logInfo("%y: connection terminated", self.uniqueHash());
+        delete self;
+    }
+}
+
+class TestStreamBase inherits AbstractServiceDataStreamResponseHandler {
+    private {
+        *TestPersistentDataHelper ph;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractServiceDataStreamResponseHandler(cx, ah) {
+        if (cx.uctx.persistent_data) {
+            ph = cx.uctx.persistent_data;
+            UserApi::logInfo("%y: request ph: %y\n", self.uniqueHash(), getPersistentHash());
+        }
+    }
+
+    *code getPersistentClosedNotification() {
+        if (ph) {
+            return \ph.connectionTerminated();
+        }
+    }
+
+    bool isPersistent() {
+        return exists ph;
+    }
+
+    terminatePersistence() {
+        ServiceApi::persistenceThreadTerminate();
+        delete cx.uctx.persistent_data;
+        UserApi::logInfo("%y: terminated persistent connection: %y", self.uniqueHash(), getPersistentHash());
+        remove ph;
+    }
+
+    string getPersistentHash() {
+        return ph ? ph.uniqueHash() : "n/a";
+    }
+}
+
+class TestSendStream inherits TestStreamBase {
+    public {
+        int ix = 0;
+
+        const Data = (
+            "string-1",
+            "string-2",
+            "string-3",
+        );
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : TestStreamBase(cx, ah) {
+    }
+
+    auto sendDataImpl() {
+        *string rv = Data[ix++];
+        UserApi::logInfo("%y: sendDataImpl() data: %y ph: %y", self.uniqueHash(), rv, getPersistentHash());
+        return rv;
+    }
+
+    nothing recvDataImpl(auto data) {}
+
+    string getName() {
+        return "send";
+    }
+}
+
+class TestRecvStream inherits TestStreamBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : TestStreamBase(cx, ah) {
+    }
+
+    auto sendDataImpl() {}
+
+    nothing recvDataImpl(auto data) {
+        UserApi::logInfo("%y: recvDataImpl() data: %y ph: %y", self.uniqueHash(), data, getPersistentHash());
+    }
+
+    string getName() {
+        return "recv";
+    }
+}
+
+sub init() {
+    # registers test streams
+    ServiceApi::streamRegister("recv", "GET", TestSendStream sub (hash<auto> cx, *hash<auto> ah) {return new TestSendStream(cx, ah);}, "sends a stream of test data");
+    ServiceApi::streamRegister("send", "POST", TestRecvStream sub (hash<auto> cx, *hash<auto> ah) {return new TestRecvStream(cx, ah);}, "receives a stream of test data");
+
+    # registers the persistent data helper stream
+    ServiceApi::persistenceRegister(TestPersistentDataHelper sub (hash<auto> cx, *hash<auto> ah) {return new TestPersistentDataHelper(cx, ah);});
+}
+# END
+
+# desc: provides information about the service
+*hash<auto> sub info() {
+}
+# END

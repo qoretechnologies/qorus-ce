@@ -1,0 +1,25 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$simple = (
+    "dummy_1:1.0",
+);
+
+$workflows."DUMMY-TEST"."1.0" = (
+    "desc": "dummy test workflow with 1 step",
+    "author": "Qore Technologies, sro",
+    "steps": $simple,
+    "keylist": (
+        "test1",
+        "test2",
+    ),
+    "groups": "test",
+    "onetimeinit": "dummy_init:1.0",
+    "options": ("test-opt": "test option", "test-opt2": "test option"),
+    );

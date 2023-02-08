@@ -1,0 +1,52 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3166-service
+# serviceversion: 1.0
+# servicedesc: Service simple example
+# serviceauthor: Qore Technologies, s.r.o.
+# autostart: true
+# class-name: Issue3166Service
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3166Service inherits QorusService {
+    # name: init
+    # desc: initializes the service
+    init() {
+        int config_item_value = getConfigItemValue("issue-3166-service-config-2");
+        UserApi::logInfo("Service is initialized, config item value: %y", config_item_value);
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3166-service-config-1": <ConfigItemInfo>{
+                "type": "float",
+                "default_value": 4123.5,
+                "description": "This is an example configuration item of type float",
+                "strictly_local": True,
+                "allowed_values": (4123.5, 4123.13, 5434.54, 1.0)
+            },
+            "issue-3166-config-1": <ConfigItemInfo>{
+                "type": "*string",
+                "default_value": "test",
+                "description": "This is an example configuration item of type *string",
+                "strictly_local": False,
+                "allowed_values": ("st", "ASD", NOTHING, "test")
+            },
+            "issue-3166-service-config-2": <ConfigItemInfo>{
+                "type": "int",
+                "default_value": 0,
+                "description": "This is an example configuration item of type int",
+                "strictly_local": True,
+                "allowed_values": (230, 5, 213, 1, 0)
+            },
+        };
+    }
+}

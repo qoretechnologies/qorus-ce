@@ -1,0 +1,32 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3257" + Qore::DirSep;
+    }
+
+    constructor(): Test("QorusBug3257RequiresTag", OMQ::version) {
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        printf("------ START ------\n");
+        hash<auto> result = OloadTestHelper::oloadFiles(srcDir);
+        assertEq(0, result.exit_code);
+        printf("------- END -------\n");
+    }
+}

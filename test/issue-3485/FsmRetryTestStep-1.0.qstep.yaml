@@ -1,0 +1,16 @@
+# This is a generated file, don't edit!
+type: step
+name: FsmRetryTestStep
+desc: FSM Retry Test Step
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusNormalStep
+class-name: FsmRetryTestStep
+fsm:
+  - name: fsm-retry-test
+    triggers:
+    - method: validation
+lang: qore
+version: "1.0"
+steptype: NORMAL
+code: FsmRetryTestStep-1.0.qstep

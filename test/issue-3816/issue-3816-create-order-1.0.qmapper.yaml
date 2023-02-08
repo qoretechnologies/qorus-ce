@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: mapper
+name: issue-3816-create-order
+desc: Provides arguments to the create-order call
+mappertype: Mapper
+version: '1.0'
+author:
+  - Qore Technologies, s.r.o.
+fields:
+    workflow:
+        constant: DUMMY-TEST
+    staticdata:
+        constant: {}
+options:
+    mapper-input:
+        type: type
+        name: qore
+        can_manage_fields: true
+        path: /hash
+        custom-fields: {}
+    mapper-output:
+        type: type
+        name: qoretechnologies
+        can_manage_fields: false
+        path: /qorus-api/workflows/create-order/request
+        custom-fields: {}

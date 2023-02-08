@@ -1,0 +1,21 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = (
+          "status_canceled_step1:1.0",
+         );
+
+$workflows."STATUS-CANCELED"."1.0" = (
+    "desc"          : "invalid WF test",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : $steps,
+    "errorfunction" : "status_canceled_errorfunction:1.0",
+    "groups"        : "test",
+    "autostart"     : 0,
+ );

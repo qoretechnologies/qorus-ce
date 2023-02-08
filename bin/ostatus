@@ -1,0 +1,580 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+# require all variables to be declared before using
+%require-our
+# require type information on all declarations
+%require-types
+# enable all warnings
+%enable-all-warnings
+# instantiate the "ostatus" class to run the application
+%exec-class ostatus
+
+# Qorus client module
+%requires QorusClientBase
+
+const ostatus_opts = {
+    "url"     : "u,url=s",
+    "proxy"   : "p,proxy-url=s",
+    "show"    : "W,show-url",
+    "to"      : "t,timeout=i",
+    "wf"      : "w,workflows",
+    "sys"     : "S,system",
+    "svc"     : "s,services",
+    "job"     : "j,jobs",
+    "meth"    : "m,methods",
+    "verbose" : "v,verbose:i+",
+    "calls"   : "C,callstack:i+",
+    "retr"    : "r,retrieve=s",
+    "svauto"  : "A,save-autostart=s",
+    "rtauto"  : "E,restore-autostart=s",
+    "opt"     : "o,options",
+    "lit"     : "l,literal:i+",
+    "reformat": "R,reformat",
+    "remote"  : "Q,remote=s",
+    "token"   : "k,token=s",
+    "help"    : "h,help",
+};
+
+class ostatus {
+    private {
+        hash oc;
+        hash optionsc;
+
+        # to capture HTTP call info
+        hash info;
+
+        # minimum column width for service names
+        const MIN_SMAX = 25;
+
+        # minimum column width for workflow names
+        const MIN_WMAX = 25;
+
+        # waiting threads
+        const WaitingThreads = (
+            {"function": "Condition::wait", "file": "ConnectionsServer.qc"},
+            {"function": "Condition::wait", "file": "QorusEventManager.qc"},
+            {"function": "Condition::wait", "file": "AlertManager.qc"},
+            {"function": "Condition::wait", "file": "LocalQorusJob.qc"},
+            {"function": "Condition::wait", "file": "QorusSharedApi.qc"},
+            {"function": "TimedSyncCache::getEvent", "file": "SyncEventManager.qc"},
+            {"function": "HttpListener::accept",},
+            {"function": "Queue::get", "file": "qorus-shared-system.ql"},
+            {"function": "TimedWorkflowCache::getEvent", "file": "SegmentManager.qc"},
+            {"function": "SegmentEventQueue::get_primary_event", "file": "WorkflowQueueBase.qc"},
+            {"function": "SegmentEventQueue::get_async_event", "file": "WorkflowQueueBase.qc"},
+            {"function": "SegmentEventQueue::get_retry_event", "file": "WorkflowQueueBase.qc"},
+            {"function": "SegmentEventQueue::get_subworkflow_event", "file": "WorkflowQueueBase.qc"},
+            {"function": "SegmentEventQueue::get_workflow_event", "file": "WorkflowQueueBase.qc"},
+            {"function": "Socket::isDataAvailable", "file": "HttpServer.qm", "file_regex": True},
+            {"function": "Socket::accept", "file": "HttpServer.qm", "file_regex": True},
+            {"function": "Queue::get", "file": "WebSocketHandler.qm", "file_regex": True},
+            {"function": "get_all_thread_call_stacks", "file": "qorus-svc-core-system.ql"},
+            {"function": "get_all_thread_call_stacks", "file": "AbstractQorusClusterApi.qc"},
+            {"function": "Queue::get", "file": "QorusMapManager.qc"},
+            {"function": "ZSocket::poll", "file": "AbstractQorusDistributedProcess.qc"},
+            {"function": "Condition::wait", "file": "QorusProcessManager.qc"},
+            {"function": "ZSocket::poll", "file": "qorus-core.q"},
+            {"function": "ZSocket::poll", "file": "AbstractQorusClient.qc"},
+            {"function": "Queue::get", "file": "qorus-core.q"},
+            {"function": "Condition::wait", "file": "WorkflowOrderStats.qc"},
+            {"function": "JobSchemaSnapshotManager::runImplementation", "file": "SchemaSnapshots.qc"},
+            {"function": "WfSchemaSnapshotManager::runImplementation", "file": "SchemaSnapshots.qc"},
+            {"function": "sleep", "file": "SchemaSnapshots.qc"},
+            {"function": "ZSocket::send", "file": "AbstractQorusClientProcess.qc"},
+            {"function": "Queue::get", "file": "AbstractQorusClientProcess.qc"},
+            {"function": "ZSocket::poll", "file": "AbstractQorusClientProcess.qc"},
+            {"function": "Condition::wait", "file": "SchemaSnapshots.qc"},
+            {"function": "QorusRemoteWebSocketConnection::getIo", "file": "QorusRemoteWebSocketHandler.qc", "all": True},
+            {"function": "Socket::accept", "file": "FtpServer.qc"},
+            {"function": "Counter::waitForZero", "file": "qorus-core.q"},
+            {"function": "Condition::wait", "file": "QorusAuthTokenStore.qc"},
+            {"function": "Socket::poll", "file": "PollingConnectionMonitor.qc$", "file_regex": True},
+        );
+
+        const StackKeys = ("function", "file");
+    }
+
+    static private usage() {
+        printf("usage: %s [options]
+ -A,--save-autostart=ARG     save YAML-encoded workflow autostart values to a
+                             file
+ -E,--restore-autostart=ARG  restore YAML-encoded workflow autostart values
+                             from a file; names, versions, and workflowids
+                             must match for updates to be made; only
+                             differences are updated in the system
+ -S,--system                 display additional system information
+ -s,--services               display service information
+ -m,--methods                show methods when listing loaded services
+ -u,--url=arg                sets Qorus URL (ex: http://user:pass@host:port)
+ -p,--proxy-url=ARG          set the proxy URL (ex: http://user:pass@host:port)
+ -t,--timeout=ARG            set HTTP timeout in seconds
+ -W,--show-url               show default Qorus system URL
+ -v,--verbose                sets verbosity level (more -v's = more info)
+ -w,--workflows              display running workflow information
+ -j,--jobs                   display information about running jobs
+ -C,--callstack              display the execution call stacks of each running
+                             thread (add more Cs to include waiting threads)
+ -r,--retrieve=ARG           retrieve the current workflows and options as xml
+                             and save to file
+ -o,--options                show system option information
+ -l,--literal                show literal API calls (more l's, more info)
+ -Q,--remote=ARG             use the given remote Qorus connection
+ -R,--reformat               reformat data with -l+ for better readability
+ -k,--token=ARG              use the given token with HTTP requests to the Qorus server
+ -h,--help                   this help text
+", get_script_name());
+        exit(1);
+    }
+
+    private processCommandLine() {
+        GetOpt g(ostatus_opts);
+        oc = g.parse(\ARGV);
+        if (oc."_ERRORS_") {
+            stderr.printf("%s\n", oc."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (oc.show) {
+            if (optionsc."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", optionsc."client-url", optionsc."proxy-url");
+            else
+                printf("%s\n", optionsc."client-url");
+            exit(0);
+        }
+        if (oc.help) {
+            ostatus::usage();
+        }
+    }
+
+    static private *string fd(auto date, *bool trim_us) {
+        return date.typeCode() == NT_DATE ? date.format("YYYY-MM-DD HH:mm:SS" + (trim_us ? "" : ".xx")) : date;
+    }
+
+    private showWorkflows() {
+        list<auto> i = qrest.get(oc, "exec", NOTHING, NOTHING, \info);
+
+        # find maximum wf name width and create format string based on longest name
+        int wmax = strlen(max(i, int sub (hash l, hash r) { return strlen(l.name) <=> strlen(r.name);}).name);
+        if (wmax < MIN_SMAX)
+            wmax = MIN_SMAX;
+        string wffmt = sprintf(" + %%6d %%-%dw %%-5s %%-12s (%%s) %%s\n", wmax);
+
+        print("workflows:\n");
+        foreach hash<auto> wf in (i) {
+            if (wf.sync) {
+                wf.mode = OMQ::WM_Synchronous;
+            }
+
+            # get process info
+            string proc_info;
+            if (wf.process) {
+                proc_info = sprintf("%s:%d %s", wf.process.node, wf.process.pid, wf.process.priv_str);
+            } else {
+                proc_info = "<compat>";
+            }
+
+            f_printf(wffmt, wf.executionID, wf.name, wf.version, wf.mode, ostatus::fd(wf.starttime, True), proc_info);
+            if (oc.verbose) {
+                map printf("          + option: %s = %s\n", $1, wf.options.$1), keys wf.options;
+            }
+            if (oc.verbose > 1) {
+                printf("            log file: %s\n", wf.logfile);
+                #printf("            sql file: %s\n", wf.sqllogfile);
+                if (wf.groups) {
+                    print("            groups: ");
+                    map printf("%s ", $1.name), wf.groups;
+                    print("\n");
+                }
+            }
+        }
+        if (!i) {
+            printf(" * no workflows running\n");
+        }
+    }
+
+    private showJobs() {
+        list l = qrest.get(oc, "jobs?status=active", NOTHING, NOTHING, \info);
+
+        print("active jobs:\n");
+        foreach hash job in (l) {
+            printf(" + %s v%s (%d)\n", job.name, job.version, job.jobid);
+            if (oc.verbose) {
+                printf("   + trigger: %s\n", job.trigger);
+                printf("   + desc: %s\n", job.description);
+                printf("   + last: %s\n", ostatus::fd(job.last_executed));
+                printf("   + next: %s\n", ostatus::fd(job.next));
+                if (job.groups) {
+                    print("   + groups: ");
+                    map printf("%s ", $1.name), job.groups;
+                    print("\n");
+                }
+            }
+        }
+        if (!l)
+            printf(" * no active jobs\n");
+    }
+
+    private showServices() {
+        int c = 0;
+        string stat;
+
+        if (oc.verbose)
+            stat = "loaded";
+        else
+            stat = "running";
+
+        list i = qrest.get(oc, sprintf("services?status=%s", oc.verbose ? "loaded" : "running"), NOTHING, NOTHING, \info);
+
+        # find maximum service name width and create format string based on longest name
+        int smax = strlen(max(i, int sub (hash l, hash r) { return strlen(l.name) <=> strlen(r.name);}).name);
+        if (smax < MIN_SMAX)
+            smax = MIN_SMAX;
+        string svcfmt = sprintf(" + %%1s%%1s %%-6s %%-%dw %%-7s (T: %%d, M: %%2d) %%s\n", smax);
+
+        printf("%s services: %s(Thrd, Mthds)\n", stat, strmul(" ", 42 + int(oc.verbose)));
+        foreach hash svc in (i) {
+            if (oc.verbose || svc.status == "running") {
+                c++;
+                f_printf(svcfmt,
+                         svc.autostart ? "A" : " ",
+                         svc.status == "running" ? "R" : "",
+                         toupper(svc.type), svc.name, svc.version,
+                         svc.threads, svc.methods.lsize(), svc.desc);
+                if (oc.verbose > 1) {
+                    if (svc.log)
+                        printf("      + LOG: %s\n", svc.log);
+                    foreach string rsrc in (keys svc.resources) {
+                        hash r = svc.resources{rsrc};
+                        f_printf("      + RESOURCE %y (type %y): %s\n", rsrc, r.type, r.desc);
+                        if (oc.verbose > 1) {
+                            foreach string key in (keys (r.info)) {
+                                f_printf("        + %s: %y\n", key, r.info{key});
+                            }
+                        }
+                    }
+                    if (svc.groups) {
+                        print("      + GROUPS: ");
+                        map printf("%s ", $1.name), svc.groups;
+                        print("\n");
+                    }
+                }
+                if (oc.meth) {
+                    foreach hash method in (svc.methods) {
+                        printf("          + %s\n", svc.name + "." + method.name + "()");
+                        if (oc.verbose > 2 && method.desc)
+                            printf("            %s\n", method.desc);
+                    }
+                }
+            }
+        }
+        if (!c)
+            printf(" * no services currently %s\n", stat);
+    }
+
+    ##
+    # retrieve the workflows and their start parameters and store them
+    # to outfile (if present)
+    private doRetrieve(string instKey, string outfile) {
+        if(oc.verbose)
+            printf("retrieving running workflows plus options from %n\n", instKey);
+
+        list rs = qrest.get(oc, "exec", NOTHING, NOTHING, \info);
+
+        list wflist;
+        # datastruct:
+        # + params:
+        #   + list of hashes:
+        #     - name
+        #     - version
+        #     - options (hash)
+        #     - and many other ;)
+        foreach hash wf in (rs) {
+            wflist += (
+                'name': wf.name,
+                'version': wf.version,
+                'options': wf.options,
+                );
+        }
+
+        hash wfxml{instKey}.WorkFlow = wflist;
+        string wfxmlStr = make_xml(wfxml, XGF_ADD_FORMATTING);
+
+        if (outfile) {
+            File xmlfile();
+            if (xmlfile.open(outfile, O_CREAT | O_WRONLY | O_TRUNC)) {
+                printf("ERROR: unable to open file %n for writing: %n\n", outfile, strerror());
+                exit(1);
+            }
+            xmlfile.printf("%s\n", wfxmlStr);
+        }
+        else {
+            printf("%s\n", wfxmlStr);
+        }
+    }
+
+    private showSystem(hash i) {
+        #printf("   + Datamodel      : %s\n", i{"datamodel-version"});
+        printf("   + System Schema     : %s (%s)\n", i."omq-schema", i."omq-driver");
+        printf("   + User Schema       : %s (%s)\n", i."omquser-schema", i."omquser-driver");
+        printf("   + Hostname          : %s\n", i.hostname);
+        printf("   + Process ID        : %s\n", i.pid);
+        printf("   + Threads           : %d\n", i.threads);
+        printf("   + Cache Size        : %d\n", i.cache_size);
+        printf("   + Up Since          : %s\n", ostatus::fd(i.starttime));
+        printf("   + Qore Version      : %s\n", i."qore-version");
+        if (oc.verbose) {
+            foreach string mod in (keys i.modules)
+                printf("     + module %n %s (API %d.%d) %s\n", i.modules{mod}.name, i.modules{mod}.version,
+                       i.modules{mod}.api_major, i.modules{mod}.api_minor, i.modules{mod}.filename);
+            printf("   + log queue         : %d\n", i.log_queue);
+            #printf("   + SQL log queue     : %d\n", i.sqllog_queue);
+        }
+        printf("   + System Properties :\n");
+        foreach string prop in (keys i{"schema-properties"})
+            printf("     + %s = %s\n", prop, i{"schema-properties"}{prop});
+    }
+
+    private showCalls(bool all_threads) {
+        hash<auto> cs = qrest.get(oc, "debug/threads", NOTHING, NOTHING, \info);
+
+        printf("%scall stacks for %d threads:\n", all_threads ? "" : "filtered ", cs.size());
+        int output = 0;
+        foreach hash<auto> h in (cs.pairIterator()) {
+            softint tid = h.key;
+            list stack = h.value;
+
+            if (!all_threads) {
+                # filter out waiting threads
+                bool match = False;
+
+                code check = bool sub (list<auto> tl, int i) {
+                    foreach string k in (StackKeys) {
+                        *bool re = tl[i]{k + "_regex"};
+                        if (tl[i]{k}
+                            && ((re && !regex(stack[i]{k}, tl[i]{k}))
+                                || (!re && tl[i]{k} != stack[i]{k}))) {
+                            #printf("TID %d: %y: no match %y != %y\n", tid, k, tl[i]{k}, stack[i]{k});
+                            return False;
+                        }
+                    }
+                    return True;
+                };
+
+                foreach softlist<auto> tl in (WaitingThreads) {
+                    int i = 0;
+                    for (; i < tl.size(); ++i) {
+                        if (!check(tl, i)) {
+                            #printf("TID %d: %d: no match %y != %y\n", tid, i, tl[i]{StackKeys}, stack[i]{StackKeys});
+                            break;
+                        }
+                    }
+                    if (i == tl.size()) {
+                        match = True;
+                        break;
+                    }
+                }
+                if (match) {
+                    continue;
+                }
+            }
+            ++output;
+
+            printf("TID %d\n", tid);
+            int i;
+            foreach hash<auto> th in (stack) {
+                if (th.type != "new-thread") {
+                    printf(" %d: %s() called at %s (%s function)\n", ++i, th.function, get_ex_pos(th), th.type);
+                } else {
+                    printf(" %d: *** thread started by background operator ***\n", ++i);
+                }
+            }
+        }
+        if (!output)
+            printf("*** all %d threads are idle; use ostatus -CC to see an unfiltered thread list\n", cs.size());
+        else
+            printf("*** displayed %d/%d threads; use ostatus -CC to see an unfiltered thread list\n", output, cs.size());
+    }
+
+    static string doList(list l) {
+        if (!l)
+            return "";
+        string str;
+        foreach any e in (l)
+            str += sprintf("%s, ", ostatus::showOption(e));
+        str = substr(str, 0, -2);
+        return sprintf("%s", str);
+    }
+
+    static string doHash(hash h) {
+        if (!h)
+            return string();
+        string str;
+        if (elements h > 1)
+            str = "(";
+        else
+            str = "";
+        foreach string key in (keys h)
+            str += sprintf("%s=%s, ", key, ostatus::showOption(h{key}));
+        splice str, -2;
+        if (elements h > 1)
+            str += ")";
+        return sprintf("%s", str);
+    }
+
+    static string showOption(any v) {
+        switch (type(v)) {
+            case Type::List:
+                return ostatus::doList(v);
+            case Type::Hash:
+                return ostatus::doHash(v);
+            case Type::NothingType:
+                return string();
+            default:
+                return sprintf("%n", v);
+        }
+    }
+
+    showOptions() {
+        hash rs = qrest.get(oc, "system/options?hash=true", NOTHING, NOTHING, \info);
+        foreach string opt in (keys rs) {
+            hash h = rs{opt};
+            printf("%1s %-31s = ", h.status == "locked" ? "*" : "", opt);
+            printf("%s\n", ostatus::showOption(h.value));
+        }
+    }
+
+    static string getTime(date t) {
+        string str = sprintf("%y", seconds(now() - t));
+        str =~ s/<time: (.*)>$/$1/;
+        return str;
+    }
+
+    *list getWorkflowAutostartList() {
+        return map $1.("name", "version", "workflowid", "autostart"), qrest.get(oc, "workflows", NOTHING, NOTHING, \info);
+    }
+
+    saveAutostart(string fn) {
+        # get autostart statuses for all workflows
+        *list l = getWorkflowAutostartList();
+
+        File f();
+        f.open2(fn, O_CREAT | O_WRONLY | O_TRUNC);
+        string str = make_yaml(l, YAML::BlockStyle);
+        f.write(str);
+        printf("%s: wrote %d bytes for %d workflow%s\n", fn, str.size(), l.size(), l.size() == 1 ? "" : "s");
+    }
+
+    restoreAutostart(string fn) {
+        # read in file
+        string str = ReadOnlyFile::readTextFile(fn);
+        # parse data and make a hash keyed by workflowid
+        hash wh = map {$1.workflowid: $1}, parse_yaml(str);
+
+        # get workflow config to compare so we only change the workflows that have a different configuration
+        *list ul = map wh{$1.workflowid} + ("old": $1.autostart), getWorkflowAutostartList(), ($1.("name", "version") == wh{$1.workflowid}.("name", "version") && $1.autostart != wh{$1.workflowid}.autostart);
+
+        if (!ul) {
+            printf("no workflows to update (%d workflow%s checked)\n", wh.size(), wh.size() == 1 ? "" : "s");
+            return;
+        }
+
+        printf("%d/%d workflow%s to update\n", ul.size(), wh.size(), wh.size() == 1 ? "" : "s");
+        foreach hash h in (ul) {
+            printf("updating %s v%s (%d): autostart %d -> %d\n", h.name, h.version, h.workflowid, h.old, h.autostart);
+            qrest.put(oc, "workflows/" + h.workflowid + "?action=setAutostart", ("autostart": h.autostart), NOTHING, \info);
+        }
+        printf("done\n");
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        optionsc = QorusClient::parseOptions("qorus-client");
+        processCommandLine();
+
+        if (ARGV)
+            ostatus::usage();
+
+        if (oc.remote)
+            qrest = omqclient.getRemoteRest(oc.remote);
+
+        if (oc.url)
+            qrest.setURL(oc.url);
+        if (oc.proxy)
+            qrest.setProxyURL(oc.proxy);
+
+        if (oc.to) {
+            int to = oc.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        try {
+            hash<auto> i = qrest.get(oc, "system", NOTHING, NOTHING, \info);
+
+            printf("Qorus %s (%s) %s sessionid %d (up %s)\n",
+                   i."omq-version", i."omq-build", i."instance-key", i."session-id", getTime(i.starttime));
+            if (i."shutting_down")
+                printf("System shutdown in progress...\n");
+
+            # this is the retrieve part...
+            if (oc.retr)  {
+                doRetrieve(i.'instance-key', oc.retr);
+            }
+
+            # save autostart statuses
+            if (oc.svauto)
+                saveAutostart(oc.svauto);
+
+            if (oc.rtauto)
+                restoreAutostart(oc.rtauto);
+
+            if (oc.sys)
+                showSystem(i);
+
+            if (oc.verbose && !oc.wf && !oc.svc && !oc.job) {
+                oc.wf = oc.svc = oc.job = True;
+                --oc.verbose;
+            }
+
+            if (oc.wf)
+                showWorkflows();
+
+            if (oc.svc)
+                showServices();
+
+            if (oc.job)
+                showJobs();
+
+            if (oc.calls)
+                showCalls(oc.calls > 1);
+
+            if (oc.opt)
+                showOptions();
+        }
+        catch (hash ex) {
+            qrest.outputRestErrorMessage(ex, info);
+            thread_exit;
+        }
+    }
+
+}

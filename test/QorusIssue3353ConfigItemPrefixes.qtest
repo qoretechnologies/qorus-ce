@@ -1,0 +1,149 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3353" + Qore::DirSep;
+
+        const EXPECTED_CONFIG_ITEMS = (
+            {
+                "name": "issue-3353-test-config-item-1",
+                "type": "*hash",
+                "desc": "test config item of type *hash with prefix 'group-1-'",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": {
+                    "test_key_1": "test_1",
+                    "test_key_2": "test_2",
+                },
+                "value": NOTHING,
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": "group-1-",
+            },
+            {
+                "name": "issue-3353-test-config-item-1",
+                "type": "hash",
+                "desc": "test config item of type *hash with prefix 'group-2-'",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": {
+                    "test_key_1": "test_1",
+                },
+                "value": {
+                    "test_key_1": "test_1",
+                },
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": "group-2-",
+            },
+            {
+                "name": "issue-3353-test-config-item-2",
+                "type": "string",
+                "desc": "test config item of type string with prefix 'group-2-'",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": "test_1",
+                "value": "test_1",
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": "group-2-",
+            },
+            {
+                "name": "issue-3353-test-config-item-3",
+                "type": "int",
+                "desc": "test config item of type string without any prefix",
+                "strictly_local": False,
+                "config_group": "Test Group",
+                "default_value": 123,
+                "value": 666,
+                "is_set": True,
+                "is_templated_string": False,
+                "sensitive": False,
+                "prefix": NOTHING,
+            },
+        );
+
+        const SERVICE_NAME = "issue3353service";
+    }
+
+    constructor(): Test("QorusIssue3353ConfigItemPrefixes", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private testConfigItems() {
+        list<auto> configs = qrest.get("services/" + SERVICE_NAME + "/config");
+        configs = sort(configs, int sub (hash<auto> l, hash<auto> r) { return l.name <=> r.name; });
+        foreach auto config in (\configs) {
+            remove config{"level"};
+        }
+        # sort by name, group
+        configs = sort(configs, int sub(hash<auto> l, hash<auto> r) {
+            return (l.name == r.name) ? l.prefix <=> r.prefix : l.name <=> r.name;
+        });
+        assertEq(EXPECTED_CONFIG_ITEMS, configs, "service " + SERVICE_NAME);
+
+        # As a parameter
+        auto service_config_item = qrest.get("services/" + SERVICE_NAME +
+            "/config/issue-3353-test-config-item-1?prefix=group-1-");
+        service_config_item -= "level";
+
+        assertEq(EXPECTED_CONFIG_ITEMS[0], service_config_item);
+
+        service_config_item = qrest.get("services/" + SERVICE_NAME +
+            "/config/issue-3353-test-config-item-1?prefix=group-2-");
+        service_config_item -= "level";
+
+        assertEq(EXPECTED_CONFIG_ITEMS[1], service_config_item);
+
+        # Directly in the name (should return name within the prefix)
+        service_config_item = qrest.get("services/" + SERVICE_NAME +
+            "/config/group-1-issue-3353-test-config-item-1");
+        service_config_item -= "level";
+
+        auto expected = EXPECTED_CONFIG_ITEMS[0];
+        assertEq(expected, service_config_item);
+
+        # Should ignore empty prefix (prefix is also is in the name)
+        service_config_item = qrest.get("services/" + SERVICE_NAME +
+            "/config/group-2-issue-3353-test-config-item-1?prefix=");
+        service_config_item -= "level";
+
+        expected = EXPECTED_CONFIG_ITEMS[1];
+        assertEq(expected, service_config_item);
+    }
+
+    private mainTest() {
+        printf("------START oload interfaces------\n");
+        hash result = OloadTestHelper::oloadFiles(srcDir, True);
+        assertEq(0, result.exit_code);
+        printf("-------END oload interfaces-------\n");
+
+        printf("START------TEST CONFIG ITEMS------\n");
+        testConfigItems();
+        printf("END--------TEST CONFIG ITEMS------\n");
+
+        printf("------START delete interfaces------\n");
+        result = OloadTestHelper::deleteInterfaces(("service:" + SERVICE_NAME + ":1.0",), True);
+        assertEq(0, result.exit_code);
+        printf("-------END delete interfaces-------\n");
+    }
+}

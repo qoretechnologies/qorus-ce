@@ -1,0 +1,29 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: STEP
+# version: 1.0
+# desc: bug 476 start step
+# author: Qore Technologies, sro
+sub bug_476_start() {
+    WorkflowApi::updateDynamicData(("start": True));
+}
+# END
+
+# type: SUBWORKFLOW
+# version: 1.0
+# desc: subworkflow test function
+# author: Qore Technologies, sro
+sub bug_476_swf() {
+    QorusSubworkflowStepBase::skipSubworkflow();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: bug 476 end step
+# author: Qore Technologies, sro
+sub bug_476_end() {
+    if (!WorkflowApi::getDynamicData().start)
+        throw "BUG-476-ERROR", "start not executed";
+}
+# END

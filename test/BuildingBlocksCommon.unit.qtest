@@ -1,0 +1,1135 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# author: Qore Technologies
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+%allow-injection
+%no-child-restrictions
+
+%requires QUnit
+%requires QorusClientCore
+%requires Util
+%requires FsUtil
+
+%exec-class Main
+
+class Main inherits DependencyInjectedTest {
+    public {
+        const StaticData = {
+            "account": {
+                "name": "test-name",
+            },
+        };
+
+        const DynamicData = {
+            "output": {
+                "id": 1234,
+            },
+        };
+
+        const SKey = "tax-id";
+        const SValue = "ABC.123.456.XYZ";
+        const Alias = "person_1";
+    }
+
+    const ValueMaps = {
+        "test-map": {
+            "test1": 1,
+            "test2": "two",
+            "test3": {
+                "a": (
+                    0,
+                    "one",
+                    "two-a",
+                )
+            }
+        },
+    };
+
+    constructor() : DependencyInjectedTest("BuildingBlocksCommonTest", "1.0") {
+        addTestCase("getDataProvider() tests", \getDataProviderTests());
+        addTestCase("getTypeFromPath() tests", \getTypeFromPathTests());
+        addTestCase("rest tests", \restTests());
+        addTestCase("timestamp tests", \timestampTests());
+        addTestCase("updateOutputData()", \updateOutputDataTest());
+        addTestCase("getInputData()", \getInputDataTest());
+        addTestCase("expandTemplatedValue() test", \test_expandTemplatedValue());
+        addTestCase("expandTemplatedValue() error test", \test_expandTemplatedValueError());
+
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        QorusClient::init2();
+        SM = call_function("get_sm");
+    }
+
+    string getScriptPathImpl() {
+        return get_script_path();
+    }
+
+    private performInjectionsImpl() {
+        code custom_setup = sub (Program p) {
+            p.setParseOptions(PO_NEW_STYLE | PO_STRICT_ARGS | PO_REQUIRE_TYPES | PO_NO_CHILD_PO_RESTRICTIONS);
+            SM = new SimulatedSegmentManager();
+            p.importGlobalVariable("SM");
+            Qorus = new SimulatedQorusApp();
+            p.importGlobalVariable("Qorus");
+            p.define("QorusHasWfApi", True);
+            p.define("QorusHasSvcApi", True);
+            p.define("QorusHasJobApi", True);
+            p.define("QorusHasIxApis", True);
+            p.define("QorusHasAnyIxApi", True);
+            p.define("QorusSimulatedServer", True);
+            p.define("QorusClientInjectedTest", True);
+            p.importClass("SimulatedService", "OMQ::LocalQorusService");
+            p.importClass("SimulatedJob", "OMQ::LocalQorusJob");
+            p.importClass("SimulatedWFEntry", "OMQ::WFEntry");
+            p.importClass("SimulatedQorusApp", "OMQ::QorusApp");
+            p.importFunction("_priv_get_pgm_ctx");
+            p.importFunction("_get_value_map");
+        };
+        code custom_parsing = sub (Program p) {
+            p.parsePending("public *hash<auto> sub get_transient_data() { return tld.transient_data; }\n"
+                "public sub set_transient_data(*hash<auto> td) { tld.transient_data = td; }\n"
+                "public sub set_wf_context() { tld = new ThreadLocalData(); tld.index = 1; tld.wfe = new WFEntry(); tld._current_ix = 'wf'; }\n"
+                "sub qorus_api_ref_service(AbstractQorusService svc) {} sub qorus_api_deref_service(AbstractQorusService svc) {}\n"
+                "public sub set_svc_context(auto svc) { tld = new ThreadLocalData(); tld.svc = svc; tld._current_ix = 'svc'; }\n"
+                "public sub set_job_context(auto job) { tld = new ThreadLocalData(); tld.job = job; tld._current_ix = 'job'; }\n"
+                "public sub clear_wf_context() { remove tld; }\n"
+                "public sub set_wf_config(hash<auto> config_items) { WFEntry::setConfigItemValues(config_items); }\n"
+                "public object sub get_sm() { return SM; }\n"
+                "public LocalQorusService sub get_svc() { return new LocalQorusService(); }\n"
+                "public LocalQorusJob sub get_job() { return new LocalQorusJob(); }\n"
+                "public class OMQ::AbstractQorusService { auto memberGate(string m) { delete argv; } auto methodGate(string m) { delete argv; } }\n"
+                "const WorkflowCallContextKeys = ('a',); const WorkflowOrderCallContextKeys = ('a',);\n"
+                "public class OMQ::Workflow { auto memberGate(string m) { delete argv; } auto methodGate(string m) { delete argv; } }\n",
+                "injected client");
+        };
+        # create custom module
+        string fn = tmp_location() + "/QorusClientCore.qm";
+        File f();
+        f.open2(fn, O_CREAT | O_TRUNC | O_WRONLY);
+        #on_exit unlink(fn);
+        {
+            FileLineIterator i(ENV.OMQ_DIR + "/qlib/QorusClientBase.qm");
+            while (i.next()) {
+                string line = i.getValue();
+                line =~ s/QorusClientBase/QorusClientCore/g;
+                f.printf("%s\n", line);
+            }
+        }
+        {
+            # now add the real QorusClientCore module
+            FileLineIterator i(ENV.OMQ_DIR + "/qlib/QorusClientCore.qm");
+            f.print("%no-child-restrictions\n");
+            bool mod;
+            bool mod_done;
+            while (i.next()) {
+                string line = i.getValue();
+                if (mod) {
+                    if (line =~ /^}/) {
+                        mod = False;
+                        mod_done = True;
+                    }
+                    continue;
+                } else if (!mod_done && (line =~ /^module QorusClientCore/)) {
+                    mod = True;
+                    continue;
+                }
+                if (line =~ /requires.*QorusClientBase/) {
+                    continue;
+                }
+
+                f.printf("%s\n", line);
+            }
+        }
+
+        injectUserModule(fn, custom_setup, custom_parsing);
+    }
+
+    getDataProviderTests() {
+        AbstractDataProvider dp = UserApi::getDataProvider("datasource/omq/connections");
+        assertEq("connections", dp.getName());
+        dp = UserApi::getDataProvider("factory/csvwrite{path=/tmp/out.csv}");
+        assertEq(Type::String, dp.getName().type());
+        on_exit unlink("/tmp/out.csv");
+        dp = UserApi::getDataProvider("factory/csvread{path=/tmp/out.csv}");
+        assertEq(Type::String, dp.getName().type());
+    }
+
+    getTypeFromPathTests() {
+        AbstractDataProviderType type = UserApi::getTypeFromPath("type/qore/sftp/event");
+        assertEq("hash<auto>", type.getBaseTypeName());
+        type = UserApi::getTypeFromPath("type/qore/sftp/event/filepath");
+        assertEq("string", type.getBaseTypeName());
+        assertThrows("DATA-TYPE-ERROR", \UserApi::getTypeFromPath(), "invalid");
+        assertThrows("DATA-TYPE-ERROR", \UserApi::getTypeFromPath(), "datasource/xxxx_invalid");
+        assertThrows("DATA-TYPE-ERROR", \UserApi::getTypeFromPath(), "datasource/omq/xxxx_invalid");
+        assertThrows("DATA-TYPE-ERROR", \UserApi::getTypeFromPath(), "datasource/omq/connections");
+        type = UserApi::getTypeFromPath("datasource/omq/connections/record");
+        assertEq("hash<auto>", type.getBaseTypeName());
+
+        # FIXME: setup user and remote connections for automatic tests
+        #type = UserApi::getTypeFromPath("connection/rest-billing-demo/accounts/GET/request");
+        #assertEq(NT_HASH, type.getBaseTypeCode());
+        #type = UserApi::getTypeFromPath("remote/isepl/datasources/omquser/bb_local/record");
+        #assertEq(NT_HASH, type.getBaseTypeCode());
+    }
+
+    restTests() {
+        # get first workflow's name
+        assertEq(Type::String, UserApi::expandTemplatedValue("$rest:{workflows[0].name}").type());
+        # get last workflow's name
+        assertEq(Type::String, UserApi::expandTemplatedValue("$rest:{workflows[-1].name}").type());
+        assertEq("REGRESSION-TEST", UserApi::expandTemplatedValue("$rest:{workflows/REGRESSION-TEST/name}"));
+    }
+
+    timestampTests() {
+        string control = now().format("YYYY-MM-Day");
+        string val = UserApi::expandTemplatedValue("x-$timestamp:{YYYY-MM-Day}-x");
+        assertEq("x-" + control + "-x", val);
+    }
+
+    getInputDataTest() {
+        call_function("set_wf_context");
+        on_exit {
+            call_function("clear_wf_context");
+        }
+        call_function("set_wf_config", {"myconfig": "$local:local_config"});
+        auto v = UserApi::getInputData("data", {"local_config": "string"}, {"data": "txt: $config:myconfig"});
+        assertEq("txt: string", v);
+    }
+
+    *hash<auto> getTransientData() {
+        return call_function("get_transient_data");
+    }
+
+    setTransientData(*hash<auto> td) {
+        call_function("set_transient_data", td);
+    }
+
+    updateOutputDataTest() {
+        {
+            call_function("set_wf_context");
+            on_exit {
+                call_function("clear_wf_context");
+            }
+
+            assertEq(2, UserApi::getUserContextInfo().workflow_instanceid);
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$dynamic:output.key"});
+            assertEq({"output": {"key": "val"}}, SM.getDynamicData());
+            SM.updateDynamicData({});
+            UserApi::updateOutputData({"id": "val"}, {"id": "$dynamic:{output.key-1}"});
+            assertEq({"output": {"key-1": "val"}}, SM.getDynamicData());
+            {
+                hash<auto> h = {
+                    "key-1": 1,
+                    "key-2": 2,
+                    "key-3": 3,
+                };
+                UserApi::updateOutputData(h, {"*": "$dynamic:{output.key-2}"});
+                assertEq({
+                    "output": {
+                        "key-1": "val",
+                        "key-2": h,
+                    },
+                }, SM.getDynamicData());
+            }
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$temp:output.key"});
+            assertEq({"output": {"key": "val"}}, SM.getTempData());
+            SM.updateTempData({});
+            UserApi::updateOutputData({"id": "val"}, {"id": "$temp:{output.key-1}"});
+            assertEq({"output": {"key-1": "val"}}, SM.getTempData());
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$transient:output.key"});
+            assertEq({"output": {"key": "val"}}, getTransientData());
+            setTransientData({});
+            UserApi::updateOutputData({"id": "val"}, {"id": "$transient:{output.key-1}"});
+            assertEq({"output": {"key-1": "val"}}, getTransientData());
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$sensitive:taxid.A100.output.key"});
+            assertEq({"output": {"key": "val"}}, SM.getSensitiveData("taxid", "A100"));
+            UserApi::updateOutputData({"id": "val"}, {"id": "$sensitive-alias:{my-alias.output.key}"});
+            assertEq({"output": {"key": "val"}}, SM.getSensitiveAlias("my-alias"));
+            UserApi::updateOutputData({"id": "val"}, {"id": "$step:output.key"});
+            assertEq({"output": {"key": "val"}}, SM.getStepData());
+            UserApi::updateOutputData({"id": "val"}, {"id": "$keys:key-$local:workflow_instanceid"});
+            assertEq({"key-2": "val"}, SM.getOrderKeys());
+            UserApi::updateOutputData({"id": "val"}, {"id": "$feedback:key-$local:workflow_instanceid"});
+            assertEq("val", SM.getFeedback("key-2"));
+
+            # test a list of output locations
+            SM.updateDynamicData({});
+            SM.updateTempData({});
+            UserApi::updateOutputData({"id": "val"}, {"id": ("$dynamic:{output.key-1}", "$dynamic:{output.key-2}",
+                "$temp:{output.key-1}", "$temp:{output.key-2}")});
+            assertEq({"output": {"key-1": "val", "key-2": "val"}}, SM.getDynamicData());
+            assertEq({"output": {"key-1": "val", "key-2": "val"}}, SM.getTempData());
+
+            {
+                hash<auto> h = {"a": 1, "b": "two"};
+                hash<auto> values;
+                hash<auto> output;
+                int count = 0;
+                foreach hash<auto> i in ({"$local:*": "$transient:data"}.pairIterator()) {
+                    string key = sprintf("k%d", count++);
+                    values{key} = UserApi::expandTemplatedValue(i.key, h);
+                    output{key} = i.value;
+                }
+                UserApi::updateOutputData(values, output);
+                assertEq({"a": 1, "b": "two"}, UserApi::expandTemplatedValue("$transient:data"){keys h});
+            }
+
+            # prop tests
+            UserApi::updateOutputData({"id": "val"}, {"id": "$sysprop:domain1.key1"});
+            assertEq("val", UserApi::expandTemplatedValue("$sysprop:*").domain1.key1);
+
+            UserApi::updateOutputData({"id": {"key2": "val2"}}, {"id": "$sysprop:domain2"});
+            assertEq("val2", UserApi::expandTemplatedValue("$sysprop:*").domain2.key2);
+        }
+
+        # do service tests
+        {
+            object svc = call_function("get_svc");
+            call_function("set_svc_context", svc);
+            on_exit call_function("set_svc_context");
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$state:key1"});
+            assertEq({"key1": "val"}, svc.getStateData());
+        }
+
+        # do job tests
+        {
+            object job = call_function("get_job");
+            call_function("set_job_context", job);
+            on_exit call_function("set_job_context");
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$state:key1"});
+            assertEq({"key1": "val"}, job.getStateData());
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$info:key1"});
+            assertEq({"key1": "val"}, job.getInfo());
+
+            UserApi::updateOutputData({"id": "val"}, {"id": "$pstate:key1"});
+            assertEq({"key1": "val"}, job.getPersistentStateData());
+        }
+    }
+
+    test_expandTemplatedValue() {
+        date now = 2020-05-01T11:38:59.000001Z;
+        hash<auto> ctx = UserApi::getUserContextInfo();
+        hash<string, auto> local_context = ctx + {
+            "foo": "bar",
+            "foo-bar": "bar",
+            "number": "42",
+            "fool": (
+                "baz",
+                "baq",
+            ),
+            "list": (1, 2, 3),
+            "shortlist": ("one",),
+            "ts": "1970-01-01T00:00:01",
+            "data0": (
+                {
+                    "account": (
+                        {
+                            "id": 1,
+                        },
+                        {
+                            "id": 2,
+                        },
+                    ),
+                },
+                {
+                    "account": (
+                        {
+                            "id": 3,
+                        },
+                        {
+                            "id": 4,
+                        },
+                    ),
+                },
+            ),
+            "data1": (
+                {
+                    "account": (
+                        {
+                            "ids": (1, "one"),
+                        },
+                        {
+                            "ids": (2, "two"),
+                        },
+                    ),
+                },
+                {
+                    "account": (
+                        {
+                            "ids": (3, "three"),
+                        },
+                        {
+                            "ids": (4, "four"),
+                        },
+                    ),
+                },
+            ),
+            "values": {
+                "int": 100,
+                "float": 1.1,
+                "float2": 1.0,
+                "float3": 50.3,
+                "number": 1.1n,
+                "number2": 200n,
+                "true": True,
+                "false": False,
+                "bin": <abcd>,
+                "null": NULL,
+                "jstr": make_json(({"a": 1}, {"b": 2})),
+                "string": "string",
+                "hash": {"a": 1, "b": 2},
+                "list": (1, "two", 3.0),
+                "timestamp": now,
+                "timestamp2": 2020-05-05T06:39:09.123456Z,
+                "duration": (1D + 2h + 3m + 2s + 28392us),
+                "NOTHING": NOTHING,
+                "NULL": NULL,
+            },
+            "listofhashes": (
+                {
+                    "a": 1,
+                    "b": 2,
+                },
+            ),
+        };
+
+        list<auto> results = (
+            ("$local:foo", "bar"),
+            ("$local:{foo}", "bar"),
+            (" $local:foo", " bar"),
+            (" $local:{foo}", " bar"),
+            ("Hello $local:foo", "Hello bar"),
+            ("Hello $local:{foo}", "Hello bar"),
+            ("Hello $local:foo!", "Hello bar!"),
+            ("Hello $local:{foo}!", "Hello bar!"),
+            ("Hello $local:{foo-bar}!", "Hello bar!"),
+            ("Hello$local:foo", "Hellobar"),
+            ("Hello$local:{foo}", "Hellobar"),
+            ("Hello.$local:foo", "Hello.bar"),
+            ("Hello.$local:{foo}", "Hello.bar"),
+            ("Hello-$local:foo", "Hello-bar"),
+            ("Hello-$local:{foo}", "Hello-bar"),
+            ("Hello_$local:foo", "Hello_bar"),
+            ("Hello_$local:{foo}", "Hello_bar"),
+            ("Hello\\$local:foo", "Hello$local:foo"),
+            ("Hello/$local:foo", "Hello/bar"),
+            ("Hello/$local:{foo}", "Hello/bar"),
+            ("$local:foo ", "bar "),
+            ("$local:{foo} ", "bar "),
+            ("$local:{foo}.", "bar."),
+            ("$local:foo-", "bar-"),
+            ("$local:{foo}-", "bar-"),
+            ("$local:foo\\", "bar\\"),
+            ("$local:{foo}\\", "bar\\"),
+            ("$local:foo/", "bar/"),
+            ("$local:{foo}/", "bar/"),
+            ("\\$local:foo", "$local:foo"),
+            ("\\\\$local:foo", "\\bar"),
+            ("Hello $local:foo$local:number!", "Hello bar42!"),
+            ("$local:foo $local:number $local:foo", "bar 42 bar"),
+            ("$local:{foo}xyz", "barxyz"),
+            ("$local:{fool[0]}xyz", "bazxyz"),
+            ("$local:{fool[1]}xyz", "baqxyz"),
+            ("$local:*", local_context),
+            ("$local:{*}", local_context),
+            ("$parse-value:{a={b=$local:{foo}}}", {"a": {"b": "bar"}}),
+            ("$parse-value:{a=$local:{list[1]}}", {"a": 2}),
+            ("$local:{shortlist}-2", "one-2"),
+            ({"$local:foo": "$local:{fool[1]}"}, {"bar": "baq"}),
+            (("$local:foo", "$local:{fool[1]}"), ("bar", "baq")),
+
+            ("$local:foo1??{$local:foo}", "bar"),
+
+            ("$local:foo1??{$parse-value:{1970-01-01}}", 1970-01-01),
+
+            ("$local:foo1??{$local:{foo2}}??{hello}", "hello"),
+
+            ("$local:foo1??{$local:foo2}??{$local:foo}", "bar"),
+
+            ("$local:{foo1}??{$local:{foo}}", "bar"),
+            ("$local:{foo1}??{$local:{foo2}}??{$local:{foo}}", "bar"),
+
+            ("$parse-value:{$local:{last_executed}??{1970-01-01}}", 1970-01-01),
+
+            ("$parse-value:{%EVAL=timegm($local:ts)}", 1),
+
+            ("$parse-value:{%EVAL=timegm($local:last_executed??{1970-01-01})}", 0),
+            ("$parse-value:{%EVAL=timegm($local:{last_executed}??{1970-01-01})}", 0),
+
+            # issue #3482
+            ("$local:data0.account.id", (1, 2, 3, 4)),
+            ("$local:data1.account.ids", ((1, "one"), (2, "two"), (3, "three"), (4, "four"))),
+
+            ("$qore-expr:{$local:* ? 1 : 0}", 1),
+            ("$qore-expr:{2020-04-28}", 2020-04-28),
+            ("$python-expr:{{'a': 1}}", {"a": 1}),
+
+            ("$local:values.timestamp", now),
+            ("$local:values.timestamp??{2020-01-01}", now),
+            ("$local:{values.timestamp}-x", now.format("IF") + "-x"),
+            ("$qore-expr:{get_epoch_seconds($local:values.timestamp??{2000-01-01})}", 1588333139),
+            ("$qore-expr:{\"$local:values.int\"}", "100"),
+
+            ("$local:values.float", 1.1),
+            ("$local:{values.float}-x", "1.1-x"),
+            ("$local:values.number", 1.1n),
+            ("$local:{values.number}-x", "1.1-x"),
+            ("$local:values.true", True),
+            ("$local:values.false", False),
+            ("$local:values.true-x", "True-x"),
+            ("$local:values.false-x", "False-x"),
+            ("$local:values.bin", <abcd>),
+            ("$local:values.bin-x", "<abcd>-x"),
+            ("$local:values.nothing", NOTHING),
+            ("$local:values.nothing-x", "-x"),
+            ("$local:values.null", NULL),
+            ("$local:values.null-x", "-x"),
+
+            ("$qore-expr:{{'items': parse_json($qore-expr-value:{$local:values.jstr})}}", {"items": ({"a": 1}, {"b": 2})}),
+            ("$qore-expr:{$local:{xxxx}.val()}", False),
+            ("$qore-expr:{$local:{xxxx} ? 0 : 1}", 1),
+            ("$qore-expr:{$local:values.hash ? 0 : 1}", 0),
+            ("$qore-expr:{$local:values.hash}", local_context.values."hash"),
+            ("$qore-expr:{$local:values.hash + {\"c\": 3}}", local_context.values."hash" + {"c": 3}),
+            ("$qore-expr:{{'a': 1}}", {"a": 1}),
+            ("$qore-expr:{exists $local:input.no.value}", False),
+
+            ("$local:{listofhashes[0]}", {"a": 1, "b": 2}),
+
+            ("$value-map:{test-map.test2}", "two"),
+            ("$value-map:{test-map.test3.a[2]}", "two-a"),
+        );
+
+        foreach list<auto> res in (results) {
+            assertEq(res[1], UserApi::expandTemplatedValue(res[0], local_context), "result " + ($# + 1) + "/" +
+                results.size());
+        }
+
+        assertEq(200, UserApi::expandTemplatedValue("$local:{values.int\\ with\\ spaces}",
+            {"values": {"int with spaces": 200}}));
+        assertEq(200, UserApi::expandTemplatedValue("$local:{values.\"int with spaces\"}",
+            {"values": {"int with spaces": 200}}));
+        assertEq(200, UserApi::expandTemplatedValue("$local:{values.'int with spaces'}",
+            {"values": {"int with spaces": 200}}));
+
+        HashPairIterator it(local_context.values);
+        while (it.next()) {
+            string key = it.getValue().key;
+            auto expected_value = it.getValue().value;
+            auto value = UserApi::expandTemplatedValue(sprintf("$qore-expr:{$qore-expr-value:{$local:values.%s}}",
+                key), local_context);
+
+            # workaround for issues on alpine
+            if ((ENV.MACHTYPE ?? "").find("alpine") > -1 && ENV.ORACLE_SID) {
+                if (substr(key, 0, 5) == "float") {
+                    assertNumberEq(expected_value, value);
+                } else if (key == "duration") {
+                    assertLe(expected_value + 1us, value);
+                    assertGe(expected_value - 1us, value);
+                } else {
+                    assertEq(expected_value, value);
+                }
+            } else {
+                assertEq(expected_value, value);
+            }
+        }
+
+        results = (
+            ("$timestamp:timegm", "integer"),
+        );
+        map assertEq($1[1], UserApi::expandTemplatedValue($1[0], local_context).type(), "result " + ($# + 1) + "/" + results.size()), results;
+
+        call_function("set_wf_context");
+        on_exit {
+            call_function("clear_wf_context");
+        }
+        SM.setStaticData(StaticData);
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$static:account.name"));
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$static:{account.name}"));
+        SM.setDynamicData(DynamicData);
+        assertEq(DynamicData.output.id, UserApi::expandTemplatedValue("$dynamic:output.id"));
+        assertEq(DynamicData.output.id, UserApi::expandTemplatedValue("$dynamic:{output.id}"));
+        SM.setSensitiveData(SKey, SValue, StaticData, Alias);
+        string svalue = SValue;
+        # escape the dot chars in the string
+        svalue =~ s/\./\\./g;
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$sensitive:{" + SKey + "." + svalue + ".account.name}"));
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$sensitive-alias:" + Alias + ".account.name"));
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$sensitive-alias:{" + Alias + ".account.name}"));
+        assertEq({"a": "test-name"}, UserApi::expandComplexValue({"a": "$static:account.name"}));
+        assertEq({}, UserApi::expandComplexValue({}));
+
+        {
+            hash<auto> test_hash.a.b.c = 1;
+            test_hash = call_static_method("UserApi", "updateHashDotValue", test_hash, "a.b.c", 2);
+            assertEq(2, test_hash.a.b.c);
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"file_path": "$dynamic:info.path"};
+            string path = join_paths(tmp_location(), get_random_string() + ".txt");
+            call_static_method("UserApi", "updateOutputData", "file_path", path, output_cfg);
+            assertEq(path, SM.getDynamicData().info.path);
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key1": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": {
+                        "a": 1,
+                    },
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            call_static_method("UserApi", "updateOutputData", h, output_cfg);
+            assertEq(h.hash_test.key1, SM.getDynamicData().info.other_key);
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key1[1]": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": (
+                        {
+                            "a": 1,
+                        },
+                        {
+                            "c": 3,
+                        },
+                    ),
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            call_static_method("UserApi", "updateOutputData", h, output_cfg);
+            assertEq(h.hash_test.key1[1], SM.getDynamicData().info.other_key);
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key1[4]?": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": (
+                        {
+                            "a": 1,
+                        },
+                        {
+                            "c": 3,
+                        },
+                    ),
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            call_static_method("UserApi", "updateOutputData", h, output_cfg);
+            assertEq({}, SM.getDynamicData());
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key1[4]": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": (
+                        {
+                            "a": 1,
+                        },
+                        {
+                            "c": 3,
+                        },
+                    ),
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            try {
+                call_static_method("UserApi", "updateOutputData", h, output_cfg);
+                assertTrue(False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq("OUTPUT-CONFIG-ERROR", ex.err);
+            }
+            assertEq({}, SM.getDynamicData());
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test\\.key1.key2": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test.key1": {
+                    "key1": {
+                        "a": 1,
+                    },
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            call_static_method("UserApi", "updateOutputData", h, output_cfg);
+            assertEq(h."hash_test.key1".key2, SM.getDynamicData().info.other_key);
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key3?.oops": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": {
+                        "a": 1,
+                    },
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            call_static_method("UserApi", "updateOutputData", h, output_cfg);
+            assertEq({}, SM.getDynamicData());
+        }
+
+        {
+            SM.setDynamicData({});
+            hash<auto> output_cfg = {"hash_test.key3.oops": "$dynamic:info.other_key"};
+            hash<auto> h = {
+                "hash_test": {
+                    "key1": {
+                        "a": 1,
+                    },
+                    "key2": {
+                        "b": 2,
+                    },
+                },
+            };
+            try {
+                call_static_method("UserApi", "updateOutputData", h, output_cfg);
+                assertTrue(False);
+            } catch (hash<ExceptionInfo> ex) {
+                assertEq("OUTPUT-CONFIG-ERROR", ex.err);
+            }
+            assertEq({}, SM.getDynamicData());
+        }
+
+        {
+            SM.setStepData({});
+            hash<auto> output_cfg = {"file_path": "$step:info.path"};
+            string path = join_paths(tmp_location(), get_random_string() + ".txt");
+            call_static_method("UserApi", "updateOutputData", "file_path", path, output_cfg);
+            assertEq(path, SM.getStepData().info.path);
+        }
+        SM.setStaticData(StaticData);
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$static:account.name"));
+        assertEq(StaticData.account.name, UserApi::expandTemplatedValue("$static:{account.name}"));
+
+        # do service tests
+        {
+            object svc = call_function("get_svc");
+            call_function("set_svc_context", svc);
+            on_exit call_function("set_svc_context");
+
+            svc.saveStateData({"id": "value"});
+            assertEq("value", UserApi::expandTemplatedValue("$state:id"));
+        }
+
+        # do job tests
+        {
+            object job = call_function("get_job");
+            call_function("set_job_context", job);
+            on_exit call_function("set_job_context");
+
+            job.saveStateData({"id": "value"});
+            assertEq("value", UserApi::expandTemplatedValue("$state:id"));
+
+            job.saveInfo({"id": "value"});
+            assertEq("value", UserApi::expandTemplatedValue("$info:id"));
+        }
+
+        assertThrows("VALUE-ERROR", \UserApi::expandTemplatedValue(), ("a-$local:*-x", local_context));
+    }
+
+    test_expandTemplatedValueError() {
+        hash<string, string> local_context = {
+            "foo": "bar",
+        };
+
+        # no value
+        list<string> error_inputs = (
+            "$local:foo_",
+        );
+        foreach string input in (error_inputs) {
+            assertNothing(UserApi::expandTemplatedValue(input, local_context));
+        }
+
+        # UNSUPPORTED-CONTEXT-ERROR
+        error_inputs = (
+            "$foo:bar",
+        );
+        foreach string input in (error_inputs) {
+            assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), (input, local_context));
+        }
+
+        # FORMAT-ERROR
+        error_inputs = (
+            "$local:",
+            "$local:$foo",
+            "$local:foo$bar:"
+        );
+        foreach string input in (error_inputs) {
+            assertThrows("FORMAT-ERROR", \UserApi::expandTemplatedValue(), (input, local_context), "arg " + ($# + 1));
+        }
+
+        # UNSUPPORTED-CONTEXT-ERROR
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), ("$static:foo", local_context));
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), ("$dynamic:foo", local_context));
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), ("$sensitive:foo", local_context));
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), ("$step:foo", local_context));
+        assertThrows("UNSUPPORTED-CONTEXT-ERROR", \UserApi::expandTemplatedValue(), ("$keys:foo", local_context));
+    }
+}
+
+class StateSimulator {
+    private {
+        hash<auto> state;
+        hash<auto> pstate;
+    }
+
+    saveStateData(hash<auto> state) {
+        self.state = state;
+    }
+
+    saveStateDataPath(string path, auto value) {
+        state = UserApi::updateHashDotValue(state, path, value);
+    }
+
+    *hash<auto> getStateData() {
+        return state;
+    }
+
+    clearPersistentStateData() {
+        remove pstate;
+    }
+
+    savePersistentStateData(hash<auto> state) {
+        self.pstate = state;
+    }
+
+    savePersistentStateDataPath(string path, auto value) {
+        pstate = UserApi::updateHashDotValue(pstate, path, value);
+    }
+
+    *hash<auto> getPersistentStateData() {
+        return pstate;
+    }
+
+    hash<auto> getConfigItemHash(*hash<auto> local_context) {
+        return {};
+    }
+}
+
+class SimulatedService inherits StateSimulator {
+    public {
+        string name;
+    }
+
+    constructor(string name = "test-svc") {
+        self.name = name;
+    }
+}
+
+class SimulatedJob inherits StateSimulator {
+    private {
+        hash<auto> info();
+        hash<auto> jinfo;
+    }
+
+    saveInfo(hash<auto> info) {
+        self.info = info;
+    }
+
+    saveInfoPath(string path, auto val) {
+        info = UserApi::updateHashDotValue(info, path, val);
+    }
+
+    hash<auto> getInfo() {
+        return info;
+    }
+
+    *hash<auto> getJobInfo() {
+        return jinfo;
+    }
+}
+
+class SimulatedSegmentManager {
+    public {
+        hash<auto> static_data;
+        hash<auto> dynamic_data;
+        hash<auto> temp_data;
+        hash<auto> step_data;
+        hash<auto> sensitive_data;
+        hash<auto> sensitive_data_aliases;
+        hash<auto> order_keys;
+        hash<auto> feedback;
+    }
+
+    setOrderKeys(hash<auto> order_keys, bool trunc) {
+        self.order_keys = order_keys;
+    }
+
+    setStaticData(hash<auto> static_data) {
+        self.static_data = static_data;
+    }
+
+    setDynamicData(hash<auto> dynamic_data) {
+        self.dynamic_data = dynamic_data;
+    }
+
+    setStepData(hash<auto> step_data) {
+        self.step_data = step_data;
+    }
+
+    setSensitiveData(string skey, string svalue, hash<auto> data, *softlist<string> aliases) {
+        sensitive_data{skey}{svalue} = data;
+        map sensitive_data_aliases{$1} = data, aliases;
+    }
+
+    *hash<auto> getStaticData() {
+        return static_data;
+    }
+
+    *hash<auto> getDynamicData() {
+        return dynamic_data;
+    }
+
+    *hash<auto> getTempData() {
+        return temp_data;
+    }
+
+    *hash<auto> getStepData() {
+        return step_data;
+    }
+
+    auto getSensitiveData(string skey, string svalue) {
+        return sensitive_data{skey}{svalue};
+    }
+
+    auto getSensitiveAlias(string alias) {
+        return sensitive_data_aliases{alias};
+    }
+
+    auto getOrderKeys() {
+        return order_keys;
+    }
+
+    auto getOrderKeys(string field, *reference<bool> missing_data) {
+        return order_keys{field};
+    }
+
+    updateDynamicData(*hash<auto> dynamic_data) {
+        self.dynamic_data = dynamic_data;
+    }
+
+    updateDynamicDataPath(string path, auto val) {
+        dynamic_data = UserApi::updateHashDotValue(dynamic_data, path, val);
+    }
+
+    updateTempData(*hash<auto> temp_data) {
+        self.temp_data = temp_data;
+    }
+
+    updateTempDataPath(string path, auto val) {
+        temp_data = UserApi::updateHashDotValue(temp_data, path, val);
+    }
+
+    updateSensitiveData(string skey, string svalue, hash<auto> data) {
+        sensitive_data{skey}{svalue} = data;
+    }
+
+    updateSensitiveDataPath(string skey, string svalue, list<hash<DotInfo>> path, auto val) {
+        sensitive_data{skey}{svalue} = _priv_update_hash_dot_value(sensitive_data{skey}{svalue}, path, val);
+    }
+
+    updateSensitiveDataAlias(string alias, hash<auto> data) {
+        sensitive_data_aliases{alias} = data;
+    }
+
+    updateSensitiveDataAliasPath(string alias, list<hash<DotInfo>> path, auto val) {
+        sensitive_data_aliases{alias} = _priv_update_hash_dot_value(sensitive_data_aliases{alias}, path, val);
+    }
+
+    updateStepData(*hash<auto> step_data) {
+        self.step_data = step_data;
+    }
+
+    updateStepDataPath(string path, auto val) {
+        step_data = UserApi::updateHashDotValue(step_data, path, val);
+    }
+
+    leaveFeedback(string wfiid, string key, auto value) {
+        feedback{key} = value;
+    }
+
+    auto getFeedback(string key) {
+        return feedback{key};
+    }
+}
+our SimulatedSegmentManager SM;
+our SimulatedQorusApp Qorus;
+
+class SimulatedWFEntry {
+    private {
+        static hash<auto> config_items;
+    }
+
+    public {
+        int workflow_instanceid = 2;
+        hash<auto> parent_info = {
+            "workflow_instanceid": 2,
+            "parent_workflow_instanceid": 1,
+        };
+    }
+
+    static setConfigItemValues(hash<auto> config_items) {
+        SimulatedWFEntry::config_items = config_items;
+    }
+
+    static auto getConfigItemValue(string item, *hash<auto> local_context, bool expand_complex_values = True) {
+        auto rv = config_items{item};
+        if (rv.typeCode() == NT_STRING) {
+            return UserApi::expandTemplatedValue(rv, local_context, expand_complex_values);
+        }
+        return rv;
+    }
+
+    auto memberGate(string m) {
+        delete argv;
+    }
+
+    auto methodGate(string m) {
+        delete argv;
+    }
+
+    static hash<auto> getConfigItemHash(*hash<auto> local_context) {
+        return config_items ?? {};
+    }
+}
+
+class SimulatedProps {
+    private {
+        hash<auto> props();
+    }
+
+    updatePath(string path, auto value) {
+        props = _priv_update_hash_dot_value(props, _priv_get_dot_string_list(path), value);
+    }
+
+    hash<auto> get() {
+        return props;
+    }
+}
+
+class SimulatedQorusApp {
+    public {
+        SimulatedProps props();
+    }
+
+    auto methodGate(string m) {
+        delete argv;
+    }
+
+    auto memberGate(string m) {
+        delete argv;
+    }
+}
+
+class ProgramGenerator {
+    public {
+        static QorusProgram p(False, PO_NEW_STYLE | PO_NO_CHILD_PO_RESTRICTIONS, ());
+    }
+}
+
+QorusProgram sub _priv_get_pgm_ctx() {
+    return ProgramGenerator::p;
+}
+
+auto sub _get_value_map(string name, string key) {
+    return Main::ValueMaps{name}{key};
+}
+
+# private hashdecl for dot and array resolution
+hashdecl DotInfo {
+    # the key to read
+    string key;
+    # if it has a value, then take the array offset
+    *softint array_offset;
+}
+
+list<hash<DotInfo>> sub _priv_get_dot_string_list(string str) {
+    list<hash<DotInfo>> rv();
+    # break down string into a list of fields
+    list<string> dot_list = str.split(".");
+    # allow "." characters to be escaped - if found then recombine fields
+    # do not check the last field
+    for (int i = 0; i < dot_list.size(); ++i) {
+        # check if a single backslash is at the end of the string
+        if ((i < (dot_list.size() - 1)) && (dot_list[i] =~ /\\$/)) {
+            splice dot_list[i], -1;
+            dot_list[i] += "." + (extract dot_list, i + 1, 1)[0];
+            --i;
+        } else {
+            *string array_offset = (dot_list[i] =~ x/[^\\]?\[(-?[0-9]+)\]$/)[0];
+            if (exists array_offset) {
+                # remove array index from string
+                dot_list[i] =~ s/\[-?[0-9]+\]$//;
+            }
+            rv += <DotInfo>{
+                "key": dot_list[i],
+                "array_offset": exists array_offset ? array_offset : NOTHING,
+            };
+        }
+    }
+
+    return rv;
+}
+
+*hash<auto> sub _priv_update_hash_dot_value(*hash<auto> var_data, list<hash<DotInfo>> dot_list, auto value) {
+    # recursively update the hash
+    code update = sub (reference<auto> ref, list<hash<DotInfo>> dot_list, auto value, int element = 0) {
+        if (element == dot_list.size() - 1) {
+            if (exists dot_list[element].array_offset) {
+                ref{dot_list[element].key} = value[dot_list[element].array_offset];
+            } else {
+                ref{dot_list[element].key} = value;
+            }
+        } else {
+            if (exists dot_list[element].array_offset) {
+                update(\ref{dot_list[element].key}[dot_list[element].array_offset], dot_list, value, element + 1);
+            } else {
+                update(\ref{dot_list[element].key}, dot_list, value, element + 1);
+            }
+        }
+    };
+    update(\var_data, dot_list, value);
+    return var_data;
+}

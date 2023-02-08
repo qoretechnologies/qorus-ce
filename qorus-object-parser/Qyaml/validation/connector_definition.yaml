@@ -1,0 +1,9 @@
+connector:
+  required:
+    class:
+      type: string
+    connector:
+      type: string
+  optional:
+    prefix:
+      type: string

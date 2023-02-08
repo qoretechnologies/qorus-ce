@@ -1,0 +1,246 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+
+%require-our
+%require-types
+%strict-args
+%exec-class ostart
+
+# Qorus client module
+%requires QorusClientBase
+
+const ostart_opts = {
+    "url"     : "u,url=s",
+    "proxy"   : "p,proxy-url=s",
+    "show"    : "W,show-url",
+    "file"    : "f,file=s",
+    "to"      : "t,timeout=i",
+    "lit"     : "l,literal:i+",
+    "reformat": "R,reformat",
+    "remote"  : "Q,remote=s",
+    "token"   : "k,token=s",
+    "help"    : "h,help",
+};
+
+class ostart {
+    private {
+        hash o;
+        hash options;
+        # to capture HTTP call info
+        hash info;
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        options = QorusClient::parseOptions("qorus-client");
+
+        process_command_line();
+
+        if (!ARGV && !exists o.file)
+            ostart::usage();
+
+        if (o.remote)
+            qrest = omqclient.getRemoteRest(o.remote);
+
+        if (o.url)
+            qrest.setURL(o.url);
+        if (o.proxy)
+            qrest.setProxyURL(o.proxy);
+
+        if (o.to) {
+            int to = o.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        try {
+            if (ARGV) {
+                hash h = startWorkflow(ostart::process_options(ARGV));
+                printf("started %s v%s with ID %d\n", h.name, h.version, h.ids[0]);
+            }
+
+            if (o.file)
+                startFromFile(o.file);
+        }
+        catch (hash ex) {
+            qrest.outputRestErrorMessage(ex, info);
+            thread_exit;
+        }
+    }
+
+    static private usage() {
+        printf(
+            "usage: %s <name> [version] [mode] [option1=value option2=value ...]
+ex: ostart WORKFLOW 1.0 option1=value1 option2=value2
+ -u,--url=ARG         sets Qorus URL (ex: http://user:pass@host:port)
+ -p,--proxy-url=ARG   set the proxy URL (ex: http://proxy:port)
+ -W,--show-url        show default Qorus system URL
+ -f,--file=ARG        load the workflows from a file made by 'ostatus -r'
+ -t,--timeout=ARG     set HTTP timeout in seconds
+ -l,--literal         show literal API calls (more l's, more info)
+ -Q,--remote=ARG      use the given remote Qorus connection
+ -R,--reformat        reformat data with -l+ for better readability
+ -k,--token=ARG       use the given token with HTTP requests to the Qorus server
+ -h,--help            this help text
+", get_script_name());
+        exit(1);
+    }
+
+    private process_command_line() {
+        GetOpt g(ostart_opts);
+        o = g.parse(\ARGV);
+        if (exists o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (o.show) {
+            if (exists options."proxy-url")
+                printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+            else
+                printf("%s\n", options."client-url");
+            exit(0);
+        }
+        if (o.help)
+            ostart::usage();
+    }
+
+    static private any make_option(any arg) {
+        # see if it's an int
+        if (string(int(arg)) == arg)
+            return int(arg);
+
+        # see if it's float
+        if (string(float(arg)) == arg)
+            return float(arg);
+
+        if (arg =~ /true/i)
+            return True;
+
+        if (arg =~ /false/i)
+            return False;
+
+        # see if it's an object or list
+        string str = sprintf("arg = %s\nsub get(){return arg;}", arg);
+        Program prog(PO_LOCKDOWN);
+        try {
+            prog.parse(str, "<main>");
+            prog.run();
+            any rv = prog.callFunction("get");
+            #printf("no exception, rv=%N\n", rv);
+            return rv;
+        }
+        catch (hash ex) {
+            #stderr.printf("exception %s\n", ex.err);
+            # must be a string
+            return arg;
+        }
+    }
+
+    static private bool isMode(string opt) {
+        opt = toupper(opt);
+        foreach string o in (OMQ::WM_Normal, OMQ::WM_Recovery)
+            if (opt == o)
+                return True;
+        return False;
+    }
+
+    static private hash process_options(list opts) {
+        hash args;
+        any opt;
+        while (exists (opt = shift opts)) {
+            if ((int i = index(opt, "=")) != -1)
+                args.options{substr(opt, 0, i)} = ostart::make_option(substr(opt, i + 1));
+            else {
+                if (!exists args.name)
+                    args.name = opt;
+                else if (!exists args.version) {
+                    if (ostart::isMode(opt))
+                        args.mode = opt;
+                    else
+                        args.version = opt;
+                }
+                else if (!exists args.mode)
+                    args.mode = opt;
+                else {
+                    stderr.printf("ERROR: extra argument %y after mode\n", opt);
+                    ostart::usage();
+                }
+            }
+        }
+        return args;
+    }
+
+    ##
+    # get the xmlfile as xml
+    static private any readXMLFile(string fn) {
+        File f();
+        if (f.open(fn)) {
+            printf("%s: could not open load file \"%s\": %s\n",
+                   get_script_name(), fn, strerror(errno()));
+            exit(1);
+        }
+
+        printf("processing xml workflow file %n\n", fn);
+        string xmlstr;
+        any line; # any due NOTHING returned from readLine()...
+        while (exists (line = f.readLine())) {
+            xmlstr += line;
+        }
+        f.close();
+        return parse_xml(xmlstr);
+    }
+
+    private hash startWorkflow(hash wh) {
+        string wfn = wh.name;
+        if (wh.version)
+            wfn += ":" + wh.version;
+
+        return qrest.put(o, "workflows/" + wfn + "?action=start", ("options": wh.options), NOTHING, \info);
+    }
+
+    ##
+    # start the workflows found in this file
+    # @arg xrc the xmlsender
+    # @arg fname the filename to tansfer
+    private startFromFile(string fname) {
+        hash xml = ostart::readXMLFile(fname);
+
+        string inst = xml.firstKey();
+        printf("* instance: %n\n", inst);
+
+        # start the workflows
+        foreach hash wf in (xml{inst}.WorkFlow) {
+            printf("  . starting %s/%s%s: ", wf.name, wf.version, wf.options ? sprintf(" options %y", wf.options) : "");
+            try {
+                hash h = startWorkflow(wf);
+                printf("OK (%s v%s id %d)\n", h.name, h.version, h.ids[0]);
+            }
+            catch (hash ex) {
+                qrest.outputRestErrorMessage(ex, info);
+            }
+        }
+
+        printf("processing %n done\n", fname);
+    }
+}

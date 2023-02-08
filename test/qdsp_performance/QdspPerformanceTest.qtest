@@ -1,0 +1,315 @@
+#!/usr/bin/env qore
+
+%new-style
+
+%requires QUnit
+%requires Util
+%requires SqlUtil
+%requires BulkSqlUtil
+%requires Schema
+%requires QorusClientCore
+
+%exec-class Main
+
+
+const ROW_COUNT = 100000;
+const CONN_ROTATION = 10000;
+const BLOCK_SIZE = 1000;
+
+const SERVICE_NAME = "qdsp-performance-test";
+
+const SCHEMA_OPTIONS = {
+    "replace": True,
+    "driver": {
+        "oracle": {
+            "character_semantics": True,
+        },
+    },
+};
+
+const T_QSD_PERFORMANCE_TEST = {
+    "columns": {
+        "text_a": c_varchar(40, C_NOT_NULL),
+        "date_a": c_timestamp(C_NOT_NULL),
+        "clob_a": c_clob(C_NOT_NULL),
+        "num_a": c_number(10, C_NOT_NULL),
+    },
+};
+
+
+const SCHEMA = {
+    "tables": {
+        "qsd_performance_test": T_QSD_PERFORMANCE_TEST,
+    },
+};
+
+
+class Main inherits QUnit::Test {
+
+    private {
+        AbstractDatasource m_ds;
+        SqlUtil::Database m_database;
+        SqlUtil::AbstractTable m_test_table;
+
+        date m_last_logger = now_ms();
+
+        string m_clob_value = Util::get_random_string(5000, 3);
+
+        hash m_result_times;
+    }
+
+    constructor(): QUnit::Test("qdsp performance test", "1.0") {
+        QorusClient::init2();
+        # set this to insane timeout because in some cases the remote/local switch takes forever
+        qrest.setConnectTimeout(30m);
+        qrest.setTimeout(30m);
+
+        m_ds = omqclient.getDatasource("omquser");
+        m_database = new Database(m_ds);
+
+        addTestCase("large data raw qore test", \qoreDataTest());
+        addTestCase("large data internal qdsp", \qorusDataInternalQdsp());
+        addTestCase("large data process qdsp", \qorusDataProcessQdsp());
+        addTestCase("large data internal coord", \qorusDataInternalCoord());
+        addTestCase("large data process coord", \qorusDataProcessCoord());
+
+        addTestCase("connection switch raw qore test", \connRotationQoreTest());
+        addTestCase("connection switch internal qdsp", \connRotationInternalQdsp());
+        addTestCase("connection switch process qdsp", \connRotationProcessQdsp());
+        addTestCase("connection switch internal coord", \connRotationInternalCoord());
+        addTestCase("connection switch process coord", \connRotationProcessCoord());
+
+        set_return_value(main());
+    }
+
+    private logger(string msg) {
+        date sysdate = now_ms();
+        printf("%s: %n: %s\n",
+                format_date("YYYYMMDDHHmmSSuu", sysdate),
+                sysdate - m_last_logger,
+                vsprintf(msg, argv));
+        m_last_logger = sysdate;
+    }
+
+    globalSetUp() {
+        on_success {
+            m_ds.commit();
+        }
+        on_error {
+            m_ds.rollback();
+        }
+
+        logger("test schema alignment");
+        list sql_statements = m_database.getAlignSql(SCHEMA, SCHEMA_OPTIONS);
+        ListIterator it(sql_statements);
+        while (it.next()) {
+            if (m_options.verbose > 2) {
+                logger("SQL: %s", it.getValue());
+            }
+            m_ds.exec(it.getValue());
+        }
+
+        m_test_table = new Table(m_ds, "qsd_performance_test").getTable();
+        #m_test_table.truncate();
+
+        logger("test data creation in the DB: start");
+        if (!exists m_test_table.selectRow({"limit":1})) {
+
+            BulkInsertOperation ins(m_test_table, {"info_log": \logger(), "block_size": BLOCK_SIZE});
+            on_error ins.discard();
+
+            for (int i = 0; i < ROW_COUNT; i++) {
+                ins.queueData(getRandomRow());
+                if (i % (ROW_COUNT/10) == 0 && m_options.verbose > 2) {
+                    logger("inserted: %d rows of %d", i, ROW_COUNT);
+                }
+            }
+            ins.flush();
+        }
+        logger("test data creation in the DB: end");
+
+        logger("verification of omquser_coord datasource: start");
+        {
+            AbstractDatasource omq = omqclient.getSQLIF().omqp;
+            on_error {
+                omq.rollback();
+                exit(1);
+            }
+            on_success omq.commit();
+            *hash ds_coord = omq.selectRow("select * from connections where name = %v and connection_type = %v",
+                                            "omquser_coord", "DATASOURCE");
+            if (exists ds_coord) {
+                if (ds_coord.options !~ /coord-mode/) {
+                    logger("EXITING: Datasource exists but it's not set to use coord-mode: %n", ds_coord.options);
+                    throw "CONFIG-ERROR", "misconfigured omquser_coord datasource";
+                }
+            }
+            else {
+                omq.exec("insert into connections (name, description, url, options, monitor, manually_updated, enabled, connection_type)
+                    (select 'omquser_coord' as name, description, url, '{coord-mode: 1}' as options, 1, 0, 1, 'DATASOURCE' from connections where name = 'omquser' and connection_type = 'DATASOURCE')");
+                qrest.put("remote/datasources/reload");
+            }
+        }
+        logger("verification of omquser_coord datasource: end");
+
+        logger("loading of the test service: start");
+        int rc;
+        string out = backquote("oload -lR qdsp-performance-test.qsd", \rc);
+        logger(out);
+        if (rc) {
+            logger("oload failed. Exiting");
+            exit(1);
+        }
+        logger("loading of the test service: end");
+    }
+
+    private hash getRandomRow() {
+        hash ret = {};
+
+        foreach string key in (keys T_QSD_PERFORMANCE_TEST.columns) {
+            #ret{key} =
+            hash col = T_QSD_PERFORMANCE_TEST.columns{key};
+            switch (col.qore_type) {
+                case "string":
+                    ret{key} = Util::get_random_string(col.size, 2);
+                    break;
+                case "number":
+                case "int":
+                    ret{key} = rand() % col.size;
+                    break;
+                case "date":
+                    ret{key} = now() - (rand() % 500);
+                    break;
+                case "clob":
+                    ret{key} = m_clob_value;
+                    break;
+                default:
+                    throw "WRONG-TYPE", sprintf("%s", col);
+            }
+        }
+        return ret;
+    }
+
+    globalTearDown() {
+        on_success {
+            m_ds.commit();
+        }
+        on_error {
+            m_ds.rollback();
+        }
+
+        #logger("dropping the table");
+        #m_test_table.drop();
+
+        printf("ROW_COUNT: %d\n", ROW_COUNT);
+        printf("CONN_ROTATION: %d\n", CONN_ROTATION);
+        printf("%20s %20s %20s\n", "label", "milliseconds", "seconds");
+        foreach string i in (keys m_result_times) {
+            printf("%20s %20d %20d\n", i, get_duration_milliseconds(m_result_times{i}), get_duration_seconds(m_result_times{i}));
+        }
+    }
+
+    qoreDataTest() {
+        on_success m_ds.commit();
+        on_error m_ds.rollback();
+
+        date start = now_ms();
+
+        logger("DATA_QORE test: START");
+        SQLStatement stmt = m_test_table.getRowIterator();
+        int rows = 0;
+
+        while (*hash h = stmt.fetchColumns(1000)) {
+            rows += h.firstValue().size();
+        }
+
+        assertEq(ROW_COUNT, rows);
+        logger("DATA_QORE test: END");
+
+        m_result_times."DATA_QORE" = now_ms() - start;
+        logger("RESULT DATA_QORE %d duration: %n", ROW_COUNT, m_result_times.DATA_QORE);
+    }
+
+    connRotationQoreTest() {
+        date start = now_ms();
+
+        hash sh = {
+            "limit": 1,
+        };
+
+        logger("CONN_QORE test: START");
+        for (int i = 0; i < CONN_ROTATION; i++) {
+            on_success m_ds.commit();
+            on_error m_ds.rollback();
+            SQLStatement stmt = m_test_table.getRowIterator(sh);
+            hash h = stmt.fetchColumns(sh.limit);
+        }
+
+        logger("CONN_QORE test: END");
+
+        m_result_times.CONN_QORE = now_ms() - start;
+        logger("RESULT CONN_QORE %d duration: %n", ROW_COUNT, m_result_times.CONN_QORE);
+    }
+
+    private setupRemote(bool remote) {
+        logger("putting service to remote: %n", remote);
+        auto res = qrest.put("services/" + SERVICE_NAME + "?action=setRemote", {"remote": remote});
+        assertEq(remote, res.remote, "svc must run in the qorus-core");
+        logger("putting service to remote: validation");
+        qrest.put("services/" + SERVICE_NAME + "/start");
+        omqservice.user{SERVICE_NAME}.init();
+        res = qrest.get("services/" + SERVICE_NAME);
+        logger("putting service to remote: done");
+        #assertEq("running", res.status, sprintf("Service must run: %n", res));
+    }
+
+    private svcRun(string label, string method) {
+        date start = now_ms();
+        logger("%s test: START", label);
+        int rows = qrest.put("services/" + SERVICE_NAME + "/" + method + "?action=call", {"args": argv});
+        #assertEq(ROW_COUNT, rows);
+        m_result_times{label} = now_ms() - start;
+        logger("%s test: END", label);
+        logger("RESULT %s %d duration: %n", label, ROW_COUNT, m_result_times{label});
+    }
+
+    qorusDataInternalQdsp() {
+        setupRemote(True);
+        svcRun("DATA_QDSP_INTERNAL", "fetchColumns", "omquser");
+    }
+
+    qorusDataProcessQdsp() {
+        setupRemote(False);
+        svcRun("DATA_QDSP_PROCESS", "fetchColumns", "omquser");
+    }
+
+    qorusDataInternalCoord() {
+        setupRemote(True);
+        svcRun("DATA_COORD_INTERNAL", "fetchColumns", "omquser_coord");
+    }
+
+    qorusDataProcessCoord() {
+        setupRemote(False);
+        svcRun("DATA_COORD_PROCESS", , "fetchColumns", "omquser_coord");
+    }
+
+    connRotationInternalQdsp() {
+        setupRemote(True);
+        svcRun("CONN_QDSP_INTERNAL", "fetchColumnsRotateConnections", "omquser", CONN_ROTATION);
+    }
+
+    connRotationProcessQdsp() {
+        setupRemote(False);
+        svcRun("CONN_QDSP_PROCESS", "fetchColumnsRotateConnections", "omquser", CONN_ROTATION);
+    }
+
+    connRotationInternalCoord() {
+        setupRemote(True);
+        svcRun("CONN_COORD_INTERNAL", "fetchColumnsRotateConnections", "omquser_coord", CONN_ROTATION);
+    }
+
+    connRotationProcessCoord() {
+        setupRemote(False);
+        svcRun("CONN_COORD_PROCESS", , "fetchColumnsRotateConnections", "omquser_coord", CONN_ROTATION);
+    }
+}

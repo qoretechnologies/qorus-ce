@@ -1,0 +1,20 @@
+# name: TestDebugStep
+# version: 1.0
+# desc: test debug step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class TestDebugStep inherits QorusNormalStep {
+    primary() {
+        UserApi::logInfo("%y", getHello());
+    }
+
+    string validation() {
+        return OMQ::StatRetry;
+    }
+}
+
+# END

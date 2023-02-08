@@ -1,0 +1,179 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue2568
+
+class QorusIssue2568 inherits Test {
+    constructor() : Test("Issue2568Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # ensure the test job runs remotely
+        qrest.put("jobs/issue-2680/setRemote", {"remote": True});
+        # ensure the test job is enabled
+        qrest.put("jobs/issue-2680/enable");
+        # ensure the test job is activated
+        qrest.put("jobs/issue-2680/setActive?active=true");
+
+        # ensure the test service runs remotely
+        qrest.put("services/issue-2677/setRemote", {"remote": True});
+        # ensure autostart is not enabled
+        qrest.put("services/issue-2677", {"autostart": False});
+        # ensure the test service is enabled
+        qrest.put("services/issue-2677/enable");
+        # make sure service will not deadlock on exit
+        qrest.put("services/issue-2677/config/deadlock", {"value": False});
+
+        # set up test workflow
+        qrest.put("workflows/SIMPLETEST/setAutostart", {"autostart": 0});
+        qrest.put("workflows/SIMPLETEST/setRemote", {"remote": True});
+        qrest.put("workflows/SIMPLETEST/enable");
+
+        # test killing workflow processes
+        qrest.put("workflows/SIMPLETEST/start");
+
+        string proc_id = qrest.get("workflows/SIMPLETEST/process/id");
+
+        hash<auto> h = qrest.post("system/processes/" + proc_id + "/kill");
+        assertEq("OK", h.status);
+        assertEq(0, h.code);
+
+        waitForWorkflowStop("SIMPLETEST");
+
+        qrest.put("workflows/SIMPLETEST/start");
+
+        h = qrest.post("workflows/SIMPLETEST/kill");
+        assertEq("OK", h.status);
+        assertEq(0, h.code);
+
+        waitForWorkflowStop("SIMPLETEST");
+
+        # test killing service processes
+        qrest.put("services/issue-2677/load");
+        on_exit {
+            try {
+                qrest.put("services/issue-2677/unload");
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err != "CLIENT-DEAD" && ex.err != "CLIENT-TERMINATED" && ex.err != "CLIENT-ABORTED") {
+                    rethrow;
+                }
+            }
+        }
+
+        *hash<auto> proc_info = qrest.get("services/issue-2677/processes")[0];
+        proc_id = proc_info.id;
+
+        h = qrest.post("system/processes/" + proc_id + "/kill");
+        assertEq("OK", h.status);
+        assertEq(0, h.code);
+
+        hash<auto> new_info = waitForServiceNotPid("issue-2677", proc_info.pid);
+        on_error printf("proc %y: old pid: %y new info: %y\n", proc_id, proc_info.pid, new_info);
+        waitForServiceStatus("issue-2677", "running");
+
+        h = qrest.post("services/issue-2677/kill");
+        {
+            on_error printf("h: %N\n", h);
+            assertEq("OK", h.status);
+            assertEq(0, h.code);
+        }
+
+        waitForServiceStatus("issue-2677", "running");
+    }
+
+    waitForWorkflowStop(softstring wfname_or_id, timeout max_wait = 15s) {
+        date timeout = now_us() + max_wait;
+        while (True) {
+            int ec = qrest.get("workflows/" + wfname_or_id + "/exec_count");
+            if (!ec) {
+                if (m_options.verbose > 2) {
+                    printf("workflow %y has stopped; continuing test\n", wfname_or_id);
+                }
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "WORKFLOW-TIMEOUT-ERROR", sprintf("workflow %y did not stop in the timeout period", wfname_or_id);
+            }
+            usleep(100ms);
+        }
+    }
+
+    hash<auto> waitForServiceNotPid(string svc, int pid, timeout max_wait = 15s) {
+        date start = now_us();
+        date timeout = now_us() + max_wait;
+        while (True) {
+            *hash<auto> proc_info;
+            try {
+                proc_info = qrest.get("services/" + svc + "/processes")[0];
+            } catch (hash<ExceptionInfo> ex) {
+                # 404 Not Found = no process; ignore
+                if (ex.arg.status_code != 404) {
+                    rethrow;
+                }
+            }
+            if (proc_info && proc_info.pid != pid) {
+                if (m_options.verbose > 2) {
+                    printf("service %y restarted with PID %d; continuing; elapsed time: %y / max: %y\n", svc,
+                        proc_info.pid, now_us() - start, milliseconds(max_wait));
+                }
+                return proc_info;
+            }
+            if (now_us() > timeout) {
+                throw "PROCESS-TIMEOUT-ERROR", sprintf("service %y did not get a new PID in the timeout period "
+                    "(info: %y); elapsed time: %y / max: %y", svc, proc_info, now_us() - start,
+                    milliseconds(max_wait));
+            }
+            # sleep for 1/4 of a second and check again
+            usleep(250ms);
+        }
+    }
+
+    waitForServiceStatus(string service, string status, timeout max_wait = 15s) {
+        date start = now_us();
+        date timeout = start + max_wait;
+        while (True) {
+            string current_status;
+            try {
+                current_status = qrest.get("/services/" + service + "/status");
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "CLIENT-DEAD" || ex.err == "CLIENT-TERMINATED" || ex.err == "CLIENT-ABORTED") {
+                    if (m_options.verbose > 2) {
+                        printf("service %y has aborted; status is \"unloaded\"\n", service);
+                    }
+                    current_status = "dead";
+                } else {
+                    rethrow;
+                }
+            }
+            if (current_status == status) {
+                if (m_options.verbose > 2) {
+                    printf("service %y has status %y; continuing; elapsed time: %y / max: %y\n", service, status,
+                        now_us() - start, milliseconds(max_wait));
+                }
+                break;
+            }
+            if (now_us() > timeout) {
+                throw "SERVICE-TIMEOUT-ERROR", sprintf("service %y did not get status %y in the timeout period "
+                    "(status: %y); elapsed time: %y / max: %y", service, status, current_status, now_us() - start,
+                    milliseconds(max_wait));
+            }
+            # sleep for 1/4 of a second and check again
+            usleep(250ms);
+        }
+    }
+}

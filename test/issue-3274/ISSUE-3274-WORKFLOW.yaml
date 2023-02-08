@@ -1,0 +1,10 @@
+type: workflow
+name: "ISSUE-3274-WORKFLOW"
+version: "1.0"
+desc: test class-based workflow
+author:
+  - Qore Technologies, s.r.o.
+steps: ["Issue3274Step:1.0"]
+sla_threshold: 2
+code: Issue3274WorkflowClass.qwf
+class-name: Issue3274WorkflowClass

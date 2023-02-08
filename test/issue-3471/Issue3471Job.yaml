@@ -1,0 +1,29 @@
+# This is a generated file, don't edit!
+type: job
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3471Job
+desc: "issue #3390 test job"
+active: false
+groups:
+  - regression
+  - test
+lang: java
+name: Issue3471Job
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: 1,0
+code: Issue3471Job.java
+config-items:
+  - name: issue-3471-job-cfg-item-1
+    default_value:
+      test: 1
+    type: "*hash"
+    description: "test"
+    strictly_local: true
+    config_group: test

@@ -1,0 +1,23 @@
+# This is a generated file, don't edit!
+type: service
+base-class-name: QorusService
+class-name: Issue3267Service
+desc: test for issue
+lang: qore
+name: Issue3267Service
+version: "1.0"
+servicetype: USER
+code: Issue3267Service-1.0.qsd
+config-items:
+  - name: test
+    config_group: Test
+    description: test config item
+    strictly_local: true
+    type: "*string"
+methods:
+  - name: getVar
+    desc: get the value of the internal variable
+  - name: get
+    desc: get the value of the config item from the service
+  - name: init
+    desc: init method

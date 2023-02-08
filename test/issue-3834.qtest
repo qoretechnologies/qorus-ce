@@ -1,0 +1,107 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+%requires SoapClient
+
+%exec-class Issue3834Test
+
+class Issue3834Test inherits Test {
+    public {}
+
+    constructor() : Test("issue-3834", "1.0", \ARGV) {
+        QorusClient::initFast();
+
+        addTestCase("test soap", \testSoap());
+        addTestCase("test swagger", \testSwagger());
+        set_return_value(main());
+    }
+
+    testSoap() {
+        hash<auto> info = qrest.get("services/issue-3834-soap");
+        if (!info.remote) {
+            qrest.put("services/issue-3834-soap/setRemote", {"remote": True});
+        }
+        testSoapIntern();
+        qrest.put("services/issue-3834-soap/setRemote", {"remote": False});
+        testSoapIntern();
+    }
+
+    private testSoapIntern() {
+        qrest.put("services/issue-3834-soap/load");
+        on_exit qrest.put("services/issue-3834-soap/unload");
+
+        string url = UserApi::qorusGetLocalUrl() + "/issue-3834-soap";
+        SoapClient soap({
+            "wsdl": get_script_dir() + DirSep + "issue-3834/simple.wsdl",
+            "url": url,
+        });
+
+        auto resp = soap.setCompanyLogo({
+            "body": {
+                "name": "hello",
+                "id": 1,
+            },
+            "logo": "qw==",
+        });
+        assertEq("test string", resp);
+
+        resp = soap.getCompanyInfo({
+            "body": {
+                "tickerSymbol": "QOR",
+            },
+        });
+        assertEq({
+            "body": {
+                "result": 1.0,
+            },
+            "docs": "text",
+            "logo": <abcd>,
+        }, resp);
+    }
+
+    testSwagger() {
+        hash<auto> info = qrest.get("services/issue-3834-swagger");
+        if (!info.remote) {
+            qrest.put("services/issue-3834-swagger/setRemote", {"remote": True});
+        }
+        testSwaggerIntern();
+        qrest.put("services/issue-3834-swagger/setRemote", {"remote": False});
+        testSwaggerIntern();
+    }
+
+    private testSwaggerIntern() {
+        qrest.put("services/issue-3834-swagger/load");
+        on_exit qrest.put("services/issue-3834-swagger/unload");
+
+        string url = UserApi::qorusGetLocalUrl() + "/issue-3834-swagger";
+        RestClient rest({"url": url});
+
+        hash<auto> h = rest.get("accounts/1").body;
+        assertEq({
+            "Name": "y",
+            "Type": "y",
+            "TaxId": "y",
+            "RequestId": "y",
+        }, h);
+
+        string id = get_random_string();
+        h = rest.get("accounts?RequestId=" + id).body;
+        assertEq({
+            "Name": "x",
+            "Type": "x",
+            "TaxId": "x",
+            "RequestId": id,
+        }, h);
+    }
+}

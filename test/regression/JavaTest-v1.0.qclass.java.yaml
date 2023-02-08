@@ -1,0 +1,9 @@
+type: class
+name: JavaTest
+version: "1.0"
+desc: Java test class
+lang: java
+author:
+  - Qore Technologies, s.r.o.
+code: JavaTest-v1.0.qclass.java
+class-name: JavaTest

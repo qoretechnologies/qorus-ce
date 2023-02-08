@@ -1,0 +1,12 @@
+cron:
+  required:
+    minutes:
+      type: string
+    hours:
+      type: string
+    days:
+      type: string
+    months:
+      type: string
+    dow:
+      type: string

@@ -1,0 +1,105 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3583Test
+
+class Issue3583Test inherits Test {
+    public {}
+
+    constructor() : Test("issue-3583", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        string logdir = qrest.get("system/options/logdir/value");
+        bool remote;
+        {
+            qrest.put("workflows/SIMPLETEST/setOptions", {"options": {"fast-exec": True}});
+            remote = qrest.get("workflows/SIMPLETEST/remote");
+            testWf(logdir);
+            qrest.put("workflows/SIMPLETEST/setRemote", {"remote": !remote});
+            on_exit {
+                qrest.put("workflows/SIMPLETEST/setRemote", {"remote": remote});
+            }
+            testWf(logdir);
+        }
+
+        {
+            remote = qrest.get("services/issue-3583/remote");
+            testSvc(logdir);
+            qrest.put("services/issue-3583/setRemote", {"remote": !remote});
+            on_exit {
+                qrest.put("services/issue-3583/setRemote", {"remote": remote});
+            }
+            testSvc(logdir);
+        }
+
+        {
+            remote = qrest.get("jobs/issue-3583/remote");
+            qrest.put("jobs/issue-3583/config/option", {"value": "logdir"});
+            testJob(logdir);
+            qrest.put("jobs/issue-3583/setRemote", {"remote": !remote});
+            on_exit {
+                qrest.put("jobs/issue-3583/setRemote", {"remote": remote});
+            }
+            testJob(logdir);
+        }
+    }
+
+    private testWf(string logdir) {
+        hash<auto> info = qrest.post("workflows/SIMPLETEST/execSynchronous", {
+            "staticdata": {
+                "test_option": {
+                    "option": "fast-exec",
+                    "value": True,
+                },
+            },
+        });
+        on_error printf("%s\n", info.error.info);
+        assertEq(StatComplete, info.status);
+
+        info = qrest.post("workflows/SIMPLETEST/execSynchronous", {
+            "staticdata": {
+                "test_option": {
+                    "option": "logdir",
+                    "value": logdir,
+                },
+            },
+        });
+        assertEq(StatComplete, info.status);
+    }
+
+    private testSvc(string logdir) {
+        hash<auto> info = qrest.put("services/issue-3583/getOption/call", {"args": "logdir"});
+        assertEq({
+            "ServiceApi::getOption": logdir,
+            "ServiceApi::getOptionArgs": logdir,
+            "UserApi::getOption": logdir,
+        }, info);
+    }
+
+    private testJob(string logdir) {
+        hash<auto> info = qrest.put("jobs/issue-3583/run");
+        assertEq(StatComplete, info.status);
+        info = qrest.get("jobresults/" + info.job_instanceid).info;
+        assertEq({
+            "JobApi::getOption": logdir,
+            "JobApi::getOptionArgs": logdir,
+            "UserApi::getOption": logdir,
+        }, info);
+    }
+}

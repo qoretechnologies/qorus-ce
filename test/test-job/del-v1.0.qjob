@@ -1,0 +1,15 @@
+# -*- mode: qore; indent-tabs-mode nil -*-
+
+# name: del
+# version: 1.0
+# desc: test job
+# author: Qore Technologies, sro
+# active: false
+# single-instance: true
+# schedule: 0,10,20,30,40,50 * * * mon-fri
+# define-group: test: test interfaces
+# groups: test
+sub run() {
+    UserApi::logInfo("test job info: %y", JobApi::getInfo());
+}
+# END

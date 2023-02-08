@@ -1,0 +1,76 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue3113
+
+class QorusIssue3113 inherits Test {
+    constructor() : Test("Issue3113Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        *hash<auto> appender = qrest.get("system/defaultLoggerAppenders")[0];
+        if (!appender.params.rotationCount) {
+            testSkip("skipping test for issue #3113; default appender has no rotationCount: %y", appender);
+        }
+
+        # update rotation count += 1
+        hash<auto> new_appender = appender;
+        ++new_appender.params.rotationCount;
+        qrest.put("system/defaultLoggerAppenders", {
+            "id": appender.appenderid,
+            "rotationCount": new_appender.params.rotationCount,
+        });
+        {
+            # restore on exit
+            on_exit {
+                qrest.put("system/defaultLoggerAppenders", {
+                    "id": appender.appenderid,
+                } + appender.params);
+            }
+
+            *hash<auto> appender2 = qrest.get("system/defaultLoggerAppenders")[0];
+            assertEq(new_appender, appender2);
+        }
+
+        appender = qrest.get("workflows/SIMPLETEST/logger/appenders")[0];
+        #on_error printf("appender: %y\n", appender);
+        if (!appender.params.rotationCount || appender.params.name == "DefaultWorkflowAppender") {
+            testSkip("skipping wf test for issue #3113; logger has no wf-specific appender or appender has no "
+                "rotationCount: %y", appender);
+        }
+
+        # update rotation count += 1
+        new_appender = appender;
+        ++new_appender.params.rotationCount;
+        qrest.put("workflows/SIMPLETEST/logger/appenders", {
+            "id": appender.appenderid,
+            "rotationCount": new_appender.params.rotationCount,
+        });
+        {
+            # restore on exit
+            on_exit {
+                qrest.put("workflows/SIMPLETEST/logger/appenders", {
+                    "id": appender.appenderid,
+                } + appender.params);
+            }
+
+            *hash<auto> appender2 = qrest.get("workflows/SIMPLETEST/logger/appenders")[0];
+            assertEq(new_appender, appender2);
+        }
+    }
+}

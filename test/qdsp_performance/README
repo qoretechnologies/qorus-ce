@@ -1,0 +1,8 @@
+This test is not designed to run in CI for each commit. It takes *very* long time to run.
+It should be used for new releases to test QDSP performance.
+
+Requirements:
+ - omquser datasource connection defined
+
+It should be run against all possible DB servers...
+

@@ -1,0 +1,7 @@
+type: function
+version: "1.0"
+desc: test function
+name: issue3325function
+author:
+  - Qore Technologies, s.r.o.
+code: issue3325function.qfd

@@ -1,0 +1,182 @@
+/** @page rpcapi Qorus RPC API
+
+    @tableofcontents
+
+    The Qorus RPC API is exported through the Qorus HTTP server as XML-RPC, JSON-RPC, and @ref YAMLRPC "YAML-RPC" methods.
+
+    System service methods can be called from external systems using the appropriate Qorus API entry points (omq.system.service.[servicename].[method]() or omq.user.service.[servicename].[method]()) with XML-RPC, JSON-RPC, or @ref YAMLRPC "YAML-RPC" and from Qorus user code (workflows and user services).
+
+    The Qorus Integration Engine&reg; RPC API is made up of a set of RPC methods providing access to system internal data such as workflow cache information, loaded service information, workflow execution instance status; it also provides methods for starting and stopping workflows, starting and stopping services, rotating log files, etc.  Below the system RPC API methods are presented in various logical groups according to their functionality.
+
+    @section systemmethods RPC System Methods
+
+    - omq.system.help()
+    - omq.system.flush-options()
+    - omq.system.get-option-info()
+    - omq.system.get-status()
+    - omq.system.ping()
+    - omq.system.rotate-log-files()
+    - omq.system.set-option()
+    - omq.system.shutdown()
+    - omq.system.shutdown-wait()
+    - omq.system.runtime-properties()
+    - omq.system.get-listeners()
+    - omq.system.start-listeners()
+    - omq.system.stop-listener()
+    - omq.system.stop-listener-id()
+    - omq.system.schema.refresh-snapshots()
+
+    @section workflowmethods RPC Workflow Methods
+
+    - omq.system.create-order()
+    - omq.system.submit-data.[workflow].[version]()
+    - omq.system.show-workflow-cache()
+    - omq.system.start-workflow()
+    - omq.system.start-workflows()
+    - omq.system.exec-synchronous-existing()
+    - omq.system.exec-synchronous-workflow()
+    - omq.system.stop-all-workflows()
+    - omq.system.stop-workflow-instance()
+    - omq.system.stop-workflow()
+    - omq.system.get-workflow-info()
+    - omq.system.get-workflow-option()
+    - omq.system.get-workflow-options()
+    - omq.system.set-workflow-option()
+    - omq.system.reset-workflow()
+    - omq.system.reset-all-workflows()
+    - omq.system.replace-dynamic-data()
+    - omq.system.replace-static-data()
+    - omq.system.retry-workflow-instance()
+    - omq.system.retry-workflow-instances()
+    - omq.system.block-workflow-instance()
+    - omq.system.block-workflow-instances()
+    - omq.system.cancel-workflow-instance()
+    - omq.system.cancel-workflow-instances()
+    - omq.system.set-workflow-instance-error()
+    - omq.system.set-workflow-instances-error()
+    - omq.system.reschedule-order()
+    - omq.system.reschedule-orders()
+    - omq.system.reprioritize-order()
+    - omq.system.reprioritize-orders()
+    - omq.system.skip-step()
+    - omq.system.skip-step-without-retry()
+    - omq.system.set-order-info()
+    - omq.system.get-order-info()
+    - omq.system.post-event()
+
+    @section workflowerrormethods RPC Workflow Error Definition Methods
+    - omq.system.delete-error()
+    - omq.system.delete-workflow-error()
+    - omq.system.get-all-errors()
+    - omq.system.get-global-errors()
+    - omq.system.get-workflow-errors()
+    - omq.system.reload-errors()
+    - omq.system.search-errors()
+    - omq.system.update-global-error()
+    - omq.system.update-workflow-error()
+
+    @section rpcservicemethods RPC Service Methods
+
+    - omq.system.delete-service()
+    - omq.system.get-service-autostart()
+    - omq.system.get-service-options()
+    - omq.system.list-all-services()
+    - omq.system.list-services()
+    - omq.system.reset-all-services()
+    - omq.system.reset-services()
+    - omq.system.reset-service()
+    - omq.system.service.[servicename].[method]()
+    - omq.system.set-service-autostart()
+    - omq.system.set-service-options()
+    - omq.user.delete-service()
+    - omq.user.get-service-autostart()
+    - omq.user.get-service-options()
+    - omq.user.list-services()
+    - omq.user.reset-services()
+    - omq.user.reset-service()
+    - omq.user.service.[servicename].[method]()
+    - omq.user.set-service-autostart()
+    - omq.user.set-service-options()
+
+    @section jobmethods RPC Job Methods
+
+    - omq.system.job.get-options()
+    - omq.system.job.get-options-id()
+    - omq.system.job.info()
+    - omq.system.job.info-id()
+    - omq.system.job.list-active()
+    - omq.system.job.run()
+    - omq.system.job.run-id()
+    - omq.system.job.set-active()
+    - omq.system.job.set-active-id()
+    - omq.system.job.set-expiry()
+    - omq.system.job.set-expiry-id()
+    - omq.system.job.set-options()
+    - omq.system.job.set-options-id()
+    - omq.system.job.schedule()
+    - omq.system.job.schedule-id()
+    - omq.system.job.reset()
+    - omq.system.job.reset-id()
+    - omq.system.job.reset-all()
+
+    @section rbacmethods RPC RBAC Methods
+
+    - omq.system.reload-rbac()
+
+    @subsection usermethods RPC RBAC User Methods
+
+    - omq.system.add-user()
+    - omq.system.delete-user()
+    - omq.system.get-all-users()
+    - omq.system.get-current-user-info()
+    - omq.system.get-user-info()
+    - omq.system.passwd()
+    - omq.system.update-current-user()
+    - omq.system.update-user()
+
+    @subsection permissionmethods RPC RBAC Permission Methods
+
+    - omq.system.add-permission()
+    - omq.system.get-all-permissions()
+    - omq.system.delete-permission()
+    - omq.system.update-permission()
+
+    @subsection rolemethods RPC RBAC Role Methods
+
+    - omq.system.add-role()
+    - omq.system.delete-role()
+    - omq.system.get-all-roles()
+    - omq.system.update-role()
+
+    @subsection groupmethods RPC RBAC Group Methods
+
+    - omq.system.group.add-service()
+    - omq.system.group.add-service-id()
+    - omq.system.group.add-workflow()
+    - omq.system.group.add-workflow-id()
+    - omq.system.group.add-job()
+    - omq.system.group.add-job-id()
+    - omq.system.group.create()
+    - omq.system.group.delete()
+    - omq.system.group.delete-service()
+    - omq.system.group.delete-service-id()
+    - omq.system.group.delete-workflow()
+    - omq.system.group.delete-workflow-id()
+    - omq.system.group.delete-job()
+    - omq.system.group.delete-job-id()
+    - omq.system.group.info()
+    - omq.system.group.set-status()
+    - omq.system.group.update()
+
+    @section eventmethods RPC Event Methods
+
+    - omq.system.get-last-event-id()
+    - omq.system.get-last-events()
+    - omq.system.get-last-events-and()
+    - omq.system.get-last-events-or()
+    - omq.system.wait-for-events()
+    - omq.system.wait-for-events-and()
+    - omq.system.wait-for-events-or()
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine&reg;"
+*/

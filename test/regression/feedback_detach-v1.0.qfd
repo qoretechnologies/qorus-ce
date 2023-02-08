@@ -1,0 +1,111 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# type: STEP
+# version: 1.0
+# desc: feedback detach parent 1
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_parent_1() {
+    string key = UUID::get();
+    UserApi::logInfo("using key: %y", key);
+    hash oh = (
+        "staticdata": ("key": key),
+        );
+    WorkflowApi::updateDynamicData(("key": key));
+    WorkflowApi::bindSubworkflow(("name": "FEEDBACK-DETACH-CHILD"), oh);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: feedback detach parent err
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_parent_err() {
+    *bool err = WorkflowApi::getDynamicData("err");
+    if (!err) {
+        WorkflowApi::updateDynamicData(("err": True));
+        throw "ERROR", "setting an error for the first time the step is run";
+    }
+    UserApi::logInfo("no error when recovering");
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: feedback detach parent 2
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_parent_2() {
+    hash dd = WorkflowApi::getDynamicData();
+    string key = WorkflowApi::getChildFeedback(dd.key);
+    UserApi::logInfo("got %y", key);
+    if (key != dd.key)
+        throw "KEY-ERROR", sprintf("expecting key %y; got %y instead", key, dd.key);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: feedback detach attach function
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_attach(*string stat) {
+    # store an object in tempdata
+    WorkflowApi::updateTempData(("object": new Mutex()));
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: feedback detach child 1
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_child_1() {
+    string key = WorkflowApi::getStaticData().key;
+    WorkflowApi::bindEvent(key);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: feedback detach child 2
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach_child_2() {
+    string key = WorkflowApi::getStaticData().key;
+    UserApi::logInfo("leaving feedback for key/value: %y", key);
+    WorkflowApi::leaveParentFeedback(key, key);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: regression test feedback detach parent detach function
+# author: Qore Technologies, sro
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+sub feedback_detach(string stat) {
+    UserApi::logInfo("detach function called");
+}
+# END

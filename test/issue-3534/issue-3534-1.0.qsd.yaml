@@ -1,0 +1,28 @@
+# This is a generated file, don't edit!
+type: service
+name: issue-3534
+desc: Service HTTP handler thread context test
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3534
+groups:
+  - regression
+  - test
+tags:
+    TEST: issue-3534
+version: "1.0"
+servicetype: USER
+code: issue-3534-1.0.qsd
+config-items:
+  - name: issue-3534-test
+    default_value:
+        true
+    config_group: Issue 3534 Test
+    description: test
+    strictly_local: true
+    type: bool
+methods:
+  - name: init
+    desc: init method

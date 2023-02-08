@@ -1,0 +1,28 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: test-debug_job
+# version: 1.0
+# desc: Test debugging
+# author: Tomas Mandys
+# schedule: 0 2 * * *
+# active: false
+# define-group: Test-debug: Test debug
+# groups: Test-debug
+# constants: test-debug_const
+# functions: test-debug_func
+# classes: test-debug_class
+%require-types
+%new-style
+
+sub run() {
+        int max_ms = 10000;
+        int i=0;
+        int stamp = clock_getmillis();
+        getHello();
+        while (clock_getmillis() - stamp < max_ms) {
+            #usleep(100);  # yield
+            i++;
+        }
+}
+
+# END

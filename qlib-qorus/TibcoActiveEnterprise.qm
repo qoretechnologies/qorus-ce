@@ -1,0 +1,132 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file TibcoActiveEnterprise.qm TIBAE Qorus Connection Module
+
+# note: users must acquire their own licenses to TIBCO software; Qore Technlogies has
+# no relationship to TIBCO, Inc, and cannot provide licenses to TIBCO software.
+# TIBCO software must be licensed before use
+
+%requires qore >= 0.8.9
+%requires tibae
+
+module TibcoActiveEnterprise {
+    version = "1.0";
+    desc = "Qorus TIBAE Connection module";
+    author = "Qore Technologies, s.r.o.";
+    url = "http://qoretechnologies.com";
+}
+
+%requires QorusClientCore
+%requires ConnectionProvider
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+public namespace TibcoActiveEnterprise {
+    #! this is the public function that returns a ConnectionScheme object to Qorus for the connection
+    public AbstractIterator sub get_schemes() {
+        softlist l = (
+            new ConnectionScheme("tibae", "TibaeConnection"),
+        );
+
+        return l.iterator();
+    }
+
+    public softlist sub required_resources() {
+        return "omqservice";
+    }
+
+    public sub set_resources(hash h) {
+        TibaePrivate::omqservice = h.omqservice;
+    }
+}
+
+namespace TibaePrivate {
+    our object omqservice;
+
+    # this class does not need to be exported because only objects / instantiations will be exported
+    class TibaeConnection inherits AbstractConnection {
+        # the hostname in the URL will be the session name
+        deprecated
+        constructor(string name, string desc, string url, bool monitor, *hash opts, hash urlh)
+                : AbstractConnection(name, desc, url, {"monitor": monitor}, opts ?? {}) {
+            constructorInit();
+        }
+
+        constructor(string name, string desc, string url, hash attributes = {}, hash options = {})
+                : AbstractConnection(name, desc, url, attributes, options) {
+            constructorInit();
+        }
+
+        private:internal constructorInit() {
+            if (!urlh.host)
+                throw "TIBAE-CONNECTION-ERROR", sprintf("the hostname in the URL for the TIBAE connection gives the RV Session name and is a required URL parameter; url provided: %y", url);
+            if (!opts.properties)
+                throw "TIBAE-CONNECTION-ERROR", sprintf("\"properties\" is a required option; options passed: %y", opts);
+            if (!opts.ping)
+                throw "TIBAE-CONNECTION-ERROR", sprintf("\"ping\" is a required option; options passed: %y", opts);
+        }
+
+        parseTextOptions() {
+            # parse "properties"
+            opts.properties = TibaeConnection::getHash(opts.properties, name, "properties");
+            # parse "classes"
+            if (opts.classes)
+                opts.classes = TibaeConnection::getHash(opts.classes, name, "classes");
+            # parse "ping"
+            if (opts.ping !~ /^([^\.]+)\.(.+)$/)
+                throw "TIBAE-CONNECTION-ERROR", sprintf("\"ping\" is a required option and must be set to a string in the following format: \"servicename.method\"; value passed: %y", opts.ping);
+            my (string svc, string meth) = (opts.ping =~ x/^([^\.]+)\.(.+)$/);
+            opts.ping = (
+                    "svc": svc,
+                    "meth": meth,
+                    );
+        }
+
+        private TibcoAdapter getImpl(bool connect = True, *hash rtopts) {
+            TibcoAdapter adapter(urlh.host, opts.properties, opts.classes, opts.service, opts.network, opts.daemon);
+
+            if (connect)
+                omqservice.user.(opts.ping.svc).methodGate(opts.ping.meth, adapter);
+            return adapter;
+        }
+
+        static hash getHash(string str, string name, string key) {
+            list l = str.split(";");
+            hash h;
+            foreach string e in (l) {
+                my (*string k, *string v) = (e =~ x/^([^=]+)=(.*)$/);
+                if (!k || !v)
+                    throw "TIBAE-CONNECTION-ERROR", sprintf("%y: cannot parse option %y as a hash; cannot parse '<key>=<value>' format in element %d/%d: %y (%y)", name, key, $#, l.size(), e, str);
+                trim k;
+                trim v;
+                # do environment variable substitution after element parsing
+                map v = replace(v, "\$" + $1, ENV.$1), (v =~ x/\$(\w+)/g);
+                h{k} = v;
+            }
+
+            return h;
+        }
+
+        string getType() {
+            return "tibae";
+        }
+
+        hash getOptions() {
+            return (
+                    "properties": True,
+                    "classes": True,
+                    "service": True,
+                    "network": True,
+                    "daemon": True,
+                    "ping": True,
+                   );
+        }
+
+        deprecated
+        static AbstractConnection make(string name, string desc, string url, bool monitor, *hash opts, hash urlh) {
+            return new TibaeConnection(name, desc, url, {"monitor": monitor}, opts ?? {});
+        }
+    }
+}

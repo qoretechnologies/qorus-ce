@@ -1,0 +1,1322 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# requires at least this qore version to run
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include cpc-api.ql
+%include cpc-master-api.ql
+%include qorus.ql
+%include qorus-version.ql
+%include QorusOptionsBase.qc
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%exec-class QCtl
+
+%requires zmq
+%requires yaml
+%requires Util
+%requires SqlUtil
+%requires process
+
+our QCtl Qorus;
+our Datasource omq;
+
+class QCtl inherits ClientProcessBase {
+    private {
+        NetworkKeyHelper nkh;
+
+        const ListColumns = (
+            "process_network_id",
+            "node",
+            "pid",
+            "process_type",
+            "queue_urls",
+        );
+
+        # default qorus master process timeout
+        const StartTimeout = 20s;
+
+        # default process message poll interval
+        const MessagePollInterval = 250ms;
+
+        # how many bytes to read in stderr/stdout for failed process launches
+        const ErrorBufferSize = 32 * 1024;
+
+        # "ps" column labels
+        const PsLabelHostPid = "PID";
+        const PsLabelMemory = "MEMORY";
+
+        const Banners = (
+            sprintf("%s v%s (build %s)", OMQ::ProductName, OMQ::version, QorusRevision),
+            "Copyright (C) 2003 - 2023 Qore Technologies, s.r.o.",
+        );
+
+        # main qctl program options
+        const Opts = {
+            "close": "close",
+            "timeout": "t,timeout=i",
+            "version": "V,version",
+            "verbose": "v,verbose:i+",
+            "loglevel": "L,log-level:s",
+            "help":    "h,help",
+
+            # command options
+            "sysprop":   "D,define=s@",
+            "sysdeb":    "debug-system",
+            "confirm":   "y,confirm",
+        };
+    }
+
+    constructor() : ClientProcessBase("qctl") {
+        # prohibit assume warning
+        ClientProcessBase::prohibit_assume_warning = True;
+
+        opts = (new GetOpt(Opts)).parse3(\ARGV);
+
+        if (opts.version) {
+            map printf("%s\n", $1), Banners;
+
+%ifdef QorusDebugInternals
+            thread_exit;
+%else
+            exit(QSE_VERSION_ONLY);
+%endif
+        }
+
+%ifdef HAVE_CLOSE_ALL_FD
+        # close all file descriptors in case we have been launched from qorus-core
+        if (opts.close) {
+            close_all_fd();
+            # now we have to redirect stderr to stdout or errors will not be shown
+            stderr.redirect(stdout);
+        }
+%endif
+        # create the ZeroMQ context after closing all file descriptors; vice-versa will result in a crash
+        zctx = new ZContext();
+
+        zctx.setOption(ZMQ_BLOCKY, 0);
+
+        *string cmd = shift ARGV;
+        if (opts.help || !cmd.val())
+            usage();
+
+        if (!opts."timeout") {
+            opts."timeout" = DefaultTimeout;
+        }
+
+        Qorus = self;
+
+        # process the options file, set defaults, and check for sane option values
+        options.init();
+
+        nkh = new NetworkKeyHelper(options.get());
+
+        hash<auto> cmdh = {
+            "help": \help(),
+            "info": \info(),
+            "ps": \listDb(),
+            "restart": \restart(),
+            "start": \start(),
+            "stop": \stop(),
+            "threads": \threads(),
+            "api": \api(),
+            "kill": \terminate(),
+            "killall": \killall(),
+
+            # aliases
+            "list": \listDb(),
+            "shutdown": \stop(),
+            "status": \info(),
+        };
+
+        *code cc = cmdh{cmd};
+        if (!cc) {
+            error("unknown command %y; expecting one of: %y", cmd, keys cmdh);
+        }
+        try {
+            cc(cmd);
+        } catch (hash<ExceptionInfo> ex) {
+            if (opts.verbose) {
+                error("%s", get_exception_string(ex));
+            } else {
+                error("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            }
+        }
+    }
+
+    help(string cmd) {
+        usage();
+    }
+
+    checkSystemStart() {
+        try {
+            # issue #2732: check system limits before starting qorus
+            QorusSharedApi::checkSystemStart();
+        } catch (hash<ExceptionInfo> ex) {
+            printf("WARNING: %s\n", ex.desc);
+        }
+    }
+
+    restart(string cmd) {
+        # issue #2732: check system limits before starting qorus
+        checkSystemStart();
+
+        # only start the cluster if it's not already running
+        *hash<auto> row;
+
+        bool retry;
+        while (True) {
+            row = testGetActiveMasterProc();
+            if (row) {
+                # stop the cluster
+                try {
+                    stopIntern(row, True);
+                } catch (hash<ExceptionInfo> ex) {
+                    if (ex.err == "ZSOCKET-TIMEOUT-ERROR" && !retry) {
+                        retry = True;
+                        printf("timeout communicating with the active master at %s; may be in a handover event; "
+                            "retrying...\n", row.queue_urls.split(",")[0]);
+                        continue;
+                    }
+                    if (ex.err == "PROCESS-DEAD") {
+                        printf("%s; starting cluster recovery\n", ex.desc);
+                    } else {
+                        rethrow;
+                    }
+                }
+            }
+            break;
+        }
+
+        # setup command-line args for the "qorus" process
+        softlist args = cmd;
+        if (argv) {
+            args += argv;
+        }
+        # restart the cluster
+        call_function_args(\start(), args);
+    }
+
+    private static hash<auto> parseCmdArgs(hash<auto> opts, *list<auto> argv) {
+        if (argv) {
+            try {
+                return (new GetOpt(opts)).parse2(\argv);
+            } catch (hash<ExceptionInfo> ex) {
+                QCtl::error(ex.desc);
+            }
+        }
+        return {};
+    }
+
+    private static getCommandLineArgs(reference<list<string>> args, hash<auto> cmd_opts) {
+        # add runtime property arguments
+        foreach string i in (cmd_opts.sysprop) {
+            list<auto> l = split("=", i);
+            if (elements l != 2)
+                QCtl::error("runtime properties must have a -Dkey=value format. Got: -D%s", i);
+            args += sprintf("-D%s=%s", l[0], l[1]);
+        }
+
+        # add debugging option
+        if (cmd_opts.sysdeb) {
+            args += "--debug-system";
+        }
+
+        if (cmd_opts.loglevel) {
+            args += sprintf("-L=%y", cmd_opts.loglevel);
+        }
+    }
+
+    start(string cmd) {
+        # issue #2732: check system limits before starting qorus
+        checkSystemStart();
+
+        # ensure that we know our own local address
+        getLocalAddressesExit(True);
+
+        # issue #2174: do not use a PAIR socket with tcp://, PAIR is meant only for inproc://;
+        # use class REQ -> REP instead; timeouts are not supported with PAIR sockets and tcp://
+        ZSocketRep sock(zctx);
+        sock.setIdentity("qctl");
+        nkh.setServer(sock);
+        sock.bind("tcp://*:*");
+        string url = qorus_cluster_get_bind(local_addresses.firstKey(), sock.endpoint());
+        printf("starting %s v%s (build %s)\n", OMQ::ProductName, OMQ::version, QorusRevision);
+        flush();
+
+        # create command-line args
+        list<string> args = ("--startup=" + url, "daemon-mode=0");
+
+        getCommandLineArgs(\args, opts);
+
+        # issue #2174: use socket polling to read stdout/stderr before the process dies
+        string stdout_err;
+        string stderr_err;
+
+        # try to read process output, if any
+        Process proc;
+        code try_read = sub () {
+            *string err = proc.readStdout(ErrorBufferSize);
+            if (err) {
+                stdout_err += err;
+            }
+            err = proc.readStderr(ErrorBufferSize);
+            if (err) {
+                stderr_err += err;
+            }
+        };
+
+        hash<ZmqPollInfo> poll_info({
+            "socket": sock,
+            "events": ZMQ_POLLIN,
+        });
+
+        string errstr;
+
+        # start the qorus process and get the publisher URL from the REP socket
+        proc = new Process("qorus", args);
+
+        string pub_url;
+        # mark the startup time
+        date started = now_us();
+
+        while (True) {
+            try {
+                # try to read process output in case it crashes later
+                try_read();
+
+                # check for socket output
+                *hash<ZmqPollInfo> current_poll_info = sock.poll((poll_info,), 250ms)[0];
+                if (!current_poll_info) {
+                    if ((now_us() - started) < StartTimeout && proc.running()) {
+                        continue;
+                    }
+                    # otherwise break and show error
+                } else {
+                    ZMsg msg = sock.recvMsg();
+                    pub_url = msg.popStr();
+                    # send confirmation to qorus-master; message is ignored
+                    sock.send("GO");
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                errstr = sprintf("%s: %s", ex.err, ex.desc);
+            }
+            break;
+        }
+
+        if (!pub_url) {
+            # try to read process output in case it crashes later
+            try_read();
+
+            if (stdout_err) {
+                errstr += sprintf("; process stdout: %s", stdout_err);
+            }
+            if (stderr_err) {
+                errstr += sprintf("; process stderr: %s", stderr_err);
+            } else if (!stdout_err) {
+                errstr += "; \n" + startupFailure();
+            }
+            if (!proc.running()) {
+                error("failed to start master process%s", errstr);
+            } else {
+                error("failed to get PUB URL in timeout period%s", errstr);
+            }
+        }
+
+        # detach process as soon as the publisher URL is available, as a ctrl-C in qctl then should
+        # not cause the cluster startup to fail
+        proc.detach();
+
+        *hash<auto> h = showMessages(pub_url, proc.id(), "MR-PUB-STARTUP", proc);
+        if (h.ok) {
+            if (h.status == QSS_ALREADY_RUNNING) {
+                if (!h.pid) {
+                    printf("cluster running; qorus-core is being restarted by qorus-master\n");
+                } else {
+                    printf("cluster running; qorus-core already running with PID %d\n", h.pid);
+                }
+            } else if (h.status == QSS_RECOVERED) {
+                printf("cluster running; qorus-core recovered with PID %d\n", h.pid);
+            } else {
+                printf("cluster started; qorus-core running with PID %d\n", h.pid);
+            }
+        } else if (h) {
+            # startup messages should have already given the reason
+            printf("cluster failed to start\n");
+        } else {
+            # cluster failed to start for an unknown reason; qorus-master (qorus) started, but no
+            # startup message was received
+            printf("cluster failed to start; %s\n", startupFailure());
+        }
+    }
+
+    private string startupFailure() {
+        return "qorus-master wrote no output; this could indicate:\n" +
+               " - corrupt \"qorus\" binary; check your Qorus installation and reinstall if necessary;\n" +
+               " - invalid \"qorus-master\"/\"system\" logger params; run schema-tool -ov then schema-tool -Vfv";
+    }
+
+    private *hash<auto> testGetActiveMasterProc() {
+        *hash<auto> row = getActiveMasterRow();
+        if (!row) {
+            testRunningProcessesAndExit("no active master is running");
+        }
+        return row;
+    }
+
+    private hash<auto> getActiveMasterProc() {
+        *hash<auto> row = getActiveMasterRow();
+        if (!row) {
+            showRunningProcessesAndExit("no active master is running");
+        }
+        return row;
+    }
+
+    private *hash<auto> getActiveMasterRow() {
+        openSystemDatasource();
+        *hash<auto> row;
+        while (True) {
+            try {
+                hash<auto> sh = {
+                    "where": {
+                        "active_master": 1,
+                    },
+                };
+                return cluster_processes.selectRow(sh);
+            } catch (hash<ExceptionInfo> ex) {
+                if (*string msg = restart_transaction(cluster_processes.getDriverName(), ex)) {
+                    log(0, "%s", msg);
+                    continue;
+                }
+                rethrow;
+            }
+            break;
+        }
+    }
+
+    stop(string cmd) {
+        openSystemDatasource();
+        bool retry;
+        while (True) {
+            # stop the cluster
+            hash<auto> row;
+            try {
+                stopIntern(row = getActiveMasterProc());
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "ZSOCKET-TIMEOUT-ERROR" && !retry) {
+                    retry = True;
+                    printf("timeout communicating with the active master at %s; may be in a handover event; "
+                        "retrying...\n", row.queue_urls.split(",")[0]);
+                    continue;
+                }
+                if (ex.err == "PROCESS-DEAD") {
+                    printf("%s; starting cluster recovery\n", ex.desc);
+                } else {
+                    rethrow;
+                }
+            }
+            break;
+        }
+    }
+
+    private stopIntern(hash<auto> row, *bool for_restart) {
+        hash<auto> h = getInfoHash(row, for_restart);
+
+        printf("stopping cluster:\n");
+        flush();
+
+        try {
+            sendCheckResponse(row.queue_urls.split(",")[0], CPC_STOP, NOTHING, CPC_ACK, 4s);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "ZSOCKET-TIMEOUT-ERROR") {
+                rethrow;
+            }
+            error("stop error: %s: %s", ex.err, ex.desc);
+        }
+
+        showMessages(h.pub_url, row.pid, "MR-PUB-SHUTDOWN");
+
+        print("done\n");
+
+        if (for_restart) {
+            # wait until current process disappears
+            waitForActiveMasterToStop(row);
+        }
+    }
+
+    private waitForActiveMasterToStop(hash<auto> old_row) {
+        date now = now_us();
+        while (True) {
+            *hash<auto> new_row = testGetActiveMasterProc();
+            if (!new_row) {
+                return;
+            }
+            if (new_row{"pid", "host", "node"} != old_row{"pid", "host", "node"}) {
+                error("a new active master has already started on node %y (host %y) pid %d", new_row.node,
+                    new_row.host, new_row.pid);
+            }
+            if ((now_us() - now) > 15s) {
+                error("waited more than 15s for active master to stop; aborting");
+            }
+            sleep(250ms);
+        }
+    }
+
+    status(string cmd) {
+        # open system datasource
+        openSystemDatasource();
+        getInfo(getActiveMasterProc());
+    }
+
+    info(string cmd) {
+        if (ARGV[0]) {
+            getInfo(getProc(shift ARGV));
+        } else {
+            getInfo(getActiveMasterProc());
+        }
+    }
+
+    #! Terminate specified process
+    terminate(string cmd) {
+        *string id = shift ARGV;
+        if (!id.val()) {
+            error("missing arg; syntax: %s %s <process-name>", get_script_name(), cmd);
+        }
+        do {
+            hash<auto> row = getProc(id);
+
+            # get local addresses
+            getLocalAddressesExit(True);
+
+            # see if the process is running locally
+            if (row.node != node) {
+                if (row.queue_urls && row.queue_urls != "-") {
+                    sendCmdIgnore(row.queue_urls.split(",")[0], CPC_KILL_PROC, {"kill_self": True});
+                    printf("sent termination msg to PID %d process %y (id %y) on remote node %y\n", row.pid, row.process_type,
+                        row.process_network_id, row.node);
+                } else {
+                    printf("cannot terminate process %y (id %y) on node %y; it has no queue URL\n", row.process_type,
+                        row.process_network_id, row.node);
+                }
+            } else if (row.pid <= 0) {
+                printf("ignoring PID %d process %y (id %y) on the local host with invalid PID\n", row.pid,
+                    row.process_type, row.process_network_id);
+            } else if (!kill(row.pid, SIGKILL)) {
+                printf("terminated PID %d process %y (id %y) on the local host\n", row.pid, row.process_type,
+                    row.process_network_id);
+            } else {
+                error("kill(%d, %d) for process %y (id %y) on the local host failed: %s", row.pid, SIGKILL,
+                    row.process_type, row.process_network_id, strerror());
+            }
+            id = shift ARGV;
+        } while (exists id);
+    }
+
+    #! Terminate all processes. Ask for confirmation until it's given on command line.
+    killall(string cmd) {
+        # is anything running?
+        openSystemDatasource();
+
+        *list<auto> process_list = cluster_processes.selectRows();
+        if (!process_list) {
+            notRunning();
+            return;
+        }
+
+        # check confirmation
+        if (!opts.confirm) {
+            Term term();
+            printf("Do you really want to terminate all Qorus processes? [Y/N]: ");
+            flush();
+            string confirmed = stdin.getchar();
+            print("\n");
+            if (confirmed != "y" && confirmed != "Y") {
+                printf("missing confirmation; doing nothing\n");
+                return;
+            }
+        }
+
+        getLocalAddressesExit(True);
+
+        bool errors = False;
+        int kill_count = 0;
+        int remove_count = 0;
+
+        {
+            on_error cluster_processes.rollback();
+            on_success cluster_processes.commit();
+
+            code do_kill = bool sub (hash<auto> row) {
+                # issue #2926: do not try to kill pid 0 (for processes that are in the table because they are starting and
+                # have no PID yet) because this will kill the qctl process itself
+                # also skip the process if it's already crashed
+                if (row.pid && checkProcess(row)) {
+                    if (!kill(row.pid, SIGKILL)) {
+                        printf("terminated PID %d process %y (id %y) on the local host\n",
+                            row.pid, row.process_type, row.process_network_id);
+                        ++kill_count;
+                    } else {
+                        printf("KILL-ERROR: kill(%d, %d) for process %y (id %y) on the local host failed: %s\n",
+                            row.pid, SIGKILL, row.process_type, row.process_network_id, strerror());
+                        errors = True;
+                        return False;
+                    }
+                } else {
+                    if (row.pid) {
+                        printf("removed already crashed PID %d process %y (id %y) from the process table\n", row.pid,
+                            row.process_type, row.process_network_id);
+                    } else {
+                        printf("removed not started process %y (id %y) from the process table\n",
+                            row.process_type, row.process_network_id);
+                    }
+                    ++remove_count;
+                }
+                # remove the process from the interface table
+                cluster_processes.del({"process_network_id": row.process_network_id});
+                return True;
+            };
+
+            # issue #2926: first kill the qorus-master process if it's in the list
+            {
+                foreach hash<auto> row in (process_list) {
+                    if (row.process_type == QDP_NAME_QORUS_MASTER && row.node == node) {
+                        # kill the master process
+                        if (do_kill(row)) {
+                            # remove the entry from the list
+                            splice process_list, $#, 1;
+                        } else {
+                            stderr.printf("aborting killall operation because the master process could not be killed\n");
+                            exit(1);
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            foreach hash<auto> row in (process_list) {
+                # see if the process is running locally
+                if (row.pid && row.node != node) {
+                    if (row.queue_urls && row.queue_urls != "-") {
+                        sendCmdIgnore(row.queue_urls.split(",")[0], CPC_KILL_PROC, {"kill_self": True});
+                        printf("termination message sent to PID %d process %y (id %y) on node %y\n", row.pid,
+                            row.process_type, row.process_network_id, row.node);
+                        # remove the process from the interface table
+                        cluster_processes.del({"process_network_id": row.process_network_id});
+                        ++kill_count;
+                        continue;
+                    } else {
+                        printf("cannot terminate process %y (id %y) on node %y; it has no queue URL\n", row.process_type,
+                            row.process_network_id, row.node);
+                        errors = True;
+                    }
+                }
+                do_kill(row);
+            }
+        }
+
+        if (errors) {
+            error("couldn't terminate all processes successfully");
+        } else {
+            printf("%d process%s killed, %d dead process%s removed; cluster process table is clean\n", kill_count,
+                kill_count == 1 ? "" : "es", remove_count, remove_count == 1 ? "" : "es");
+        }
+    }
+
+    #! raises an error if the row refers to an external process
+    checkExternal(hash<auto> row) {
+        if (!row.queue_urls) {
+            error("process %y is an external process and does not support ZMQ API calls", row.process_network_id);
+        }
+    }
+
+    api(string apicmd) {
+        *string id = shift ARGV;
+        *string cmd = shift ARGV;
+        if (!id.val() || !cmd.val())
+            error("missing arg; syntax: %s %s <process-name> <cmd> [...]", get_script_name(), "api", apicmd);
+
+        string url;
+        if (id =~ /^tcp:\/\//) {
+            url = id;
+        } else {
+            hash<auto> row = getProc(id);
+            checkProcessCrashed(row);
+            # handle external processes
+            checkExternal(row);
+            url = row.queue_urls.split(",")[0];
+        }
+
+        auto arg;
+        int cnt = 0;
+        while (exists (*string strarg = shift ARGV)) {
+            auto v = parse_to_qore_value(strarg);
+            if (!cnt) {
+                arg = v;
+            } else {
+                if (cnt == 1) {
+                    arg[0] = arg;
+                }
+                arg[cnt] = v;
+            }
+            ++cnt;
+        }
+
+        if (opts.verbose) {
+            printf("sending %y to %y args: %y\n", cmd, url, arg);
+        }
+        ZMsg msg = sendCmd(url, cmd, arg);
+        string rcmd = msg.popStr();
+        if (rcmd == CPC_EXCEPTION) {
+            hash<auto> ex = qorus_cluster_deserialize(msg).ex;
+            printf("process %y cmd %y: %s\n", id, cmd, get_exception_string(ex));
+            return;
+        }
+        *data d = msg.popBin();
+        if (!exists d) {
+            printf("%s\n", rcmd);
+        } else {
+            try {
+                auto v = qorus_cluster_deserialize(d);
+                # YAML block style puts a \n on the end automatically
+                string output = make_yaml(v, BlockStyle);
+                # but in case it doesn't, we add it here
+                if (output !~ /\n$/) {
+                    output += "\n";
+                }
+                printf("%s: %s", rcmd, output);
+                #printf("%N\n", v);
+            } catch (hash<ExceptionInfo> ex) {
+                printf("%s: %y\n", rcmd, d);
+            }
+        }
+    }
+
+    threads(string cmd) {
+        *string id = shift ARGV;
+        if (!id.val()) {
+            error("missing arg; syntax: %s %s <process-name>", get_script_name(), cmd);
+        }
+
+        hash<auto> row;
+        string url;
+        if (id =~ /^tcp:\/\//) {
+            row = {
+                "process_type": "unknown",
+                "process_network_id": "unknown",
+                "host": "unknown",
+                "node": "unknown",
+                "pid": 0,
+                "queue_urls": id,
+            };
+            url = id;
+        } else {
+            row = getProc(id);
+            checkProcessCrashed(row);
+            # handle external processes
+            checkExternal(row);
+            url = row.queue_urls.split(",")[0];
+        }
+
+        ZMsg msg = sendCheckResponse(url, CPC_GET_THREADS, NOTHING, CPC_OK);
+        hash<auto> h = qorus_cluster_deserialize(msg);
+        showThreads(row, h, opts.verbose.toBool());
+    }
+
+    private *hash<auto> showMessages(string pub_url, softint pid, string pfx, *Process proc) {
+        # get SUB socket for shutdown messages
+        ZSocketSub sock(zctx, ">" + pub_url, pfx);
+        # add additioning subscriptions if any
+        map sock.subscribe($1), argv;
+        sock.setTimeout(MessagePollInterval);
+
+        while (True) {
+            ZMsg msg;
+            string cmd;
+            try {
+                msg = sock.recvMsg();
+                cmd = msg.popStr();
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "ZSOCKET-TIMEOUT-ERROR" || ex.err == "ZSOCKET-RECVMSG-ERROR") {
+                    if (!checkPid(pid, "qorus") || (proc && !proc.running()))
+                        break;
+                    continue;
+                }
+                rethrow;
+            }
+
+            switch (cmd) {
+                case CPC_MR_PUB_STARTUP_MSG:
+                case CPC_MR_PUB_SHUTDOWN_MSG:
+                    printf(" + %s\n", msg.popStr());
+                    flush();
+                    break;
+                case CPC_MR_PUB_STARTUP_COMPLETE:
+                    return qorus_cluster_deserialize(msg);
+                case CPC_MR_PUB_SHUTDOWN_COMPLETE_CORE:
+                    qorus_cluster_deserialize(msg);
+                    break;
+                case CPC_MR_PUB_SHUTDOWN_COMPLETE_MASTER:
+                    printf(" + %s\n", msg.popStr());
+                    flush();
+                    return NOTHING;
+            }
+        }
+    }
+
+    showThreads(hash<auto> row, hash<auto> cs, *bool all_threads) {
+        print(showThreadStacks(row, cs, all_threads));
+    }
+
+    hash<auto> getInfoHash(hash<auto> row, *bool for_restart) {
+        checkProcessCrashed(row, for_restart);
+        # handle external processes
+        if (!row.queue_urls) {
+            # we need to query qorus-master
+            hash<auto> master_row = getActiveMasterProc();
+            ZMsg msg = sendCheckResponse(master_row.queue_urls.split(",")[0], CPC_GET_INFO, NOTHING, CPC_OK);
+            return qorus_cluster_deserialize(msg).processes{row.process_type};
+        }
+        checkExternal(row);
+        # FIXME: deal with multiple URLs
+        ZMsg msg = sendCheckResponse(row.queue_urls.split(",")[0], CPC_GET_INFO, NOTHING, CPC_OK);
+        return qorus_cluster_deserialize(msg);
+    }
+
+    getInfo(hash<auto> row) {
+        hash<auto> h = getInfoHash(row);
+        string desc = row.process_type == row.process_network_id ? row.process_type : sprintf("%s %y", row.process_type, row.process_network_id);
+        printf("%s %s:%d %s (%s):\n", desc, row.host, row.pid, get_byte_size(h.priv), row.queue_urls ? row.queue_urls.split(",")[0] : "n/a");
+        showData(h);
+    }
+
+    listDb(string cmd) {
+        # open system datasource
+        openSystemDatasource();
+
+        *list<auto> process_list = cluster_processes.selectRows();
+        if (!process_list) {
+            notRunning();
+            return;
+        }
+        # get maximum field lengths; ensure field lengths are at least the size of the labels
+        hash<auto> lh = (
+            "mem": PsLabelMemory.size(),
+        );
+        foreach hash<auto> row in (process_list) {
+            foreach string col in (ListColumns) {
+                auto v = row{col};
+                if (v.val()) {
+                    if (v.typeCode() != NT_STRING) {
+                        v = v.toString();
+                    }
+                    int len = col == "queue_urls" ? v.split(",")[0].width() : v.width();
+                    if (len > lh{col}) {
+                        lh{col} = len;
+                    }
+                }
+            }
+        }
+
+        code sort_check = *int sub (string type, hash<auto> l, hash<auto> r) {
+            if (l.process_type == type) {
+                if (r.process_type == type) {
+                    if (type == QDP_NAME_QORUS_MASTER) {
+                        if (l.active_master) {
+                            return -1;
+                        }
+                        if (r.active_master) {
+                            return 1;
+                        }
+                    }
+                    return l.client_id <=> r.client_id;
+                }
+                return -1;
+            }
+            if (r.process_type == type) {
+                return 1;
+            }
+        };
+
+        # qorus-master first, qorus-core second, datasource pool processes third
+        code psort = int sub (hash<auto> l, hash<auto> r) {
+            foreach string type in (QDP_NAME_QORUS_MASTER, QDP_NAME_QORUS_CORE, QDP_NAME_QDSP) {
+                *int rc = sort_check(type, l, r);
+                if (exists rc)
+                    return rc;
+            }
+            return l.client_id <=> r.client_id;
+        };
+
+        process_list = sort(process_list, psort);
+
+        # issue #2440: do process checks in parallel
+        list<hash<ZmqPollInfo>> poll_list;
+
+        # get indices of 3rd-party processes for memory info;
+        hash<string, int> third_party_map;
+
+        foreach hash<auto> process_hash in (\process_list) {
+            if (process_hash.queue_urls == "-") {
+                process_hash.status = "STARTING";
+                process_hash.mem = "-";
+            } else if (!checkProcess(process_hash)) {
+                process_hash.status = "CRASHED";
+                process_hash.mem = "-";
+            } else if (!process_hash.queue_urls) {
+                # third-party programs
+                process_hash.status = "OK";
+                third_party_map{process_hash.process_network_id} = $#;
+            } else {
+                try {
+                    # connections can be reused, but the identity must be unique
+                    string our_id = sprintf("%s-%s", self.uniqueHash(), gettid());
+                    ZSocketDealerMarker sock(zctx, our_id, process_hash.queue_urls.split(",")[0], $#, nkh);
+
+                    # send the command
+                    sendCmdSerializedIntern(sock, CPC_GET_INFO);
+                    poll_list += <ZmqPollInfo>{
+                        "socket": sock,
+                        "events": ZMQ_POLLIN,
+                    };
+                } catch (hash<ExceptionInfo> ex) {
+                    process_hash.status = "unreachable";
+                    process_hash.mem = "-";
+                }
+            }
+        }
+
+        code mark_unreachable = sub () {
+            # mark all remaining processes as unreachable
+            foreach hash<ZmqPollInfo> poll_hash in (poll_list) {
+                process_list[cast<ZSocketDealerMarker>(poll_hash.socket).pos] += {
+                    "status": "unreachable",
+                    "mem": "-",
+                };
+            }
+        };
+
+        while (poll_list) {
+            try {
+                list<hash<ZmqPollInfo>> current_list = ZSocket::poll(poll_list, opts."timeout");
+                # the poll() call will return an empty list if no data is available
+                if (!current_list) {
+                    mark_unreachable();
+                    break;
+                }
+
+                foreach hash<ZmqPollInfo> poll_hash in (current_list) {
+                    ZMsg msg = poll_hash.socket.recvMsg();
+                    # remove mboxid
+                    msg.popStr();
+                    checkResponseMsg(CPC_GET_INFO, CPC_OK, msg);
+                    hash<auto> ih = qorus_cluster_deserialize(msg);
+                    string memstr = get_byte_size(ih.priv);
+                    process_list[cast<ZSocketDealerMarker>(poll_hash.socket).pos] += {
+                        "status": "OK",
+                        "mem": memstr,
+                    };
+
+                    # process memory info for third-party processes
+                    if (ih.processes) {
+                        map process_list[$1.value].mem = ih.processes{$1.key}.priv_str, third_party_map.pairIterator();
+                    }
+
+                    int size = memstr.width();
+                    if (lh.mem < size) {
+                        lh.mem = size;
+                    }
+
+                    # remove sockets from poll list
+                    foreach hash<ZmqPollInfo> poll_hash_current in (current_list) {
+                        foreach hash<ZmqPollInfo> poll_hash_orig in (poll_list) {
+                            if (poll_hash_current.socket == poll_hash_orig.socket) {
+                                splice poll_list, $#, 1;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                #printf("DEBUG: %s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                if (ex.err == "ZSOCKET-POLL-ERROR") {
+                    mark_unreachable();
+                    break;
+                } else {
+                    rethrow;
+                }
+            }
+        }
+
+        # get width of status column
+        lh.status = foldl max($1, $2), (map $1.status.size(), process_list);
+
+        string fmt = sprintf("%%-%dw %%%ds %%s%%-%ds %%-%ds %%%ds %%-%ds %%s %%s\n", lh.node, lh.pid, lh.process_type + 2,
+            lh.queue_urls, lh.mem, lh.status);
+        f_printf(fmt, "NODE", PsLabelHostPid, " ", "TYPE", "QUEUE URL", PsLabelMemory, "STATUS", "NAME");
+        map printf(fmt, $1.node, $1.pid ?? "-", $1.active_master ? "*" : " ", "(" + $1.process_type + ")",
+            $1.queue_urls ? $1.queue_urls.split(",")[0] : "n/a", $1.mem, $1.status, $1.process_network_id),
+            process_list;
+    }
+
+    string ping(string queue_url) {
+        string our_id = sprintf("qctl-%s-%d-%d", gethostname(), getpid(), gettid());
+        ZSocketDealer sock(zctx);
+        sock.setIdentity(our_id);
+        nkh.setClient(sock);
+        sock.connect(queue_url);
+        # set timeout
+        sock.setTimeout(opts."timeout");
+        try {
+            sock.send("1", CPC_PING);
+            ZMsg msg = sock.recvMsg();
+            *string str = msg.popStr();
+            return str == CPC_PONG ? "OK" : "api-error";
+        } catch (hash<ExceptionInfo> ex) {
+            return "unreachable";
+        }
+    }
+
+    checkProcessCrashed(hash<auto> row, *bool for_restart) {
+        if (!checkProcess(row)) {
+            string err = sprintf("process %y on node %y %s:%d has crashed", row.process_network_id, row.node,
+                row.host, row.pid);
+            if (for_restart) {
+                throw "PROCESS-DEAD", err;
+            }
+            stderr.printf("%s; run \"qorus\" to recover the cluster\n", err);
+            exit(1);
+        }
+    }
+
+    *hash<auto> testGetProc(string id) {
+        *hash<auto> row = getRow(id);
+        if (!row) {
+            testRunningProcessesAndExit("Qorus process %y is not running", id);
+        }
+        return row;
+    }
+
+    hash<auto> getProc(string id) {
+        *hash<auto> row = getRow(id);
+        if (!row) {
+            showRunningProcessesAndExit("Qorus process %y is not running", id);
+        }
+        return row;
+    }
+
+    private showRunningProcessesAndExit(string msg) {
+        msg = vsprintf(msg, argv);
+        *list<auto> pl = cluster_processes.select({"columns": "process_network_id"}).process_network_id;
+        if (!pl) {
+            notRunning();
+            exit(1);
+        }
+        error("%s; %d running process%s", msg, pl.size(),
+            pl.size() > 1 ? "es; exec 'qctl ps' to list" : "");
+    }
+
+    private testRunningProcessesAndExit(string msg) {
+        msg = vsprintf(msg, argv);
+        *list<auto> pl = cluster_processes.select({"columns": "process_network_id"}).process_network_id;
+        if (!pl) {
+            return;
+        }
+        error("%s; %d running process%s", msg, pl.size(),
+            pl.size() > 1 ? "es; exec 'qctl ps' to list" : "");
+    }
+
+    *hash<auto> getRow(string id) {
+        # open system datasource
+        openSystemDatasource();
+
+        if (id == "qorus")
+            id = "qorus-master";
+
+        while (True) {
+            try {
+                hash<auto> sh = (
+                    "where": ("process_network_id": id),
+                );
+                return cluster_processes.selectRow(sh);
+            } catch (hash<ExceptionInfo> ex) {
+                if (*string msg = restart_transaction(cluster_processes.getDriverName(), ex)) {
+                    log(0, "%s", msg);
+                    continue;
+                }
+                rethrow;
+            }
+            break;
+        }
+    }
+
+    showData(hash<auto> dh) {
+        if (dh.name == dh.id || dh.id == "-") {
+            delete dh.id;
+            hash<auto> dhc."name/id" = dh.name;
+            dh = dhc + (dh - "name");
+        }
+
+        int mx = foldl max($1, $2), (map $1.length(), keys dh);
+        string fmt = sprintf(" + %%-%ds = %%s\n", mx);
+        # make process_memory line
+        dh.process_memory = sprintf("PRIVATE: %s (VSZ: %s RSS: %s)", get_byte_size(remove dh.priv), get_byte_size(remove dh.vsz), get_byte_size(remove dh.rss));
+        foreach hash<auto> h in (dh.pairIterator()) {
+            switch (h.key) {
+                case "cluster_info": {
+                    if (h.value.size() == 1) {
+                        h.value = sprintf("node %y: %s / %s", h.value.firstKey(),
+                            h.value.firstValue().node_priv_str, h.value.firstValue().node_ram_str);
+                    } else {
+                        string str = "\n";
+                        map str += sprintf("   + node %y: %s / %s\n", $1.key,
+                            $1.value.node_priv_str, $1.value.node_ram_str), h.value.pairIterator();
+                        splice str, -1;
+                        h.value = str;
+                    }
+                    break;
+                }
+                case "modules": {
+                    if (!opts.vervose) {
+                        h.value = h.value.size().toString();
+                    } else {
+                        string str = "\n";
+                        foreach hash<auto> ph in (h.value.pairIterator()) {
+                            str += sprintf("   + %s v%s: %s\n", ph.key, ph.value.version, ph.value.filename);
+                        }
+                        splice str, -1;
+                        h.value = str;
+                    }
+                    break;
+                }
+                case "processes": {
+                    if (!opts.verbose.toBool()) {
+                        h.value = h.value.size().toString();
+                    } else {
+                        string str = "\n";
+                        int nmx = foldl max($1, $2), (map $1.length(), keys h.value);
+                        int tmx = foldl max($1, $2), (map $1.type.length(), h.value.iterator());
+                        int mmx = foldl max($1, $2), (map (h.value{$1.key}.mem = get_byte_size($1.value.priv ?? 0)).length(), h.value.pairIterator());
+                        string pfmt = sprintf("   + %%-%ds (%%-%ds) %%%ds: %s\n", nmx, tmx, mmx);
+                        foreach hash<auto> ph in (h.value.pairIterator()) {
+                            str += sprintf(pfmt, ph.key, ph.value.type, ph.value.mem, CS_StatusMap{ph.value.status});
+                            str += sprintf("     - HOST: %s:%s\n", ph.value.host, ph.value.pid);
+                            str += sprintf("     - URLS: %y\n", ph.value.urls);
+                        }
+                        splice str, -1;
+                        h.value = str;
+                    }
+                    break;
+                }
+                case "vsz":
+                case "rss":
+                case "priv":
+                    h.value = get_byte_size(h.value);
+                    break;
+            }
+
+            switch (h.value.typeCode()) {
+                case NT_HASH:
+                    h.value = sprintf("%y", h.value);
+                    break;
+                case NT_STRING:
+                    break;
+                default:
+                    h.value = sprintf("%y", h.value);
+                    break;
+            }
+
+            printf(fmt, h.key, h.value);
+        }
+    }
+
+    notRunning() {
+        printf("no cluster processes are running; '%s start' to start\n", get_script_name());
+    }
+
+    ZMsg sendCheckResponse(string queue_url, string cmd, *hash<auto> h, string rcmd, *timeout to = opts."timeout") {
+        return checkResponseMsg(cmd, rcmd, sendCmd(queue_url, cmd, h, to));
+    }
+
+    # send a message to the master process
+    ZMsg sendCmd(string queue_url, string cmd, *hash<auto> h, *timeout to = opts."timeout") {
+        return sendCmdSerialized(queue_url, cmd, h ? qorus_cluster_serialize(h) : NOTHING, to);
+    }
+
+    # send a serialized message to the master process
+    ZMsg sendCmdSerialized(string queue_url, string cmd, *data msgdata, *timeout to = opts."timeout") {
+        # connections can be reused, but the identity must be unique
+        string our_id = sprintf("%s-%s", self.uniqueHash(), gettid());
+        ZSocketDealer sock(zctx);
+        sock.setIdentity(our_id);
+        nkh.setClient(sock);
+        sock.connect(queue_url);
+        sendCmdSerializedIntern(sock, cmd, msgdata, to);
+        ZMsg msg = sock.recvMsg();
+        # remove mboxid
+        msg.popStr();
+        return msg;
+    }
+
+    # send a message to the master process
+    sendCmdIgnore(string queue_url, string cmd, *hash<auto> h) {
+        sendCmdIgnoreSerialized(queue_url, cmd, h ? qorus_cluster_serialize(h) : NOTHING);
+    }
+
+    sendCmdIgnoreSerialized(string queue_url, string cmd, *data msgdata) {
+        # connections can be reused, but the identity must be unique
+        string our_id = sprintf("%s-%s", self.uniqueHash(), gettid());
+        Counter c(1);
+        background sub () {
+            ZSocketDealer sock(zctx);
+            sock.setIdentity(our_id);
+            nkh.setClient(sock);
+            sock.setTimeout(10s);
+            sock.connect(queue_url);
+            sendCmdSerializedIntern(sock, cmd, msgdata, opts."timeout");
+            c.dec();
+            try {
+                sock.recvMsg();
+            } catch (hash<ExceptionInfo> ex) {
+            }
+        }();
+        c.waitForZero();
+    }
+
+    openSystemDatasource() {
+        if (omqds)
+            return;
+
+        if (!exists options.get("systemdb")) {
+            throw "DATASOURCE-ERROR", "ERROR: no definition provided for system datasource ('systemdb') in options file, aborting";
+        }
+
+        # get info for the omq datasource
+        *hash<auto> omqh = parse_datasource(options.get("systemdb"));
+        if (!omqh)
+            error("no definition provided for system datasource 'systemdb' in the options file, aborting");
+
+        omqds = new Datasource(options.get("systemdb"));
+        cluster_processes = (new Table(omqds, "cluster_processes")).getTable();
+        omq = omqds;
+    }
+
+    log(int ll, string fmt) {
+        vprintf(fmt + "\n", argv);
+    }
+
+    static error(string fmt) {
+        stderr.vprintf("ERROR: " + fmt + "\n", argv);
+        exit(1);
+    }
+
+    usage() {
+        printf("usage: %s [options] <cmd> [arg...]
+COMMANDS:
+  api <proc> <cmd> [<args>...]
+                   sends a raw cluster API to <proc> and returns the response
+  help             this help text
+  info [<proc>]    get information about the system or proc (alias: 'status')
+  kill <proc> ...  terminate specified process(es)
+  killall [opts]   terminate all processes
+     -y,--confirm                don't ask for confirmation interactively
+  ps               list processes directly from the DB (alias: 'list')
+  restart [opts]   stop and restart the cluster; if the cluster is not running, then it's started
+     -L,--log-level=ARG          set the logger level for system loggers
+     -D,--define=ARG             sets a runtime property
+        --debug-system           turns on system debugging
+  start [opts]     start or recover the cluster
+     -L,--log-level=ARG          set the logger level for system loggers
+     -D,--define=ARG             sets a runtime property
+        --debug-system           turns on system debugging
+  stop             stop the cluster
+  threads <proc>   get proc's thread stacks
+     -v,--verbose=ARG            set verbosity level
+
+OPTIONS:
+     --close         close all file descriptors before running
+  -t,--timeout=ARG   set the ZMQ timeout in milliseconds
+  -V,--version       show version information and exit
+  -L,--log-level     set logger level (see Logger::LoggerLever for more info)
+  -h,--help          this help text\n", get_script_name());
+        exit(0);
+    }
+}
+
+class Term {
+    public {}
+
+    private {
+        TermIOS orig;
+    }
+
+    constructor() {
+        TermIOS t();
+
+        # get current terminal attributes for stdin
+        stdin.getTerminalAttributes(t);
+
+        # save a copy
+        orig = t.copy();
+
+        # get local flags
+        int lflag = t.getLFlag();
+
+        # disable canonical input mode (= turn on "raw" mode)
+        lflag &= ~ICANON;
+
+        # set the new local flags
+        t.setLFlag(lflag);
+
+        # set minimum characters to return on a read
+        t.setCC(VMIN, 1);
+
+        # set character input timer in 0.1 second increments (= no timer)
+        t.setCC(VTIME, 0);
+
+        # make these terminal attributes active
+        stdin.setTerminalAttributes(TCSADRAIN, t);
+    }
+
+    destructor() {
+        restore();
+    }
+
+    restore() {
+        # restore terminal attributes
+        stdin.setTerminalAttributes(TCSADRAIN, orig);
+    }
+}
+
+class ZSocketDealerMarker inherits ZSocketDealer {
+    public {
+        int pos;
+    }
+
+    constructor(ZContext ctx, string our_id, string queue_url, int pos, NetworkKeyHelper nkh) : ZSocketDealer(ctx) {
+        self.pos = pos;
+        setIdentity(our_id);
+        nkh.setClient(self);
+        connect(queue_url);
+    }
+}

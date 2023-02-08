@@ -1,0 +1,1738 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus System Service Definitions
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+/** @tableofcontents
+
+    @see @ref ::QorusSystemSqlutilService for method information
+
+    @section sqlutil_streams sqlutil Streams
+
+    The sqlutil service supports several @ref datastreamprotocol "data streams", allowing data to be efficiently
+    selected, updated, inserted, deleted, or "upserted" (ie merged) from a remote system, allowing large volumes of
+    data to be processed in a remote database with minimal intermediate state in Qorus.
+
+    @note See @ref stream-api for easy to use functionality.
+
+    In client code, data streams exposed by the sqlutil service are accessed through a
+    @ref OMQ::QorusSystemRestHelper "QorusSystemRestHelper" object as returned by a call to
+    @ref OMQ::UserApi::UserApi::getRemoteRestConnection() "UserApi::getRemoteRestConnection()" as in the following
+    example:
+
+    @code{.py}
+QorusSystemRestHelper nodea = UserApi::getRemoteRestConnection("node-a");
+    @endcode
+
+    In the above example, \c "node-a" is assumed to be a remote connection configured in the @ref remoteconn
+
+    The @ref datastreamprotocol "data streams" in the following table are provided.
+
+    <b>SqlUtil Streams</b>
+    |!Stream|!Dir|!HTTP Method|!Args|!Description
+    |\c select|out|\c PUT|\c datasource=<i>name</i> \n \
+        \c table=<i>name</i> \n \
+        \c timeout=<i>ms</i> \n \
+        [\c block=<i>integer</i>] \n \
+        [\c column_format=<i>bool</i>]|options:\n \
+        \c block: the number of rows to send in each chunk\n \
+        \c column_format: gives the format of the encoded data; if @ref True then each chunk is a hash of lists, \
+            otherwise it is a list of hashes\n \n\
+        All other arguments are passed to \
+        @ref SqlUtil::AbstractTable::getRowIterator() "AbstractTable::getRowIterator()".
+    |\c select_raw|out|\c GET|\c datasource=<i>name</i> \n \
+        \c sql=<i>SQL string</i> \n \
+        \c timeout=<i>ms</i> \n \
+        [\c args=<i>...optional bind args to the SQL...</i>] \n \
+        [\c block=<i>integer</i>] \n \
+        [\c column_format=<i>bool</i>]|options:\n \
+        \c block: the number of rows to send in each chunk\n \
+        \c column_format: gives the format of the encoded data; if @ref True then each chunk is a hash of lists, \
+        otherwise it is a list of hashes
+    |\c insert|in|\c POST|\c datasource=<i>name</i> \n \
+        \c table=<i>name</i> \n \
+        \c timeout=<i>ms</i>|Streamed data (as hashes representing rows or lists of hashes representing blocks of \
+        rows) are inserted into the target table in an atomic transaction.\n For DBI drivers supporting bulk DML, \
+        efficient bulk DML queries are executed with one round trip to the server for each block of row data sent to \
+        the stream.
+    |\c update|in|\c POST|\c datasource=<i>name</i> \n \
+        \c table=<i>name</i> \n \
+        \c timeout=<i>ms</i>|Streamed data (as hashes with 'set' and 'cond' keys (with lists of hashes giving the \
+        'set' and 'cond' parameters) or lists of such hashes and uses this information to update data in the target \
+        table in a single atomic transaction.  All values sent to this stream must have the same hash keys in the \
+        same order.\n \
+        For DBI drivers supporting bulk DML, efficient bulk DML queries are executed with one round trip to the server \
+        for each block of row data sent to the stream.
+    |\c delete|in|\c POST|\c datasource=<i>name</i> \n \
+        \c table=<i>name</i> \n \
+        \c timeout=<i>ms</i>|Streamed data (as hashes with 'cond' keys or lists of such hashes and uses this \
+        information to delete data from the target table in a single atomic transaction.
+    |\c upsert|in|\c POST|\c datasource=<i>name</i> \n \
+        \c table=<i>name</i> \n \
+        \c timeout=<i>ms</i> \n \
+        [<tt>upsert_strategy=</tt>@ref upsert_options "integer"] \n \
+        [\c delete_others=<i>boolean</i>] \n \
+        [\c omit_update=<i>list</i>]|Streamed data (as hashes representing rows or lists of hashes representing \
+        blocks of rows) are merged or "upserted" into the target table in an atomic transaction; see @ref sql_upsert \
+        for more information.\n \
+        For DBI drivers supporting bulk DML, efficient bulk DML queries are executed with one round trip to the \
+        server for each block of row data sent to the stream.
+
+    @note \c GET requests are also accepted for the \c "select" stream for backwards compatibility
+
+    The following are pseudo-streams in that no stream data is accepted or returned (and therefore these "streams"
+    can be accessed with standard REST commands), but they are accessed otherwise like normal streams; see examples
+    below the following table and see @ref sqlutil_transmgt for more information.\n
+    <b>SqlUtil Transaction-Management Streams</b>
+    |!Stream|!Dir|!HTTP Method|!Args|!Description
+    |\c beginTransaction|n/a|\c POST|\c datasource=<i>name</i> \n \
+        \c timeout=<i>ms</i>|in order for this call to work, the following HTTP header must be sent: \
+        <b><tt>Qorus-Connection: Persistent</tt></b>\n \
+        While a persistent remote transaction is in progress, even "normal" sqlutil methods called over the same \
+        HTTP connection with REST calls will be made in the same transaction, meaning that these must be explicitly \
+        committed with a call to the "commit" pseudo-stream.
+    |\c commit|\c timeout=<i>ms</i>|\c POST|n/a|Commits an existing transaction; can only be executed in a \
+        persistent connection while a transaction is in progress.
+    |\c rollback|\c timeout=<i>ms</i>|\c POST|n/a|Rolls an existing transaction back; can only be executed in a \
+        persistent connection while a transaction is in progress.
+
+    @subsection sqlutil_examples sqlutil Client Examples
+    Please see the following high-level classes for easy-to-use APIs based on the sqlutil service:
+    - OMQ::DbRemote
+    - OMQ::DbRemoteSend
+    - OMQ::DbRemoteReceive
+
+    The following are low-level examples of how to use sqlutil streams in Qorus client code.
+    @par Get Connection Example
+    Get a connection to remote Qorus instance \c "node-a" defined in the @ref remoteconn :
+    @code{.py}
+OMQ::QorusSystemRestHelper nodea = UserApi::getRemoteRestConnection("node-a");
+    @endcode
+
+    @par Start Remote Transaction Example
+    Start or continue a remote transaction (see @ref sqlutil_transmgt for more information):
+    @code{.py}
+nodea.setPersistent();
+nodea.post("services/sqlutil?action=stream;stream=beginTransaction;datasource=omquser", NOTHING,
+    {"Qorus-Connection": "Continue-Persistent"});
+# commit the transaction if there are no errors
+on_success
+    nodea.post("services/sqlutil?action=stream;stream=commit");
+# in case of error, disconnect which will cause a rollback on the remote end
+# due to the fact that the DataStream protocol relies on HTTP chunked transfer
+# encoding, the socket could be in the middle of a chunked transfer when an
+# error occurs, therefore it's better to simply disconnect than to try to
+# execute a manual rollback when errors occur
+on_error
+    nodea.disconnect();
+    @endcode
+
+    @par Select Stream Example
+    Select data from a table in a new transaction in the remote database and log the results:
+    @code{.py}
+class DataStreamReceiveLogger inherits DataStreamRecvMessage {
+    private nothing recvDataImpl(any d) {
+        ServiceApi::logInfo("row: %y", d);
+    }
+}
+
+sub example() {
+    OMQ::QorusSystemRestHelper nodea = UserApi::getRemoteRestConnection("node-a");
+    nodea.setPersistent();
+    nodea.post("services/sqlutil?action=stream;stream=beginTransaction;datasource=omquser", NOTHING,
+        {"Qorus-Connection": "Persistent"});
+    # in case of error, disconnect which will ensure that a remote rollback is performed
+    on_error
+        nodea.disconnect();
+
+    DataStreamReceiveLogger recv();
+    hash args = (
+        "action": "stream",
+        "stream": "select",
+        "table": "example_table",
+        "where": ("last_update_date": op_ge(2014-11-01), "1:last_update_date": op_lt(2014-11-17)),
+        "orderby": "last_update_date",
+    );
+    nodea.recvDataStream(recv, "GET", "services/sqlutil", args);
+    nodea.post("services/sqlutil?action=stream;stream=commit");
+}
+    @endcode
+    @note
+    - The \c "GET" call does not require a "datasource" parameter because a persistent connection was made in the
+      stream call to \c "beginTransaction" above
+    - Note the use of column prefixes to allow the use of the same column with multiple criteria in the where clause
+      of the first select stream; see @ref where_clauses for more information
+    - See @ref sqlutil_transmgt for more information on remote transaction management with the sqlutil service
+
+    @section sqlutil_transmgt Transaction Management with the sqlutil Service
+
+    Before initiating remote transaction management, it's critical to call @ref Qore::HTTPClient::setPersistent() on
+    the @ref OMQ::QorusSystemRestHelper "QorusSystemRestHelper" object to ensure that any break in the HTTP session is
+    caught and an exception is thrown, otherwise the client object would silently reconnect and the transaction state
+    would be lost on the remote end.
+    @note This is necessary because the remote transaction is based on a single HTTP session; if the HTTP connection
+    is broken before either the commit or rollback stream can be called, then the remote transaction is automatically
+    rolled back on the remote end.  Therefore if the @ref OMQ::QorusSystemRestHelper "QorusSystemRestHelper" object
+    would lose the connection and silently reconnect, the remote transaction would be rolled back and the local
+    @ref OMQ::QorusSystemRestHelper "QorusSystemRestHelper" object would not be aware of this fact, therefore it could
+    appear to the user that the remote transaction was successfully executed when in fact it was not.
+
+    After disabling automatic reconnections for this HTTP session, transaction management is initiated by calling the
+    \c "beginTransaction" stream with a \c "datasource" argument with a \c "POST" REST call and the following header
+    included: \c "Qorus-Connection: Persistent" (meaning start a new transaction unconditionally; if any if currently
+    in progress then it will be rolled back and logged in the sqlutil service log), or
+    \c "Qorus-Connection: Continue-Persistent" (start a new transaction if none is in progress, continue any existing
+    transaction).
+
+    Note that the following helper classes start or continue transactions:
+    - @ref OMQ::DbRemote "DbRemote": always starts or continues a remote transaction
+    - @ref OMQ::DbRemoteReceive "DbRemoteReceive": will start or continue a remote transaction if the \c "transaction"
+      option is set in the @ref OMQ::DbRemoteReceive::constructor() "constructor"
+    - @ref OMQ::DbRemoteSend "DbRemoteSend": always starts or continues a remote transaction
+
+    Additionally, the @ref OMQ::AbstractParallelStream::beginTransaction() static method will connect to the remote
+    server, set a persistent connection, and start or continue a remote transaction as described above.  This is the
+    easiest way to start a remote transaction when not using one of the DB data streaming classes listed above.
+
+    Once a remote transaction is in progress, then even calls to non-stream service methods in the same HTTP
+    connection in the same datasource over the REST infrastructure will take part in the transaction, meaning that no
+    implicit commits are made to non-stream methods called on the same datasource in the same HTTP connection as long
+    as the transaction is in progress.
+
+    @par Transaction example
+    The following example starts or continues a remote transaction and commits it in a remote datasource:
+    @code{.py}
+OMQ::QorusSystemRestHelper nodea = UserApi::getRemoteRestConnection("node-a");
+OMQ::AbstractParallelStream::beginTransaction(nodea, "omquser");
+on_success
+    nodea.post("services/sqlutil?action=stream;stream=commit");
+on_error
+    nodea.disconnect();
+# some code here in the remote transaction
+    @endcode
+    This is equivalent to the following code:
+    @code{.py}
+OMQ::QorusSystemRestHelper nodea = UserApi::getRemoteRestConnection("node-a");
+nodea.connect();
+nodea.setPersistent();
+nodea.post("services/sqlutil?action=stream;stream=beginTransaction;datasource=omquser", NOTHING,
+    {"Qorus-Connection": "Continue-Persistent"});
+on_success
+    nodea.post("services/sqlutil?action=stream;stream=commit");
+on_error
+    nodea.disconnect();
+# some code here in the remote transaction
+    @endcode
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+%requires SqlUtil
+
+# to allow for tables to be described remotely
+const DescribeKeys = ("native_type", "qore_type", "size", "nullable", "def_val", "comment",);
+
+# issue #3228: closure to retrieve a table without creating a dependency to the datasource
+const TableCode = AbstractTable sub (AbstractDatasource ds, string name) {
+    return UserApi::getSqlTable(ds, name, False);
+};
+
+class SqlUtilPersistentDataHelper inherits AbstractPersistentDataHelper {
+    public {
+        QdspClient dsp;
+        string datasource;
+        hash streaminfo;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : AbstractPersistentDataHelper(cx, ah) {
+        if (!ah.datasource || ah.datasource.typeCode() != NT_STRING)
+            throw "SQLUTIL-ERROR", sprintf("missing \"datasource\" argument giving the datasource for the persistent operation");
+        datasource = remove ah.datasource;
+        dsp = UserApi::getDatasourcePool(datasource, False);
+        dsp.beginTransaction();
+        ServiceApi::logInfo("%y: started persistent transaction; requestor: %s", datasource, ServiceApi::getCallContextString(cx));
+    }
+
+    destructor() {
+        if (!dsp.currentThreadInTransaction()) {
+            ServiceApi::logInfo("%y: persistent request closing; no transaction in progress", datasource);
+            return;
+        }
+
+        if (err) {
+            ServiceApi::logInfo("%y: persistent request closing; rolling back transaction due to errors", datasource);
+            dsp.rollback();
+            return;
+        }
+
+        # fix for bug 1129: require an explicit commit in persistent transactions to avoid commit partial transactions
+        ServiceApi::logInfo("%y: ERROR: persistent request closing; rolling back transaction due to lack of explicit client-side commit", datasource);
+        dsp.rollback();
+    }
+
+    connectionTerminated() {
+        delete self;
+    }
+}
+
+class SqlUtilStreamBase inherits AbstractServiceDataStreamResponseHandler {
+    private {
+        string datasource;
+        QdspClient dsp;
+        *SqlUtilPersistentDataHelper ph;
+    }
+
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : AbstractServiceDataStreamResponseHandler(cx, ah) {
+        if (cx.uctx.persistent_data) {
+            ph = cx.uctx.persistent_data;
+            datasource = ph.datasource;
+            dsp = ph.dsp;
+
+            # if we have already made a commit or rollback, then we have to grab a connection again
+            if (!dsp.currentThreadInTransaction()) {
+                dsp.beginTransaction();
+                ServiceApi::logInfo("%y: acquired new transaction for persistent request", datasource);
+            } else
+                ServiceApi::logInfo("%y: continuing transaction in persistent connection", datasource);
+
+            if (ah.datasource) {
+                if (ah.datasource != datasource)
+                    throw "SQLUTIL-ERROR", sprintf("\"datasource\" in request (%y) is a different datasource than that in the persistent transaction (%y)", ah.datasource, datasource);
+                remove ah.datasource;
+            }
+        } else {
+            if (!ah.datasource || ah.datasource.typeCode() != NT_STRING)
+                missingDatasource(ah);
+            datasource = remove ah.datasource;
+            dsp = UserApi::getDatasourcePool(datasource, False);
+            ServiceApi::logInfo("%y: acquired connection for single transaction; requestor: %s", datasource, ServiceApi::getCallContextString(cx));
+        }
+
+        if (ah.hasKey("timeout")) {
+            if (ah.timeout > 0) {
+                softint timeout_ms = remove ah.timeout;
+                setTimeout(timeout_ms);
+                ServiceApi::logDebug("%y: set timeout to %d ms", datasource, timeout_ms);
+            } else
+                throw "SQLUTIL-ERROR", sprintf("invalid timeout value %y passed; expecting a positive integer giving milliseconds for the HTTP and queue operation timeout value", ah.timeout);
+        }
+    }
+
+    missingDatasource(*hash<auto> ah) {
+        throw "SQLUTIL-ERROR", sprintf("missing \"datasource\" argument giving the datasource for the operation");
+    }
+
+    *code getPersistentClosedNotification() {
+        if (ph)
+            return \ph.connectionTerminated();
+    }
+
+    bool isPersistent() {
+        return exists ph;
+    }
+}
+
+class SqlUtilPersistentOperationBase inherits SqlUtilStreamBase {
+    constructor(hash<auto> cx, reference ah, string op, *list<auto> args) : SqlUtilStreamBase(cx, \ah) {
+        if (!cx.uctx.persistent_data)
+            missingDatasource(ah);
+
+        try {
+            call_object_method_args(dsp, op, args);
+            ServiceApi::logInfo("%y: executed persistent operation: %y", datasource, getName());
+        } catch (hash<ExceptionInfo> ex) {
+            if (Qorus.getDebugSystem())
+                ServiceApi::logDebug("caught exception: %s", Util::get_exception_string(ex));
+            ph.err = True;
+            rethrow;
+        }
+    }
+
+    missingDatasource(*hash<auto> ah) {
+        throw "SQLUTIL-ERROR", sprintf("operation %y can only be executed in a persistent call; the current call is not persistent", getName());
+    }
+
+    hash<auto> getResponseHeaderMessageImpl() {
+        *hash<auto> h = getErrorResponse();
+        return h ?? {
+            "code": 200,
+            "body": ph.err ? "ERROR" : "OK",
+        };
+    }
+
+    terminatePersistence() {
+        ServiceApi::persistenceThreadTerminate();
+        delete cx.uctx.persistent_data;
+        remove ph;
+        ServiceApi::logInfo("%y: terminated persistent connection", datasource);
+    }
+
+    auto sendDataImpl() {}
+    nothing recvDataImpl(auto data) {}
+
+    abstract string getName();
+}
+
+class SqlUtilCommitOperation inherits SqlUtilPersistentOperationBase {
+    constructor(hash cx, *hash ah) : SqlUtilPersistentOperationBase(cx, \ah, "commit") {
+        terminatePersistence();
+    }
+
+    string getName() {
+        return "commit";
+    }
+}
+
+class SqlUtilRollbackOperation inherits SqlUtilPersistentOperationBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilPersistentOperationBase(cx, \ah, "rollback") {
+        terminatePersistence();
+    }
+
+    string getName() {
+        return "rollback";
+    }
+}
+
+class SqlUtilBeginTransactionOperation inherits SqlUtilPersistentOperationBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilPersistentOperationBase(cx, \ah, "beginTransaction") {
+    }
+
+    string getName() {
+        return "beginTransaction";
+    }
+}
+
+class SqlUtilRawSelectStream inherits SqlUtilStreamBase {
+    private {
+        int cnt = 0;
+        int block = 1;
+        AbstractSQLStatement i;
+        bool column_format = False;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilStreamBase(cx, \ah) {
+        ServiceApi::logInfo("raw select stream args: %y", ah);
+
+        if (ah.hasKey("column_format"))
+            column_format = parse_boolean(remove ah.column_format);
+
+        try {
+            if (!ah.sql) {
+                throw "RAW-SELECT-STREAM-ERROR", "missing \"sql\" argument giving the select statement SQL";
+            }
+            if (ah.hasKey("block")) {
+                block = (remove ah.block).toInt();
+                if (block <= 0)
+                    throw "RAW-SELECT-STREAM-ERROR", sprintf("block value cannot be <= 0; value passed: %y", block);
+            }
+
+            i = dsp.getSQLStatement();
+            i.prepare(ah.sql);
+            if (ah.args) {
+                i.bindArgs(ah.args);
+            }
+        } catch (hash<ExceptionInfo> ex) {
+            # when an exception is thrown in the constructor, the destructor is not run, instead the object is "obliterated"
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: raw select stream: marking persistent request with error: %s: %s", datasource, ex.err, ex.desc);
+                    ph.err = True;
+                }
+            } else {
+                ServiceApi::logInfo("%y: raw select stream: rolling back transaction due to error in constructor: %s: %s", datasource, ex.err, ex.desc);
+                dsp.rollback();
+            }
+            throw "RAW-SELECT-STREAM-ERROR", sprintf("datasource %y sql %y: %s: %s: %s", datasource, ah.sql, get_ex_pos(ex), ex.err, ex.desc);
+        }
+    }
+
+    destructor() {
+        if (ex) {
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: raw select stream: marking persistent request with error: %s: %s", datasource, ex.err, ex.desc);
+                    ph.err = True;
+                }
+                return;
+            }
+
+            ServiceApi::logInfo("%y: raw select stream: rolling back transaction due to error in destructor: %s: %s", datasource, ex.err, ex.desc);
+            dsp.rollback();
+            return;
+        }
+
+        # if a select action was started, then free the transaction lock and return the connection to the pool with a rollback
+        if (i) {
+            ServiceApi::logInfo("%y: raw select stream: returned %d row%s", datasource, cnt, cnt == 1 ? "" : "s");
+            if (!send_done)
+                ServiceApi::logInfo("%y: raw select stream: aborted due to the remote closing the connection", datasource);
+            if (!ph) {
+                ServiceApi::logInfo("%y: raw select stream: releasing connection for single action with rollback", datasource);
+                dsp.rollback();
+            }
+        }
+    }
+
+    private nothing recvDataImpl(auto data) {
+    }
+
+    private auto sendDataImpl() {
+        if (send_done)
+            return;
+
+        try {
+            if (block == 1 && !column_format) {
+                if (!i.next())
+                    return;
+
+                ++cnt;
+                return i.getValue();
+            }
+
+            if (column_format) {
+                *hash<auto> rv = i.fetchColumns(block);
+                int rcnt = rv ? rv.firstValue().lsize() : 0;
+                if (rcnt) {
+                    cnt += rcnt;
+                    if (block > 1) {
+                        ServiceApi::logDebug("%y: raw select stream: sending %d row%s (total sent: %d)", datasource,
+                            rcnt, rcnt == 1 ? "" : "s", cnt);
+                    }
+                }
+                if (rcnt != block)
+                    send_done = True;
+                return rcnt ? rv : NOTHING;
+            }
+
+            *list<auto> rv = i.fetchRows(block);
+
+            cnt += rv.lsize();
+            if (block > 1)
+                ServiceApi::logDebug("%y: raw select stream: sending %d row%s (total sent: %d)", datasource, rv.lsize(), rv.lsize() == 1 ? "" : "s", cnt);
+            if (rv.lsize() != block)
+                send_done = True;
+            return rv;
+        } catch (hash<ExceptionInfo> ex) {
+            self.ex = ex;
+            throw "RAW-SELECT-STREAM-ERROR", sprintf("datasource %y: %s: %s: %s", datasource, get_ex_pos(ex), ex.err, ex.desc);
+        }
+    }
+}
+
+class SqlUtilTableStreamBase inherits SqlUtilStreamBase {
+    private {
+        string table;
+        AbstractTable t;
+        int cnt = 0;
+    }
+
+    constructor(hash<auto> cx, reference ah) : SqlUtilStreamBase(cx, \ah) {
+        if (!ah.table || ah.table.typeCode() != NT_STRING)
+            throw "SQLUTIL-ERROR", sprintf("missing \"table\" argument giving the table for the select");
+        table = remove ah.table;
+        # issue #3228: do not establish a dependency to the requested datasource
+        t = UserApi::getSqlTable(dsp, table, False);
+        if (!t.checkExistence())
+            throw "SQLUTIL-ERROR", sprintf("table %y does not exist in datasource %y", t.getSqlName(), datasource);
+    }
+}
+
+class SqlUtilSelectStream inherits SqlUtilTableStreamBase {
+    private {
+        int block = 1;
+        AbstractSQLStatement i;
+        bool column_format = False;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilTableStreamBase(cx, \ah) {
+        ServiceApi::logInfo("select stream args: %y", ah);
+
+        if (ah.hasKey("block")) {
+            block = (remove ah.block).toInt();
+            if (block <= 0)
+                throw "SELECT-STREAM-ERROR", sprintf("block value cannot be <= 0; value passed: %y", block);
+        }
+        if (ah.hasKey("column_format"))
+            column_format = parse_boolean(remove ah.column_format);
+
+        if (!ph && ah.forupdate)
+            throw "SELECT-STREAM-ERROR", sprintf("cannot use the forupdate option without a persistent connection in progress");
+
+        try {
+            i = t.getStatement(ah, {
+                # issue #3228: do not establish a dependency to the requested datasource
+                "tablecode": TableCode,
+            });
+        } catch (hash<ExceptionInfo> ex) {
+            # when an exception is thrown in the constructor, the destructor is not run, instead the object is "obliterated"
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: select stream: marking persistent request with error: %s: %s", datasource, ex.err, ex.desc);
+                    ph.err = True;
+                }
+            } else {
+                ServiceApi::logInfo("%y: select stream: rolling back transaction due to error in constructor: %s: %s", datasource, ex.err, ex.desc);
+                dsp.rollback();
+            }
+            throw "SELECT-STREAM-ERROR", sprintf("datasource %y table %y: %s: %s: %s", datasource, table, get_ex_pos(ex), ex.err, ex.desc);
+        }
+
+        ServiceApi::logInfo("%y: select stream: table: %y select args: %y", datasource, table, ah);
+    }
+
+    destructor() {
+        if (ex) {
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: select stream: marking persistent request with error: %s: %s", datasource, ex.err, ex.desc);
+                    ph.err = True;
+                }
+                return;
+            }
+
+            ServiceApi::logInfo("%y: select stream: rolling back transaction due to error in destructor: %s: %s", datasource, ex.err, ex.desc);
+            dsp.rollback();
+            return;
+        }
+
+        # if a select action was started, then free the transaction lock and return the connection to the pool with a rollback
+        if (i) {
+            ServiceApi::logInfo("%y: select stream: returned %d row%s", datasource, cnt, cnt == 1 ? "" : "s");
+            if (!send_done)
+                ServiceApi::logInfo("%y: select stream: aborted due to the remote closing the connection", datasource);
+            if (!ph) {
+                ServiceApi::logInfo("%y: select stream: releasing connection for single action with rollback", datasource);
+                dsp.rollback();
+            }
+        }
+    }
+
+    private nothing recvDataImpl(auto data) {
+    }
+
+    private auto sendDataImpl() {
+        if (send_done)
+            return;
+
+        try {
+            if (block == 1 && !column_format) {
+                if (!i.next())
+                    return;
+
+                ++cnt;
+                return i.getValue();
+            }
+
+            if (column_format) {
+                *hash<auto> rv = i.fetchColumns(block);
+                int rcnt = rv ? rv.firstValue().lsize() : 0;
+                if (rcnt) {
+                    cnt += rcnt;
+                    if (block > 1)
+                        ServiceApi::logDebug("%y: select stream: sending %d row%s (total sent: %d)", datasource, rcnt, rcnt == 1 ? "" : "s", cnt);
+                }
+                if (rcnt != block)
+                    send_done = True;
+                return rcnt ? rv : NOTHING;
+            }
+
+            *list<auto> rv = i.fetchRows(block);
+
+            cnt += rv.lsize();
+            if (block > 1)
+                ServiceApi::logDebug("%y: select stream: sending %d row%s (total sent: %d)", datasource, rv.lsize(), rv.lsize() == 1 ? "" : "s", cnt);
+            if (rv.lsize() != block)
+                send_done = True;
+            return rv;
+        } catch (hash<ExceptionInfo> ex) {
+            self.ex = ex;
+            throw "SELECT-STREAM-ERROR", sprintf("datasource %y table %y: %s: %s: %s", datasource, table, get_ex_pos(ex), ex.err, ex.desc);
+        }
+    }
+}
+
+class SqlUtilWriteStream inherits SqlUtilTableStreamBase {
+    constructor(hash<auto> cx, reference ah) : SqlUtilTableStreamBase(cx, \ah) {
+    }
+
+    destructor() {
+        if (ex) {
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: marking persistent request with error: %s: %s", datasource, ex.err, ex.desc);
+                    ph.err = True;
+                }
+                return;
+            }
+
+            ServiceApi::logInfo("%y: 3: rolling back transaction due to error: %s: %s", datasource, ex.err, ex.desc);
+            t.rollback();
+            return;
+        }
+
+        if (err) {
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: marking persistent request with error; HTTP status code %d returned to request", datasource, err);
+                    ph.err = True;
+                }
+                return;
+            }
+
+            ServiceApi::logInfo("%y: rolling back transaction due to error; HTTP status code %d returned to request", datasource, err);
+            t.rollback();
+            return;
+        }
+
+        if (!recv_done) {
+            if (ph) {
+                if (!ph.err) {
+                    ServiceApi::logInfo("%y: marking persistent request with error due to premature termination of stream; %d row%s received without terminating record", datasource, cnt, cnt == 1 ? "" : "s");
+
+                    ph.err = True;
+                }
+                return;
+            }
+
+            ServiceApi::logInfo("%y: rolling back transaction due to premature termination of stream; %d row%s received without terminating record", datasource, cnt, cnt == 1 ? "" : "s");
+            t.rollback();
+            return;
+        }
+
+        # commit transaction
+        if (!ph) {
+            if (!cnt) {
+                ServiceApi::logInfo("%y: no data received in stream; no transaction management necessary", datasource);
+                return;
+            }
+            ServiceApi::logInfo("%y: committing single transaction", datasource);
+            t.commit();
+        }
+        ServiceApi::logInfo("%y: leaving transaction open (cnt: %d)", datasource, cnt);
+    }
+
+    hash<auto> getResponseHeaderMessageImpl() {
+        *hash<auto> h = getErrorResponse();
+        if (h)
+            return h;
+        return ("code": 200, "body": ("rows": cnt));
+    }
+
+    private nothing recvDataImpl(auto data) {
+        if (err || !exists data)
+            return;
+        foreach auto h in (data) {
+            try {
+                if (h.typeCode() != NT_HASH)
+                    throw "WRITE-STREAM-ERROR", sprintf("row %d (first row is 0) sent as type %s; expecting \"hash\"", cnt, h.type());
+                #ServiceApi::logDebug("input row: %y", h);
+                doRecvDataImpl(h);
+                ++cnt;
+            } catch (hash<ExceptionInfo> tex) {
+                if (Qorus.getDebugSystem())
+                    ServiceApi::logDebug("caught exception: %s", Util::get_exception_string(tex));
+                ex = tex;
+                rethrow;
+            }
+        }
+    }
+
+    private abstract nothing doRecvDataImpl(hash h);
+
+    private auto sendDataImpl() {
+    }
+}
+
+class SqlUtilInsertStream inherits SqlUtilWriteStream {
+    private {
+        bool has_bulk_dml;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilWriteStream(cx, \ah) {
+        has_bulk_dml = boolean(dsp.getCapabilities() & DBI_CAP_HAS_ARRAY_BIND);
+        ServiceApi::logInfo("%y: insert stream: table: %y args: %y bulk_dml: %y", datasource, table, ah, has_bulk_dml);
+    }
+
+    destructor() {
+        if (recv_done && !err && !ex)
+            ServiceApi::logInfo("%y: insert stream: inserted %d row%s", datasource, cnt, cnt == 1 ? "" : "s");
+    }
+
+    private nothing recvDataImpl(auto data) {
+        if (err || !exists data)
+            return;
+        #ServiceApi::logDebug("data: %y (%d)", data.type(), data.typeCode());
+        try {
+            if (has_bulk_dml)
+                recvDataBulk(data);
+            else
+                recvDataNonBulk(data);
+        } catch (hash<ExceptionInfo> tex) {
+            if (Qorus.getDebugSystem())
+                ServiceApi::logDebug("caught exception: %s", Util::get_exception_string(tex));
+            ex = tex;
+            rethrow;
+        }
+    }
+
+    private nothing recvDataBulk(list<auto> data) {
+        list cols = ();
+        hash<auto> h;
+        foreach hash<auto> rh in (data[0].pairIterator()) {
+            if (rh.value.typeCode() == NT_HASH) {
+                h{rh.key} = rh.value;
+                continue;
+            }
+            cols += rh.key;
+            h{rh.key} = ();
+        }
+
+        foreach hash<auto> row in (data)
+            map h.$1 += row.$1, cols;
+
+        # do bulk insert
+        int rows = h{cols[0]}.size();
+        string sql;
+        t.insert(h, \sql);
+        cnt += rows;
+        if (!ph || !ph.streaminfo.insert.sql) {
+            ServiceApi::logInfo("%y: bulk insert (rows): %d row%s (total %d): %s", datasource, rows, rows == 1 ? "" : "s", cnt, sql);
+            if (ph)
+                ph.streaminfo.insert.sql = True;
+        }
+        else
+            ServiceApi::logInfo("%y: bulk insert (rows): %d row%s (total %d)", datasource, rows, rows == 1 ? "" : "s", cnt);
+    }
+
+    private nothing recvDataBulk(hash<auto> data) {
+        # do bulk insert
+        int rows = data.firstValue().size();
+        string sql;
+        t.insert(data, \sql);
+        cnt += rows;
+        if (!ph || !ph.streaminfo.insert.sql) {
+            ServiceApi::logInfo("%y: bulk insert (columns): %d row%s (total %d): %s", datasource, rows, rows == 1 ? "" : "s", cnt, sql);
+            if (ph)
+                ph.streaminfo.insert.sql = True;
+        }
+        else
+            ServiceApi::logInfo("%y: bulk insert (columns): %d row%s (total %d)", datasource, rows, rows == 1 ? "" : "s", cnt);
+    }
+
+    private nothing recvDataNonBulk(auto data) {
+        foreach auto h in (data) {
+            try {
+                if (h.typeCode() != NT_HASH)
+                    throw "WRITE-STREAM-ERROR", sprintf("row %d (first row is 0) sent as type %s; expecting \"hash\"", cnt, h.type());
+                #ServiceApi::logDebug("input row: %y", h);
+                doRecvDataImpl(h);
+                ++cnt;
+            } catch (hash<ExceptionInfo> tex) {
+                if (Qorus.getDebugSystem())
+                    ServiceApi::logDebug("caught exception: %s", Util::get_exception_string(tex));
+                ex = tex;
+                rethrow;
+            }
+        }
+    }
+
+    private nothing doRecvDataImpl(hash h) {
+        string sql;
+        t.insert(h, \sql);
+        int nrows = h.firstValue().lsize();
+        if (nrows > 1) {
+            ServiceApi::logDebug("%y: insert: %s; %d rows", datasource, sql, nrows);
+            # adjust row count for bulk SQL
+            cnt += nrows - 1;
+        } else
+            ServiceApi::logDebug("%y: insert: %s; args: %y", datasource, sql, h);
+    }
+}
+
+class SqlUtilUpdateStream inherits SqlUtilWriteStream {
+    private {
+        int uc = 0;
+        bool has_bulk_dml;
+        AbstractSQLStatement stmt;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilWriteStream(cx, \ah) {
+        has_bulk_dml = boolean(dsp.getCapabilities() & DBI_CAP_HAS_ARRAY_BIND);
+        ServiceApi::logInfo("%y: update stream: table: %y args: %y bulk_dml: %y", datasource, table, ah, has_bulk_dml);
+    }
+
+    destructor() {
+        if (recv_done && !err && !ex)
+            ServiceApi::logInfo("%y: update stream: updated %d row%s from %d update entr%s", datasource, uc, uc == 1 ? "" : "s", cnt, cnt == 1 ? "y" : "ies");
+    }
+
+    private nothing doRecvDataImpl(hash h) {
+        if (h.set.typeCode() == NT_LIST && h.set) {
+            int osize = int size = h.set.size();
+            if (!stmt) {
+                uc += getStatementAndUpdate(pop h.set, pop h.cond);
+                --size;
+            }
+            if (h.set) {
+                if (has_bulk_dml) {
+                    # setup list arguments for bulk bind by value
+                    hash<auto> hs = map {$1: ()}, h.set[0].keyIterator();
+                    map (map hs{$1.key} += $1.value, $1.pairIterator()), h.set;
+                    hash<auto> hc = map {$1: ()}, h.cond[0].keyIterator();
+                    map (map hc{$1.key} += $1.value, $1.pairIterator()), h.cond;
+                    list args = hs.values() + hc.values();
+
+                    #ServiceApi::logDebug("args: %N", args);
+                    stmt.execArgs(args);
+                    uc += stmt.affectedRows();
+                } else
+                    map uc += stmt.execArgs($1.values() + h.cond[$#].values()), h.set.iterator();
+                cnt += osize - 1;
+            }
+            # only log bulk messages
+            ServiceApi::logInfo("%y: rows updated: %d sent: %d (total: %d)", datasource, uc, osize, cnt + 1);
+        } else {
+            if (!stmt)
+                uc += getStatementAndUpdate(h.set, h.cond);
+            else
+                uc += stmt.exec(h.set.values() + h.cond.values());
+        }
+    }
+
+    private int getStatementAndUpdate(hash<auto> set, hash<auto> cond) {
+        string sql;
+        int rc = t.update(set, cond, \sql);
+        stmt = t.getStatement();
+        stmt.prepare(sql);
+        ServiceApi::logDebug("update SQL: %s", sql);
+        return rc;
+    }
+}
+
+class SqlUtilDeleteStream inherits SqlUtilWriteStream {
+    private {
+        int uc = 0;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilWriteStream(cx, \ah) {
+        ServiceApi::logInfo("%y: delete stream: table: %y args: %y", datasource, table, ah);
+    }
+
+    destructor() {
+        if (recv_done && !err && !ex)
+            ServiceApi::logInfo("%y: delete stream: deleted %d row%s from %d delete entr%s", datasource, uc, uc == 1 ? "" : "s", cnt, cnt == 1 ? "y" : "ies");
+    }
+
+    private nothing doRecvDataImpl(hash h) {
+        string sql;
+        uc += t.del(h.cond, \sql);
+        ServiceApi::logDebug("%y: delete: %s; args: %y", datasource, sql, h);
+    }
+}
+
+class SqlUtilUpsertStream inherits SqlUtilWriteStream {
+    private {
+        # upsert strategy to use
+        int upsert_strategy;
+        # upsert closure
+        code upsert;
+        # upsert result hash
+        hash uh;
+        # "delete others" option
+        bool delete_others;
+        # primary key value for "delete others" option
+        hash pkh;
+        # "omit_update" option
+        *softlist omit_update;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : SqlUtilWriteStream(cx, \ah) {
+        if (ah.upsert_strategy) {
+            upsert_strategy = ah.upsert_strategy.toInt();
+            if (!AbstractTable::UpsertStrategyMap{upsert_strategy})
+                throw "UPSERT-STREAM-ERROR", sprintf("invalid upsert strategy code %y, expecting one of: %y", ah.upsert_strategy, AbstractTable::UpsertStrategyDescriptionMap.values());
+        }
+        else
+            upsert_strategy = AbstractTable::UpsertAuto;
+
+        if (ah.omit_update)
+            omit_update = ah.omit_update;
+
+        delete_others = parse_boolean(ah.delete_others);
+
+        ServiceApi::logInfo("%y: upsert stream: table: %y upsert strategy: %y delete_others: %y args: %y", datasource, table, AbstractTable::UpsertStrategyMap{upsert_strategy}, delete_others, ah - ("upsert_strategy", "delete_others"));
+    }
+
+    destructor() {
+        if (recv_done && !err && !ex)
+            ServiceApi::logInfo("%y: upsert stream: upserted %d row%s", datasource, cnt, cnt == 1 ? "" : "s");
+    }
+
+    hash<auto> getResponseHeaderMessageImpl() {
+        *hash<auto> h = getErrorResponse();
+        if (h)
+            return h;
+        if (delete_others) {
+            list pkl = t.getPrimaryKey().keys();
+            foreach hash<auto> row in (t.getRowIterator()) {
+                string k = foldl $1 + "-" + $2, (map row.$1.toString(), pkl);
+                if (pkh{k})
+                    continue;
+
+                hash<auto> h = row{pkl};
+                t.del(h);
+
+                ++uh.deleted;
+                #ServiceApi::logDebug("%y: upsert: deleted args: %y", datasource, h);
+            }
+        }
+        hash<auto> rv = ("rows": cnt, "upsert": uh);
+        ServiceApi::logInfo("%y: upsert: %y", datasource, rv);
+        return ("code": 200, "body": rv);
+    }
+
+    private nothing doRecvDataImpl(hash h) {
+        if (!upsert) {
+            *hash<auto> uopt;
+            if (omit_update)
+                uopt.omit_update = omit_update;
+            upsert = t.getBulkUpsertClosure(h, upsert_strategy, uopt);
+        }
+
+        int code = call_function(upsert, h);
+        uh{AbstractTable::UpsertResultMap{code}} += h.firstValue().lsize();
+
+        if (delete_others) {
+            if (h.firstValue().typeCode() == NT_LIST) {
+                foreach hash<auto> row in (h.contextIterator()) {
+                    pkh{foldl $1 + "-" + $2, (map row.$1.toString(), t.getPrimaryKey().keyIterator())} = True;
+                }
+            }
+            else
+                pkh{foldl $1 + "-" + $2, (map h.$1.toString(), t.getPrimaryKey().keyIterator())} = True;
+        }
+
+        # log when sending bulk upserts
+        int nrows = h.firstValue().lsize();
+        if (nrows > 1) {
+            ServiceApi::logInfo("%y: upserted %d rows in %s", datasource, nrows, t.getSqlName());
+            # adjust row count for bulk SQL
+            cnt += nrows - 1;
+        }
+    }
+}
+
+class PersistentDatasourceHelper {
+    public {
+        # datasource
+        string ds;
+        QdspClient dsp;
+        *SqlUtilPersistentDataHelper ph;
+    }
+
+    constructor(string nds, bool persistent_ok = True) {
+        ds = nds;
+        ph = ServiceApi::getHttpCallContext().uctx.persistent_data;
+        if (ph) {
+            if (!persistent_ok)
+                throw "PERSISTENCE-ERROR", sprintf("cannot execute this operation while a transaction is in progress");
+
+            if (ds == ph.datasource) {
+                ServiceApi::logInfo("%y: continuing persistent transaction", ds);
+                dsp = ph.dsp;
+
+                # if we have already made a commit or rollback, then we have to grab a connection again
+                if (!dsp.currentThreadInTransaction())
+                    dsp.beginTransaction();
+
+                return;
+            }
+            throw "SQLUTIL-ERROR", sprintf("\"datasource\" in request (%y) is a different datasource than that in the persistent transaction (%y)", ds, ph.datasource);
+        }
+
+        ServiceApi::logInfo("%y: acquired new connection for single transaction; requestor: %s", ds, ServiceApi::getCallContextString());
+        dsp = UserApi::getDatasourcePool(ds, False);
+    }
+
+    QdspClient get() {
+        return dsp;
+    }
+
+    commit() {
+        if (!ph) {
+            dsp.commit();
+            ServiceApi::logDebug("%y: committed single transaction", ds);
+        }
+        else
+            ServiceApi::logDebug("%y: continuing persistent transaction", ds);
+    }
+
+    rollback() {
+        if (!ph) {
+            dsp.rollback();
+            ServiceApi::logDebug("%y: rolled back single transaction", ds);
+        }
+        else {
+            ph.err = True;
+            ServiceApi::logDebug("%y: marked persistent transaction as errored", ds);
+        }
+    }
+
+    release() {
+        if (!ph) {
+            dsp.rollback();
+            ServiceApi::logDebug("%y: rolled back single transaction", ds);
+        }
+        else {
+            ServiceApi::logDebug("%y: continuing persistent transaction without transaction management", ds);
+        }
+    }
+}
+
+class CallbackHelper inherits PersistentDatasourceHelper {
+    public {}
+
+    private {
+        string action;
+
+        hash rv = (
+            "info": (),
+            "sql": (),
+        );
+    }
+
+    constructor(string ds, string act) : PersistentDatasourceHelper(ds, False) {
+        action = act;
+    }
+
+    hash<auto> getOptions() {
+        code info_callback = sub (string str, int ac, string type, string name, *string table, *string new_name, *string info) {
+            rv.info += str;
+            ServiceApi::logDebug("%y: %s: %s", ds, action, str);
+        };
+        code sql_callback = sub (string str) {
+            rv.sql += str;
+            ServiceApi::logDebug("%y: %s SQL: %s", ds, action, str);
+            dsp.execRaw(str);
+        };
+
+        return ("info_callback": info_callback, "sql_callback": sql_callback, "sql_callback_executed": True);
+    }
+
+    hash<auto> getHash() {
+        return rv;
+    }
+
+    any methodGate(string m) {
+        return call_object_method_args(dsp, m, argv);
+    }
+
+    QdspClient getDs() {
+        return dsp;
+    }
+}
+
+#! the main sqlutil service class
+class QorusSystemSqlutilService inherits QorusSystemService {
+    #! initalizes the system sqlutil service
+    static init() {
+        ServiceApi::streamRegister("select", ("PUT", "GET"),
+            SqlUtilSelectStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilSelectStream(cx, ah);},
+            "returns a stream of data from a select statement generated from the parameters");
+        ServiceApi::streamRegister("select_raw", "PUT",
+            SqlUtilRawSelectStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilRawSelectStream(cx, ah);},
+            "returns a stream of data from the given raw select statement");
+        ServiceApi::streamRegister("insert", "POST",
+            SqlUtilInsertStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilInsertStream(cx, ah);},
+            "accepts rows as hashes or lists of hashes and inserts them into the target table");
+        ServiceApi::streamRegister("update", "POST",
+            SqlUtilUpdateStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilUpdateStream(cx, ah);},
+            "accepts update information as hashes with 'set' and 'cond' keys or lists of such hashes and uses this information to update data in the target table");
+        ServiceApi::streamRegister("delete", "POST",
+            SqlUtilDeleteStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilDeleteStream(cx, ah);},
+            "accepts delete condition hashes as hashes or lists of hashes and uses these criteria to delete rows from the target table");
+        ServiceApi::streamRegister("upsert", "POST",
+            SqlUtilUpsertStream sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilUpsertStream(cx, ah);},
+            "accepts rows as hashes or lists of hashes and upserts/merges them into the target table with the given upsert strategy");
+
+        # persistent operation support
+        ServiceApi::streamRegister("beginTransaction", "POST",
+            SqlUtilBeginTransactionOperation sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilBeginTransactionOperation(cx, ah);},
+            "begins transactions, only valid with persistent connections");
+        ServiceApi::streamRegister("commit", "POST",
+            SqlUtilCommitOperation sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilCommitOperation(cx, ah);},
+            "commits transactions, only valid with persistent connections");
+        ServiceApi::streamRegister("rollback", "POST",
+            SqlUtilRollbackOperation sub (hash<auto> cx, *hash<auto> ah) {return new SqlUtilRollbackOperation(cx, ah);},
+            "rolls back transactions, only valid with persistent connections");
+
+        ServiceApi::persistenceRegister(SqlUtilPersistentDataHelper sub (hash<auto> cx, *hash<auto> ah) {
+            return new SqlUtilPersistentDataHelper(cx, ah);
+        });
+
+        # data tablespace hash (key = datasource, value = data tablespace name)
+        our hash dts;
+
+        # index tablespace hash (key = datasource, value = data tablespace name)
+        our hash its;
+
+        # setup tablespace options for datasources from client options
+        HashIterator i(Qorus.options.getClientOptions());
+        while (i.next()) {
+            string k = i.getKey();
+            if (k !~ /.+-(data|index)-tablespace/)
+                continue;
+
+            string dsn = k.split("-")[0];
+
+            if (k.regex(".+-data-tablespace") && !dts{dsn})
+                dts{dsn} = i.getValue();
+            else if (k.regex("-index-tablespace") && !its{dsn})
+                its{dsn} = i.getValue();
+        }
+
+        ServiceApi::logDebug("data tablespaces: %y, index tablespaces: %y", dts, its);
+    }
+
+    #! executes the select method on the given datasource and table and returns the result
+    /**
+    */
+    static *hash<auto> select(string ds, string table, *hash<auto> sh) {
+        PersistentDatasourceHelper ph(ds);
+        on_exit ph.release();
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        ServiceApi::logInfo("%y: select: table: %y sh: %y", ds, table, sh);
+        return t.select(sh, {"tablecode": TableCode});
+    }
+
+
+    #! executes the selectRows method on the given datasource and table and returns the result
+    /**
+    */
+    static *list<auto> select_rows(string ds, string table, *hash<auto> sh) {
+        PersistentDatasourceHelper ph(ds);
+        on_exit ph.release();
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        ServiceApi::logInfo("%y: select_rows: table: %y sh: %y", ds, table, sh);
+        return t.selectRows(sh, {"tablecode": TableCode});
+    }
+
+    #! executes the selectRow method on the given datasource and table and returns the result
+    /**
+    */
+    static *hash<auto> select_row(string ds, string table, *hash<auto> sh) {
+        PersistentDatasourceHelper ph(ds);
+        on_exit ph.release();
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        ServiceApi::logInfo("%y: select_row: table: %y sh: %y", ds, table, sh);
+        return t.selectRow(sh);
+    }
+
+    #! executes the insert method on the given datasource and table with the given data and returns the number of rows inserted in a single transaction
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static int insert(string ds, string table, softlist<auto> rl) {
+        PersistentDatasourceHelper ph(ds);
+
+        QdspClient dsp = ph.get();
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(dsp, table, False);
+
+        ServiceApi::logInfo("%y: insert: table: %y # rows: %d", ds, table, rl.size());
+
+        ServiceApi::logDebug("%y: insert: table: %y: first row: %y", ds, table, rl[0]);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        map t.insert($1), rl;
+
+        return rl.size();
+    }
+
+    #! executes the insertFromSelect method on the given datasource and table and returns the result
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static int insert_from_select(string ds, string table, list<auto> cols, string source_table, hash<auto> sh) {
+        PersistentDatasourceHelper ph(ds);
+
+        QdspClient dsp = ph.get();
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(dsp, table, False);
+        AbstractTable src = UserApi::getSqlTable(dsp, source_table, False);
+
+        ServiceApi::logInfo("%y: insert_from_select: table: %y cols: %y source_table: %y sh: %y", ds, table, cols, source_table, sh);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        return t.insertFromSelect(cols, src, sh);
+    }
+
+    #! executes the update method on the given datasource and table with the given data and returns the number of rows updated in a single transaction
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static int update(string ds, string table, hash<auto> set, *hash<auto> cond) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        ServiceApi::logInfo("%y: update: table: %y set: %y cond: %y", ds, table, set, cond);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        int rv = t.update(set, cond);
+        ServiceApi::logInfo("%y: update: table: %y: rows updated: %d", ds, table, rv);
+        return rv;
+    }
+
+    #! executes the upsert() method on the given datasource and table with the given input data and returns the result of the upsert operation
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors
+        occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+
+        @param ds the datasource name
+        @param table the table name
+        @param row a hash representing the row to insert or update
+        @param upsert_strategy see @ref upsert_options for possible values for the upsert strategy
+        @param opt a hash of options for the upsert operation; see @ref SqlUtil::AbstractTable::UpsertOptions for common options; each driver can support additional driver-specific options
+
+        @return an integer code giving the result of the update; see @ref upsert_results for more information
+
+        @since Qorus 4.1
+    */
+    static int upsert_row(string ds, string table, hash<auto> row, int upsert_strategy = AbstractTable::UpsertAuto, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+
+        ServiceApi::logInfo("%y: upsert: table: %y strategy: %y # rows: 1 opt: %y", ds, table, AbstractTable::UpsertStrategyMap{upsert_strategy}, opt);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        return t.upsert(row, upsert_strategy, opt);
+    }
+
+    #! executes the upsertFromIterator() method on the given datasource and table with the given input data and returns a hash giving the result of the upsert operation
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors
+        occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+
+        @param ds the datasource name
+        @param table the table name
+        @param rows the row data to insert
+        @param upsert_strategy see @ref upsert_options for possible values for the upsert strategy
+        @param opt a hash of options for the upsert operation; see @ref SqlUtil::AbstractTable::UpsertOptions for
+        common options; each driver can support additional driver-specific options
+
+        @return @ref nothing if no actions were taken or a hash with the following keys assigned to numeric values
+        indicating the number of rows processed (keys correspond to
+        @ref SqlUtil::AbstractTable::UpsertResultDescriptionMap keys):
+        - \c "inserted": the number of rows inserted
+        - \c "verified": the number of rows updated unconditionally; note that this key is returned with all upsert
+          strategy codes other than @ref SqlUtil::AbstractTable::UpsertSelectFirst instead of \c "updated"
+        - \c "updated": the number of rows updated; note that this key is only returned if \a upsert_strategy is
+          @ref SqlUtil::AbstractTable::UpsertSelectFirst, otherwise updated rows are reported as \c "verified" since
+          rows are updated unconditionally with other the upsert strategy codes
+        - \c "unchanged": the number of rows unchanged; this key can only be returned if \a upsert_strategy is
+          @ref SqlUtil::AbstractTable::UpsertSelectFirst, @ref SqlUtil::AbstractTable::UpsertInsertOnly, or
+          @ref SqlUtil::AbstractTable::UpsertUpdateOnly
+        - \c "deleted": the number of rows deleted; this can only be returned if
+          @ref SqlUtil::AbstractTable::UpsertOptions "upsert option" \c delete_others is @ref True "True"
+    */
+    static hash<auto> upsert(string ds, string table, softlist<auto> rows, int upsert_strategy = AbstractTable::UpsertAuto, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+
+        ServiceApi::logInfo("%y: upsert: table: %y strategy: %y # rows: %d opt: %y", ds, table, AbstractTable::UpsertStrategyMap{upsert_strategy}, rows.size(), opt);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        return t.upsertFromIterator(rows.iterator(), upsert_strategy, opt);
+    }
+
+    #! executes the delete method on the given datasource and table with the given data and returns the number of rows deleted in a single transaction
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static int del(string ds, string table, *hash<auto> cond) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+
+        ServiceApi::logInfo("%y: del: table: %y cond: %y", ds, table, cond);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        int rv = t.del(cond);
+        ServiceApi::logInfo("%y: del: table: %y: rows deleted: %d", ds, table, rv);
+        return rv;
+    }
+
+    #! executes the truncate method on the given datasource and table
+    /** An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static nothing truncate_table(string ds, string table) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+
+        ServiceApi::logInfo("%y: truncate table: %y", ds, table);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        t.truncate();
+    }
+
+    #! aligns a schema with the given template and returns a hash with two keys: \c "info": a list of informational strings about the result of processing, and \c "sql": a list of the SQL executed
+    /**
+        @param ds the datasource name of the schema to align
+        @param schema_template a schema template hash; see @ref SqlUtil::AbstractDatabase::getAlignSql() for more information
+        @param opt a schema alignment option hash; see @ref SqlUtil::AbstractDatabase::getAlignSql() for more information
+
+        @return a hash with two keys:
+        - \c "info": a list of informational strings about the result of processing
+        - \c "sql": a list of the SQL executed
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static *hash<auto> align_schema(string ds, hash<auto> schema_template, *hash<auto> opt) {
+        CallbackHelper cb(ds, "align schema");
+        on_success cb.commit();
+        on_error cb.rollback();
+
+        Database db(cb.getDs());
+        Tables table_cache();
+        ServiceApi::logInfo("%y: align schema: opt: %y", ds, opt);
+        db.getAlignSql(schema_template, opt + cb.getOptions(), table_cache);
+
+        return cb.getHash();
+    }
+
+    #! drops the given schema and returns a hash with two keys: \c "info": a list of informational strings about the result of processing, and \c "sql": a list of the SQL executed
+    /** @param ds the datasource name of the schema to drop
+        @param schema_template a schema template hash; see @ref SqlUtil::AbstractDatabase::getDropSchemaSql() for more information
+        @param opt a schema drop option hash; see @ref SqlUtil::AbstractDatabase::getDropSchemaSql() for more information
+
+        @return a hash with two keys:
+        - \c "info": a list of informational strings about the result of processing
+        - \c "sql": a list of the SQL executed
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static *hash<auto> drop_schema(string ds, hash<auto> schema_template, *hash<auto> opt) {
+        CallbackHelper cb(ds, "drop schema");
+        on_success cb.commit();
+        on_error cb.rollback();
+
+        Database db(cb.getDs());
+        ServiceApi::logInfo("%y: drop schema: opt: %y", ds, opt);
+        db.getDropSchemaSql(schema_template, opt + cb.getOptions());
+
+        return cb.getHash();
+    }
+
+    #! aligns a schema with the given template and returns a hash with two keys: \c "info": a list of informational strings about the result of processing, and \c "sql": a list of the SQL executed
+    /**
+        @param ds the datasource name of the schema where the table will be aligned
+        @param table_name the name of the table to align
+        @param table_template a table description hash; see @ref SqlUtil::AbstractTable::getAlignSql() for more information
+        @param opt a table alignment hash; see @ref SqlUtil::AbstractTable::getAlignSql() for more information
+
+        @return a hash with two keys:
+        - \c "info": a list of informational strings about the result of processing
+        - \c "sql": a list of the SQL executed
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static *hash<auto> align_table(string ds, string table_name, hash<auto> table_template, *hash<auto> opt) {
+        CallbackHelper cb(ds, "align table");
+        on_success cb.commit();
+        on_error cb.rollback();
+
+        Table template_table(cb.getDs(), table_template, table_name);
+        Table db_table(cb.getDs(), table_name);
+
+        # add tablespace options
+        if (dts{ds} && !opt.data_tablespace)
+            opt.data_tablespace = dts{ds};
+        if (its{ds} && !opt.index_tablespace)
+            opt.index_tablespace = its{ds};
+
+        ServiceApi::logInfo("%y: align table: %y opt: %y", ds, table_name, opt);
+        db_table.getAlignSql(template_table, opt + cb.getOptions());
+
+        return cb.getHash();
+    }
+
+    #! drops the listed table and returns information about the operation executed
+    /** @param ds the datasource the table resides in
+        @param table the name of the table to drop
+        @param opt options for the drop operation (see @ref SqlUtil::AbstractTable::getDropSql())
+
+        @return a hash with the following keys:
+        - \c "info": one or more informative strings about the SQL operations executed
+        - \c "sql": one or more DDL strings giving the actual SQL DDL commands executed
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static *hash<auto> drop_table(string ds, string table, *hash<auto> opt) {
+        CallbackHelper cb(ds, "drop table");
+        on_success cb.commit();
+        on_error cb.rollback();
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(cb.getDs(), table, False);
+
+        ServiceApi::logInfo("%y: drop table: %y opt: %y", ds, table, opt);
+        t.getDropSql(opt + cb.getOptions());
+
+        return cb.getHash();
+    }
+
+    #! returns a list of strings giving the names of all functions in the given datasource
+    /**
+    */
+    static list<auto> list_functions(string ds) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.listFunctions();
+    }
+
+    #! returns a list of strings giving the names of all procedures in the given datasource
+    /**
+    */
+    static list<auto> list_procedures(string ds) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.listProcedures();
+    }
+
+    #! returns a list of strings giving the names of all sequences in the given datasource
+    /**
+    */
+    static list<auto> list_sequences(string ds) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.listSequences();
+    }
+
+    #! returns a list of strings giving the names of all tables in the given datasource
+    /**
+    */
+    static list<auto> list_tables(string ds) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.listTables();
+    }
+
+    #! returns True if the given table exists in the given datasource
+    /**
+        @since Qorus 4.1
+    */
+    static bool exists_table(string ds, string table) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.getTable(table) ? True : False;
+    }
+
+    #! returns a list of strings giving the names of all views in the given datasource
+    /**
+    */
+    static list<auto> list_views(string ds) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        return db.listViews();
+    }
+
+    #! returns the DDL for a table or @ref nothing if the object does not exist or is not accessible
+    /**
+    */
+    static *string get_table_ddl(string ds, string table, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        return t.checkExistence() ? t.getCreateSqlString(opt) : NOTHING;
+    }
+
+    #! returns the DDL for a sequence or @ref nothing if the object does not exist or is not accessible
+    /**
+    */
+    static list<auto> get_sequence_ddl(string ds, string name, *hash opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        *AbstractSequence seq = db.getSequence(name);
+        return seq ? seq.getCreateSql(opt) : NOTHING;
+    }
+
+    #! returns the DDL for a function or @ref nothing if the object does not exist or is not accessible
+    /**
+    */
+    static list<auto> get_function_ddl(string ds, string name, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        *AbstractFunction obj = db.getFunction(name);
+        return obj ? obj.getCreateSql(opt) : NOTHING;
+    }
+
+    #! returns the DDL for a stored procedure or @ref nothing if the object does not exist or is not accessible
+    /**
+    */
+    static list<auto> get_procedure_ddl(string ds, string name, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        *AbstractFunction obj = db.getProcedure(name);
+        return obj ? obj.getCreateSql(opt) : NOTHING;
+    }
+
+    #! returns the DDL for a view or @ref nothing if the object does not exist or is not accessible
+    /**
+    */
+    static list<auto> get_view_ddl(string ds, string name, *hash<auto> opt) {
+        PersistentDatasourceHelper ph(ds);
+
+        Database db(ph.get());
+        *AbstractView obj = db.getView(name);
+        return obj ? obj.getCreateSql(opt) : NOTHING;
+    }
+
+    #! executes SQL in the given datasource with option arguments and returns a hash of the results
+    /** @par Example:
+        @code{.py}
+    string sql = "begin my_proc(%v, %v, :result); end;"
+    hash<auto> h = omqservice.system.sqlutil.exec_sql("omquser", sql, arg1, arg2, Type::Int);
+        @endcode
+
+        @param ds the name of the datasource
+        @param sql the SQL to execute
+
+        @return The return value depends on the DBI driver; normally, for commands with placeholders, a hash is returned holding the values acquired from executing the SQL statement. For all other commands, normally an integer row count is returned. However, some DBI drivers also allow select statements to be executed through this interface, which would also return a hash (column names) of lists (values for each column). See Qore::SQL::AbstractDatasource::exec() as a reference.
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+    */
+    static auto exec_sql(string ds, string sql) {
+        PersistentDatasourceHelper ph(ds);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        return ph.get().vexec(sql, argv);
+    }
+
+    #! executes raw SQL in the given datasource and returns a hash of the results
+    /** @par Example:
+        @code{.py}
+    string sql = "begin my_proc(); end;"
+    hash<auto> h = omqservice.system.sqlutil.exec_raw_sql("omquser", sql);
+        @endcode
+
+        @param ds the name of the datasource
+        @param sql the SQL to execute
+
+        An implicit commit is made on the datasource if no persistent remote transaction is in progress and no errors occur executing the method; see @ref sqlutil_transmgt for more information on persistent remote transactions.
+
+        @return The return value depends on the DBI driver; normally, for commands with placeholders, a hash is returned holding the values acquired from executing the SQL statement. For all other commands, normally an integer row count is returned. However, some DBI drivers also allow select statements to be executed through this interface, which would also return a hash (column names) of lists (values for each column). See Qore::SQL::AbstractDatasource::execRaw() as a reference.
+    */
+    static auto exec_raw_sql(string ds, string sql) {
+        PersistentDatasourceHelper ph(ds);
+
+        on_success ph.commit();
+        on_error ph.rollback();
+
+        return ph.get().execRaw(sql);
+    }
+
+    #! returns a hash describing the given table
+    /** @par Example:
+        @code{.py}
+hash<auto> desc = omqservice.system.sqlutil.describe_table("omquser", table_name);
+        @endcode
+
+        @param ds the name of the datasource
+        @param table the name of the table
+
+        @return a hash keyed by column name where each value is a hash with the following keys:
+        - \c native_type (@ref string_type "string"): the native DB type
+        - \c qore_type (@ref string_or_nothing_type "*string"): the equivalent %Qore type, if known
+        - \c size (@ref int_type "int"): the size of the column, if relevant
+        - \c nullable (@ref bool_type "bool"): if the column can hold \c NULL values
+        - \c def_val (@ref string_or_nothing_type "*string"): the default value code for the column, if any
+        - \c comment (@ref string_or_nothing_type "*string"): any comment on the column
+
+        @since Qorus 4.1
+    */
+    static hash<auto> describe_table(string ds, string table) {
+        PersistentDatasourceHelper ph(ds);
+        on_exit ph.release();
+
+        # issue #3228: do not establish a dependency to the requested datasource
+        AbstractTable t = UserApi::getSqlTable(ph.get(), table, False);
+        return map {
+            $1.key: $1.value{DescribeKeys}
+        }, t.describe().pairIterator();
+    }
+
+    #! returns a hash describing the results of an SQL query
+    /** @par Example:
+        @code{.py}
+hash<auto> desc = omqservice.system.sqlutil.describe_query("omquser", sql);
+        @endcode
+
+        @param ds the name of the datasource
+        @param sql the select statement to describe
+        @param ... any bind arguments to the select statement
+    */
+    static hash<auto> describe_query(string ds, string sql) {
+        PersistentDatasourceHelper ph(ds);
+        on_exit ph.release();
+
+        AbstractSQLStatement stmt = ph.get().getSQLStatement();
+        stmt.prepare(sql);
+        if (argv) {
+            stmt.bindArgs(argv);
+        }
+        return stmt.describe();
+    }
+}

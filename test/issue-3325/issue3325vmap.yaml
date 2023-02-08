@@ -1,0 +1,14 @@
+type: value-map
+name: issue3325vmap
+desc: test value map
+author:
+  - Qore Technologies, s.r.o.
+exception: true
+valuetype: int
+value-maps:
+  key1:
+    value: 1
+    enabled: false
+  key2:
+    value: 2
+    enabled: true

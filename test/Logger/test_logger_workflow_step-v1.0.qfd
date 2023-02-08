@@ -1,0 +1,19 @@
+# type: STEP
+# version: 1.0
+# desc: help workglow step for LoggerRestInterfaceTest unit test
+# author: Taras Petrychkovych (Qore Technologies)
+
+%strict-args
+%require-types
+%new-style
+%enable-all-warnings
+
+sub test_logger_workflow_step() {
+    UserApi::logFatal("log Fatal message");
+    UserApi::logError("log Error message");
+    UserApi::logWarn("log Warn message");
+    UserApi::logInfo("log Info message");
+    UserApi::logDebug("log Debug message");
+    UserApi::logTrace("log Trace message");
+}
+# END

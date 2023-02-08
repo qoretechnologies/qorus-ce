@@ -1,0 +1,217 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusRescheduleTest
+
+class QorusRescheduleTest inherits Test {
+    public {
+        const PollInterval = 250ms;
+    }
+
+    constructor() : Test("RescheduleTest", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # make sure all instances of RESCHEDULE are stopped
+        stopWorkflow("RESCHEDULE");
+
+        # create fake parent wf
+        hash<auto> h = qrest.post("workflows/DUMMY-TEST/execSynchronous", {"staticdata": {}});
+        softint pwfiid = h.workflow_instanceid;
+
+        h = {
+            "staticdata": {
+                "test": True
+            },
+            "priority": 10,
+            "parent_workflow_instanceid": pwfiid,
+        };
+
+        # create a RESCHEDULE order
+        string wfiid = qrest.post("workflows/RESCHEDULE/createOrder", h).workflow_instanceid;
+        {
+            on_exit {
+                # change priority and retest
+                string ok = omqapi.callAPI("omq.system.reprioritize-order", wfiid, 500);
+                assertEq("OK", ok);
+            }
+
+            if (m_options.verbose > 2) {
+                printf("created RESCHEDULE wfiid: %d\n", wfiid);
+            }
+
+            # add an order note
+            qrest.put("orders/" + wfiid + "/notes?note=test");
+            # check the REST response from a cached order
+            h = qrest.get("orders/" + wfiid);
+            assertEq(1, h.note_count);
+            assertEq("test", h.notes[0].note);
+
+            # make sure the workflow has status READY
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            assertEq(OMQ::StatReady, h.workflowstatus);
+            # make sure the scheduled date is not set
+            assertTrue(inlist_hard(h.scheduled, (NULL, NOTHING)));
+
+            int id = omqapi.callAPI("omq.system.start-workflow", {
+                "name": "RESCHEDULE",
+                "options": {
+                    "reschedule": 3600,
+                    "stop": 1,
+                    "iterations": 1,
+                },
+            }).id;
+            assertTrue(id > 0);
+
+            # wait until all RESCHEDULE workflows have stopped
+            waitForStop("RESCHEDULE");
+
+            # make sure workflow has status SCHEDULED when read from DB
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            # wait for status instead of checking immediately to avoid a race condition
+            waitForStatus("getWorkflowStatus2-1", wfiid, OMQ::StatScheduled);
+            assertTrue(exists h.scheduled);
+            assertEq(1, h.note_count);
+
+            # feature 1303 test: cached data
+            h = qrest.put("orders/" + wfiid + "/updateKeys", ("orderkeys": ("test1": wfiid)));
+            assertEq(wfiid.toString(), h.test1);
+
+            h = omqservice.system.info.getWFIAllInfo(wfiid);
+            assertEq(OMQ::StatScheduled, h.InstanceInfo.workflowstatus);
+            assertTrue(exists h.InstanceInfo.scheduled);
+            assertEq(1, h.InstanceInfo.note_count);
+
+            # check the REST response from a non-cached order
+            h = qrest.get("orders/" + wfiid);
+            assertEq(1, h.note_count);
+            assertEq("test", h.notes[0].note);
+
+            # feature 1303 test: non-cached data
+            h = qrest.put("orders/" + wfiid + "/updateKeys", ("orderkeys": ("test2": wfiid)));
+            assertEq(("test1": wfiid.toString(), "test2": wfiid.toString()), h);
+
+            # start RESCHEDULE workflow and test status again (from cache)
+            id = omqapi.callAPI("omq.system.start-workflow", {
+                "name": "RESCHEDULE",
+                "options": {
+                    "reschedule": 3600,
+                    "stop": 1,
+                    "iterations": 2,
+                },
+            }).id;
+            on_error stopWorkflow("RESCHEDULE");
+
+            # make sure workflow has status SCHEDULED when read from cache
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            assertEq(OMQ::StatScheduled, h.workflowstatus);
+            assertTrue(exists h.scheduled);
+            h = omqservice.system.info.getWFIAllInfo(wfiid);
+            assertEq(OMQ::StatScheduled, h.InstanceInfo.workflowstatus);
+            assertTrue(exists h.InstanceInfo.scheduled);
+        }
+
+        string ok;
+
+        {
+            on_exit stopWorkflow("RESCHEDULE");
+            h = omqapi.callAPI("omq.system.exec-synchronous-existing", ("workflow_instanceid": wfiid,
+                "options": ("reschedule": 0)));
+            assertEq(OMQ::StatComplete, h.status);
+
+            # create a reschedule order with a scheduled date in the future
+            date sched = now() + 1h;
+            h = {
+                "staticdata": {
+                    "test": True
+                },
+                "scheduled": sched,
+                "parent_workflow_instanceid": pwfiid,
+            };
+            wfiid = qrest.post("workflows/RESCHEDULE/createOrder", h).workflow_instanceid;
+            if (m_options.verbose > 2) {
+                printf("created RESCHEDULE wfiid: %d\n", wfiid);
+            }
+
+            # make sure the workflow has status SCHEDULED
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            assertEq(OMQ::StatScheduled, h.workflowstatus);
+            # make sure the scheduled date is set
+            assertEq(sched, h.scheduled);
+
+            sched += 2h;
+            # change the scheduled data and check it
+            ok = omqapi.callAPI("omq.system.reschedule-order", wfiid, sched);
+            assertEq("OK", ok);
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            assertEq(OMQ::StatScheduled, h.workflowstatus);
+            # make sure the scheduled date is set
+            assertEq(sched, h.scheduled);
+
+            # execute the workflow
+            h = omqapi.callAPI("omq.system.exec-synchronous-existing", {
+                "workflow_instanceid": wfiid,
+                "options": {
+                    "reschedule": 0,
+                },
+            });
+            assertEq(OMQ::StatComplete, h.status);
+        }
+    }
+
+    waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (exists errors && inlist(h.workflowstatus, errors))
+                break;
+
+            #if (m_options.verbose > 2) {
+            #    printf("%y wfiid %y status == %y (err: %y) h: %y\n", testname, wfiid, status, errors, h);
+            #}
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        assertEq(h.workflowstatus, status, testname);
+    }
+
+    stopWorkflow(string name) {
+        qrest.put("workflows/" + name + "/setAutostart", {"autostart": 0});
+        qrest.put("workflows/" + name + "/stop");
+        waitForStop(name);
+    }
+
+    waitForStop(string name) {
+        while (True) {
+            if (!qrest.get("workflows/" + name + "/exec_count")) {
+                break;
+            }
+            # wait for status to change
+            usleep(PollInterval);
+        }
+    }
+}

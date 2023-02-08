@@ -1,0 +1,87 @@
+# service: bug-3020
+# serviceversion: 1.0
+# servicedesc: bug 3020 - Service with handler with content-type defined, using listener with a certificate throws an exception when run in qorus-core
+# serviceauthor: Qore Technologies, s.r.o.
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# remote: False
+# autostart: False
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+
+%requires FsUtil
+
+const CRT = """-----BEGIN CERTIFICATE-----
+MIIEEzCCAvugAwIBAgIJAMSh0zC+eBDpMA0GCSqGSIb3DQEBCwUAMIGfMQswCQYD
+VQQGEwJBVDEPMA0GA1UECAwGVmllbm5hMQ8wDQYDVQQHDAZWaWVubmExHzAdBgNV
+BAoMFkh1dGNoaXNvbiBEcmVpIEF1c3RyaWExITAfBgNVBAMMGHFvcnVzLXVrLWRl
+di5pdC5pbnRlcm5hbDEqMCgGCSqGSIb3DQEJARYbT01Rb3JlRGV2ZWxvcGVtZW50
+QGRyZWkuY29tMB4XDTE3MDkyNTE2MzEyOFoXDTIyMDkyNDE2MzEyOFowgZ8xCzAJ
+BgNVBAYTAkFUMQ8wDQYDVQQIDAZWaWVubmExDzANBgNVBAcMBlZpZW5uYTEfMB0G
+A1UECgwWSHV0Y2hpc29uIERyZWkgQXVzdHJpYTEhMB8GA1UEAwwYcW9ydXMtdWst
+ZGV2Lml0LmludGVybmFsMSowKAYJKoZIhvcNAQkBFhtPTVFvcmVEZXZlbG9wZW1l
+bnRAZHJlaS5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDvnRPu
+oZifhsUCJOuZjq5HDZCHNixgU0C0Bgo+k5vvAshEpJZPk4923BsDEhWr4lHn9Dt7
+P+UXYlOJPaaIjZC4woozrqdajyg+RZkQvJ4qgrGwA+Fn09MhadVJ/D7M8AtOeYtM
+jSQ1W81k5WupgJQmMsDzLeK9/aFc73o34GoxZHFcsg4XjJ1LA2fAU5eQxabSPZWu
+t6FDclY93NejEc9s7L8NmOJnBt0XRBBHvcqzqHqtfmF0lp73Y2e493DD6rCXkpQd
+C5PPMU4JO5S7ICG3ZZACA2x7Gwq5AD/iwEv4Pn8REeGKdcCjfCQ4mTEZnNii+xYh
+VUtQYDkSAbhRhRPbAgMBAAGjUDBOMB0GA1UdDgQWBBSYa3X5IgzvKOiNpeHFneev
+O796cTAfBgNVHSMEGDAWgBSYa3X5IgzvKOiNpeHFneevO796cTAMBgNVHRMEBTAD
+AQH/MA0GCSqGSIb3DQEBCwUAA4IBAQBnyeQdMuOBKu8IQzdEqWoirPKqNuzEBjYr
+OTjKkfg+85S3qxOaRj7Zvf9MvtjrS0qnnT/KdLD6XoxIgACk2tD0pYhMkNzBQ0cR
+ZN1rGfnZVG6VoLl/Y6PpfLUMXLlmBRuYrS4iHm/8UCHZ/KN+0lKCVheSqO+B7zr9
+0TOFZfKRmVWudkFwa/z4Aerd1NPcwzyWjNd1TX24W8KZXn7xe8SIZXgd//zxZ1f9
+sfM30L12BnaUvZ75Y5oWUAL5ABFiNK0Mm2kwyVKrIL8sw/0HYkp+asyx55UrR/ks
+bQB1tkhcc50bnR+rnSNyn2hUlmxLTilMeuAps3LJcl5U2UK2BPC8
+-----END CERTIFICATE-----
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDvnRPuoZifhsUC
+JOuZjq5HDZCHNixgU0C0Bgo+k5vvAshEpJZPk4923BsDEhWr4lHn9Dt7P+UXYlOJ
+PaaIjZC4woozrqdajyg+RZkQvJ4qgrGwA+Fn09MhadVJ/D7M8AtOeYtMjSQ1W81k
+5WupgJQmMsDzLeK9/aFc73o34GoxZHFcsg4XjJ1LA2fAU5eQxabSPZWut6FDclY9
+3NejEc9s7L8NmOJnBt0XRBBHvcqzqHqtfmF0lp73Y2e493DD6rCXkpQdC5PPMU4J
+O5S7ICG3ZZACA2x7Gwq5AD/iwEv4Pn8REeGKdcCjfCQ4mTEZnNii+xYhVUtQYDkS
+AbhRhRPbAgMBAAECggEAC5UsQXzOQ+ff3hqqyOF8yzJ8qgyUWJOtrQYduKiqAQPB
+apAKNA6OANDi/WMCaSyniO7lcS/FgzvdjeTNCAzP0h6VT6pBrL7+0wPKQmTbwHJQ
+5JFLdBlpO1RCWzE2V/HCmiiF801fUrT9WMM+URNGFhKeASNWsphwFG3/GnRercR1
+QjlFWKarJbs1neGWCvSnyRbiAeGNYdhnckmlaLa9bNoxWFveAVvfi+LlbdOtWZKH
+15H9o3XsVfTFbDRp/qSs/eyrlRLjlAcpWtGOBHE5wlzhZBYOAHpBWg5s77eHwiMz
+nc5c3uAd+UQH4+ztABDE70T0nP2ILa0+j5lnt2foAQKBgQD+kEEJDpcpowWZFm65
+Nf2Mkw4/hUTqZ7pUuNW9SD7isyXnetlAV5z4z2WCwYBbRr7zI36tEaNDyfFLPBdS
+y352kxbLD+a0/2Yo74w0/XzP+/TIusibPlGS1uGg4tq/HQAA4iQWy2OFQ83nBSnx
+DBbEwnkn6U1kYGsIzw0Blz+CuwKBgQDw9zoa3Ac+7+G9HvfyBytvwyvaoBwlxpB3
+mutUWIycRhcmPFj6NBw+KKRDxNuP+I7o/EZlE8tKs9IpVpXrTJITBP7lWtfjbKm9
+gYffQZPzDvHEnUEc/g8jfpUBaY5R5LOvO7K/VUtgHElMErjfU4WscIQz4Tszm3qq
+DU1VsUBxYQKBgEr6ZB1tzbo2yQRRJiWpMFgCTFULRMQh7zDbDCFnMRaGm6h1d53K
+8HIcbBK6ObsouD9W+g2xvzvNNCPrvBbn1wTHyBPhSBuRih6Oh+ZnryZ3WJ7y3PlU
+vqQYZHaFutZFjWW1Ndn86AAte20LCVJ1NBOaECNgRSpGd+AtU/BfAxbXAoGADQT+
+obbjuVXSt5o1wWD7ytUbyHtAKhZZdezr7CnApyzuUUWPdS1dnUoq3fKD/npqllIT
+J6DzKf0fTNZ90THY7qglcZT/9yzG2xNlmP19FfPnwjzQ6NUdUkijmmjupKQbxUsP
+dGESaoX8u9yDGqXzogaOThNMVJSBAzEmzYt/NOECgYEA2o1nOIBgstw3GfrT2zb1
+h007v24zDuNGK6fg7MCYk6jUaShx7MLotzA28ZWVkurithJFC6muqOzHQvRfVpAv
+igk+ax4S43HZ/HGUTdIszC7ZrxFQTY9xs1JreHNwsedPJV4UPLuSSmdBY7EA1fXZ
+ayVK+4nh2kGQaM1qVJF+6ws=
+-----END PRIVATE KEY-----
+""";
+
+class Bug3020Handler inherits OMQ::AbstractServiceHttpHandler {
+    # necessary to provide content-type
+    constructor() : OMQ::AbstractServiceHttpHandler("/bug-3020", "text/xml") {
+    }
+}
+
+# service must be run with Remote flag set to Fasle
+sub init() {
+    auto crt_file = new TmpFile();
+    crt_file.file.write(CRT);
+
+    auto h = new Bug3020Handler();
+    h.addListener("13020", crt_file.path); # necessary to use file path to a certificate
+    ServiceApi::bindHttp(h);
+}
+# END

@@ -1,0 +1,30 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - function
+
+  # needs to be filled in the database
+  # use only GENERIC type
+  functiontype:
+    type: string
+    allowed-values:
+      - GENERIC
+    default: GENERIC
+
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  code:
+    type: string
+
+optional:
+  desc:
+    type: string
+    max-length: 4000
+  author:
+    type: list
+    element-type: string

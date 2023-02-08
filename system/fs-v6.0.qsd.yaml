@@ -1,0 +1,44 @@
+type: service
+name: fs
+desc: provides access to the filesystem
+version: "6.0"
+servicetype: SYSTEM
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusSystemService
+class-name: QorusSystemFsService
+code: fs-v6.0.qsd
+methods:
+  - name: "rename"
+    desc: "rename/move a file"
+  - name: "rename_conn"
+    desc: "rename/move a file"
+  - name: "copy"
+    desc: "copy a file"
+  - name: "copy_conn"
+    desc: "copy a file"
+  - name: "del"
+    desc: "delete a file"
+  - name: "del_conn"
+    desc: "delete a file"
+  - name: "ls"
+    desc: "lists files in the given directory"
+  - name: "ls_conn"
+    desc: "lists files in the given directory"
+  - name: "get_file_bin"
+    desc: "returns the given file as binary data"
+  - name: "get_file_bin_conn"
+    desc: "returns the given file as binary data"
+  - name: "get_file_string"
+    desc: "returns the given file as string data"
+  - name: "get_file_string_conn"
+    desc: "returns the given file as string data"
+  - name: "write_file"
+    desc: "writes the input data to the given location"
+  - name: "write_file_conn"
+    desc: "writes the input data to the given location"
+  - name: "hstat_file"
+    desc: "runs @ref Qore::hstat() on a file target and returns the result"
+  - name: "hstat_file_conn"
+    desc: "runs @ref Qore::hstat() on a file target and returns the result"

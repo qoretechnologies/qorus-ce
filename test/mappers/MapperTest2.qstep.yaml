@@ -1,0 +1,10 @@
+type: step
+name: MapperTest2
+version: "1.0"
+desc: mapper test step
+author:
+    - Qore Technologies, s.r.o.
+code: MapperTest2.qstep
+classes:
+  - QoreTest
+base-class-name: QorusNormalStep

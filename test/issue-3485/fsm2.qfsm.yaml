@@ -1,0 +1,47 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm2
+desc: fsm 2
+groups:
+  - regression
+  - test
+states:
+    '1':
+        name: state0
+        action:
+            type: pipeline
+            value: pipeline2
+        desc: ''
+        id: state0
+        initial: true
+        execution_order: 1
+        transitions:
+            -
+                state: '2'
+        position:
+            x: 208.125
+            'y': 37.17578125
+        type: state
+    '2':
+        name: state2
+        id: state2
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        desc: ''
+        position:
+            x: 208.125
+            'y': 179.17578125
+        type: state
+        initial: false
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$pstate:{state.fsm2\.state2}': true
+                '$pstate:{fsm.fsm2}': true
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"

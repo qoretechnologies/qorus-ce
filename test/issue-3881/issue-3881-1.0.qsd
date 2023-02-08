@@ -1,0 +1,21 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3881 inherits QorusService {
+    private {
+        hash<auto> event;
+    }
+
+    init() {
+    }
+
+    event(string id, hash<auto> event) {
+        self.event = event;
+    }
+
+    *hash<auto> getEvent() {
+        return event;
+    }
+}

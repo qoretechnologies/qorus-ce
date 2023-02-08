@@ -1,0 +1,16 @@
+# name: Issue3233Step2
+# version: 1.0
+# desc: Simple worklfow step example
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3233Step2 inherits Issue3233BaseStep {
+    primary() {
+        UserApi::logInfo("Issue3233Step2 was called");
+    }
+}
+# END

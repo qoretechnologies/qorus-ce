@@ -1,0 +1,43 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - mapper-code
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  code:
+    type: string
+  methods:
+    type: list
+    element-type: mapper-method
+
+optional:
+  desc:
+    type: string
+    max-length: 4000
+  author:
+    type: list
+    element-type: string
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  class-name:
+    type: string
+    max-length: 160
+  classes:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+
+include-definitions:
+  - mapper-method_definition.yaml

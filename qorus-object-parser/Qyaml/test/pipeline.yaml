@@ -1,0 +1,57 @@
+type: pipeline
+name: pipeline1
+desc: pipeline 1
+children:
+  - type: queue
+    children:
+      - pid: '1'
+        name: Issue3485Processor1
+        type: processor
+        config-items:
+          - name: pfx
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+            value: prefix1
+          - name: crec
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+          - name: raise_error
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+      - pid: '2'
+        name: Issue3485Processor2
+        type: processor
+  - type: queue
+    children:
+      - pid: '3'
+        name: Issue3485Processor1
+        type: processor
+        config-items:
+          - name: pfx
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+            value: prefix2
+          - name: crec
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+            value: {"asd": "test"}
+          - name: raise_error
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+      - pid: '4'
+        name: Issue3485Processor2
+        type: processor
+  - name: mapper1:1.0
+    type: mapper

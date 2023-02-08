@@ -1,0 +1,344 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# requires at least this qore version to run
+%requires qore >= 1.0
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+
+%strict-args
+%require-types
+%enable-all-warnings
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# require all variables to be declared before use
+%require-our
+
+# instantiate class as application
+%exec-class ocmd
+
+# Qorus client module
+%requires QorusClientBase
+# contains the YamlRpcHandler user module
+%requires YamlRpcHandler
+
+const ocmd_opts = (
+    "url"   : "u,url=s",
+    "proxy" : "p,proxy-url=s",
+    "fgn"   : "f,foreign",
+    "xml"   : "x,xml",
+    "lxml"  : "X,unformatted-xml",
+    "verb"  : "v,verbose",
+    "lit"   : "l,literal:i+",
+    "show"  : "W,show-url",
+    "to"    : "t,timeout=i",
+    "mon"   : "m,monitor",
+    "remote": "Q,remote=s",
+    "token" : "k,token=s",
+    "help"  : "h,help",
+);
+
+class ocmd {
+    private {
+        hash oc;
+        hash optionsc;
+    }
+
+    constructor() {
+        optionsc = QorusClient::parseOptions("qorus-client");
+
+        processCommandLine();
+        if (!elements ARGV)
+            ocmd::usage();
+
+        if (oc.remote)
+            omqapi = omqclient.getRemote(oc.remote);
+
+        if (exists oc.url)
+            omqapi.setURL(oc.url);
+        if (exists oc.proxy)
+            omqapi.setProxyURL(oc.proxy);
+
+        if (oc.to) {
+            int to = oc.to * 1000;
+            omqapi.setConnectTimeout(to);
+            omqapi.setTimeout(to);
+        }
+
+        auto cmd = shift ARGV;
+        if (!oc.fgn) {
+            if (index(cmd, ".") == -1)
+                cmd = "omq.system." + cmd;
+            else switch (cmd) {
+                case /^system\./:
+                case /^user\./: {
+                    cmd = "omq." + cmd;
+                    break;
+                }
+                case /^group\./:
+                case /^job\./: {#//:{
+                    cmd = "omq.system." + cmd;
+                    break;
+                }
+            }
+        }
+
+        auto args;
+        foreach auto arg in (ARGV) {
+            # in case makeOption() returns a list
+            try {
+                args[elements args] = QorusClientAPI::parseToQoreValue(arg);
+            } catch (hash<ExceptionInfo> ex) {
+                ocmd::oprintf("%s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                exit(1);
+            }
+        }
+
+        auto info = doCmd(cmd, args);
+
+        if (oc.lit || oc.xml || oc.lxml)
+            return;
+
+        if (exists info) {
+            if (info.typeCode() != NT_STRING) {
+                # show output in YAML block encoding
+                string str = make_yaml(info, BlockStyle);
+                trim str;
+                ocmd::oprintf("%s\n", str);
+            }
+            else
+                ocmd::oprintf("%s\n", info);
+        }
+        else
+            ocmd::oprintf("OK\n");
+    } # constructor
+
+    private printRequest(string cmd, auto args) {
+        if (!oc.xml && !oc.lxml) {
+            ocmd::oprintf("calling %s(%s)\n", cmd, exists args ? sprintf("%n", args) : "");
+            return;
+        }
+
+        string msg;
+        if (omqapi.isXmlRpc())
+            msg = make_xmlrpc_call(cmd, args, oc.xml ? XGF_ADD_FORMATTING : 0);
+        else if (omqapi.isJsonRpc())
+            msg = make_jsonrpc_request(cmd, "2.0", 1, args, oc.xml ? JGF_ADD_FORMATTING : 0);
+        else
+            msg = YamlRpcClient::makeRequest(cmd, args, oc.xml ? YAML::BlockStyle : YAML::None);
+
+        ocmd::oprintf("outgoing message:\n%s\n", msg);
+    }
+
+    private printResponse(auto rs, hash info) {
+        if (!oc.xml && !oc.lxml)
+            return;
+
+        string msg;
+        if (omqapi.isXmlRpc())
+            msg = make_xmlrpc_response(rs, oc.xml ? XGF_ADD_FORMATTING : 0);
+        else if (omqapi.isJsonRpc())
+            msg = make_jsonrpc_response("2.0", info.orig_response.id, rs, oc.xml ? JGF_ADD_FORMATTING : 0);
+        else
+            msg = YamlRpcHandler::makeResponse(rs, oc.xml ? YAML::BlockStyle : YAML::None);
+
+        ocmd::oprintf("response:\n%s\n", msg);
+    }
+
+    private printErrorResponse(hash rs, hash info, string desc) {
+        if (!oc.xml && !oc.lxml && !oc.lit) {
+            ocmd::oprintf("%s\n", desc);
+            return;
+        }
+
+        string msg;
+        if (omqapi.isXmlRpc())
+            msg = make_xmlrpc_fault(int(rs.fault.faultCode), rs.fault.faultString, oc.xml ? XGF_ADD_FORMATTING : 0);
+        else if (omqapi.isJsonRpc())
+            msg = make_jsonrpc_error("2.0", rs.id, rs.error, oc.xml ? JGF_ADD_FORMATTING : 0);
+        else
+            msg = YamlRpcHandler::makeErrorResponse(rs.error.code, rs.error.message, rs.error.error, oc.xml ? YAML::BlockStyle : YAML::None);
+
+        ocmd::oprintf("response:\n%s\n", msg);
+    }
+
+    private auto doCmd(auto cmd, auto args) {
+        QueueCallBack cb;
+        auto rs;
+        hash info;
+        try {
+            if (oc.mon) {
+                Queue q();
+                cb = new QueueCallBack(q);
+                omqapi.setQueue(q);
+            }
+
+            if (oc.verb || oc.xml || oc.lxml)
+                printRequest(cmd, args);
+
+            rs = omqapi.callAPIArgsWithInfo(\info, cmd, args, oc.fgn);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR") {
+                if (cmd == "omq.system.shutdown")
+                    ocmd::oprintf("cannot connect to server; server is probably already down\n");
+                else
+                    ocmd::oprintf("ERROR: Qorus server at %n is down or unreachable\n", omqapi.getURL());
+                exit(1);
+            }
+            else if (ex.err == "API-CALL-ERROR" && (oc.xml || oc.lxml || oc.lit)) {
+                if (!oc.lit) {
+                    printErrorResponse(info.orig_response, info, ex.desc);
+                    exit(1);
+                }
+            }
+            else {
+                ocmd::oprintf("%s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                if (exists ex.arg && oc.verb)
+                    ocmd::oprintf("arg: %n\n", ex.arg);
+                if (exists info && oc.verb)
+                    ocmd::oprintf("info: %N\n", info);
+                if (oc.verb)
+                    rethrow;
+                else
+                    exit(1);
+            }
+        } #  catch
+
+        # wait for all queue output to be flushed before continuing
+        if (exists cb)
+            cb.wait();
+
+        if (oc.lit) {
+            if (oc.lit > 1) {
+                ocmd::oprintf("request-uri: %s\n", info."request-uri");
+                ocmd::oprintf("request headers: %N\n", info.headers);
+            }
+
+            # do not repeat outgoing message again
+            if (!oc.verb)
+                ocmd::oprintf("request: %s\n", info.request);
+
+            if (oc.lit > 1) {
+                ocmd::oprintf("response-uri: %s\n", info."response-uri");
+                ocmd::oprintf("response headers: %N\n", info.response_headers);
+            }
+            ocmd::oprintf("response: %s\n", info.response);
+        }
+        else if (oc.verb || oc.xml || oc.lxml)
+            printResponse(rs, info);
+
+        return rs;
+    }
+
+    static private usage() {
+        printf(
+            "usage: %s [options] <command>
+ -u,--url=arg          sets Qorus URL (ex: http://host:port)
+ -p,--proxy-url=arg    set the proxy URL (ex: http://proxy:port)
+ -W,--show-url         show default Qorus system URL and exit
+ -x,--xml              shows response (formatted, also json/yaml if used)
+ -X,--unformatted-xml  shows response (unformatted, also json/yaml if used)
+ -f,--foreign          do not process method name (don't prepend 'omq.system.')
+ -l,--literal          show literal request and response (2x = show headers)
+ -m,--monitor          monitor network events
+ -Q,--remote=ARG       use the given remote Qorus connection
+ -t,--timeout=ARG      set HTTP timeout in seconds
+ -v,--verbose          shows more information
+ -k,--token=ARG        use the given token with HTTP requests to the Qorus server
+ -h,--help             this help text
+", get_script_name());
+        thread_exit;
+    }
+
+    private processCommandLine() {
+        GetOpt g(ocmd_opts);
+        oc = g.parse(\ARGV);
+        if (exists oc."_ERRORS_") {
+            stderr.printf("%s\n", oc."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (oc.show) {
+            if (exists optionsc."proxy-url")
+                ocmd::oprintf("%s (through HTTP proxy: %s)\n", optionsc."client-url", optionsc."proxy-url");
+            else
+                ocmd::oprintf("%s\n", optionsc."client-url");
+            thread_exit;
+        }
+
+        if (oc.help)
+            ocmd::usage();
+
+        if ((int(oc.lit > 0) + int(oc.xml) + int(oc.lxml)) > 1) {
+            ocmd::oprintf("ERROR: only one of l,x,X can be given\n");
+            exit(1);
+        }
+    }
+
+    synchronized static oprintf(string fmt) {
+        vprintf(fmt, argv);
+        flush();
+    }
+}
+
+# QueueCallBack class
+#
+# this class provides callback-like functionality for socket events.
+# Qore provides only a Queue to post callback events on; using a real callback
+# function from within Qore internal socket code would be too susceptible to
+# deadlocks, therefore the event queue mechanism is supported.  The result of
+# this is that socket events must be processed in a separate thread; this class
+# provides that functionality.  The class uses the "listen()" method, running
+# in a background thread, to process the events.  The "listen()" method waits
+# for an "EVENT_DELETED" event to stop listening and exit the thread.
+class QueueCallBack {
+    private {
+        Counter counterc(1);
+    }
+
+    constructor(Queue q) {
+        background listen(q);
+    }
+
+    # static function returning a string with key=value format for a hash
+    static string getstr(hash<auto> h) {
+        # we create the string by mapping our string format function on a list
+        # of the hash keys.  this is more concise than iterating the keys with
+        # a "foreach" statement, for example
+        return foldl $1 + " " + $2, (map sprintf("%s=%y", $1.key, $1.value), h.pairIterator());
+    }
+
+    listen(Queue q) {
+        while (True) {
+            # get a message from the event queue; a hash is returned with at
+            # least the following keys: "event" with the event code, and
+            # "source" with the event source identifier
+            hash<auto> e = q.get();
+            # if the source object is deleted, then stop listening for events
+            if (e.event == EVENT_DELETED) {
+                counterc.dec();
+                return;
+            }
+
+            ocmd::oprintf("%s %s: %s\n", EVENT_SOURCE_MAP.(e.source), EVENT_MAP.(e.event), QueueCallBack::getstr(e - ("event", "source")));
+            flush();
+        } # while
+    }
+
+    wait() {
+        counterc.waitForZero();
+    }
+}

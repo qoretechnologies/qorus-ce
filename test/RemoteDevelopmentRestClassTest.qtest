@@ -1,0 +1,311 @@
+#!/usr/bin/env qore
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%requires SqlUtil
+%requires QUnit
+%requires QorusClientCore
+%requires QorusRemoteDevelopmentClient
+
+%exec-class RemoteDevelopmentRestClassTest
+
+sub qlog(auto level, string msg) {
+    printf("%n: %d: %s\n", now(), level, vsprintf(msg, argv));
+}
+
+public namespace RemoteDevelopment;
+
+class RemoteDevelopmentRestClassTest inherits QUnit::Test {
+    private {
+        string systemDir = ENV.OMQ_DIR + Qore::DirSep + "system" + Qore::DirSep;
+        string srcWorkflowDir = get_script_dir() + Qore::DirSep + "RemoteDevelopment" + Qore::DirSep + "workflow" +
+                                Qore::DirSep;
+        string srcReleaseDir = get_script_dir() + Qore::DirSep + "RemoteDevelopment" + Qore::DirSep + "release" +
+                               Qore::DirSep;
+        string srcTestDir = get_script_dir() + Qore::DirSep + "RemoteDevelopment" + Qore::DirSep + "test" +
+                            Qore::DirSep;
+
+        string srcJavaTestDir = srcTestDir + "java" + Qore::DirSep;
+
+        const USER = "admin";
+        const DEFAULT_OPTIONS = {"reload": True, "validate": True, "verbosity-level": 1};
+
+        RemoteDevelopment::Client remoteDevClient();
+    }
+
+    constructor() : Test("RemoteDevelopmentRestClassTest", OMQ::version) {
+        remoteDevClient.setLog(sub (string format) {
+            if (m_options.verbose > 2) {
+                vprintf(format + "\n", argv);
+            }
+        });
+
+        addTestCase("deploy schema test", \deploySchemaTest());
+
+        addTestCase("createDeploymentRequestSuccessfulTest", \createDeploymentRequestSuccessfulTest());
+        addTestCase("cancelDeploymentRequestFailedTest", \cancelDeploymentRequestFailedTest());
+
+        addTestCase("invalidOptionTest", \invalidOptionTest());
+
+        addTestCase("createDeleteRequestSuccessfulTest", \createDeleteRequestSuccessfulTest());
+        addTestCase("createReleaseRequestSuccessfulTest", \createReleaseRequestSuccessfulTest());
+
+        addTestCase("createTestRequestSuccessfulTest", \createTestRequestSuccessfulTest());
+        set_return_value(main());
+    }
+
+    deploySchemaTest() {
+        if (!checkDatasource()) {
+            testSkip("no omquser datasouce; skipping schema tests");
+        }
+
+        # run qsm test
+        list<hash<auto>> files = remoteDevClient.createFileListFromDirectory(
+            get_script_dir() + Qore::DirSep + "mappers" + Qore::DirSep, True, NOTHING, "\\.qsm$"
+        );
+        TestRequest request = new TestRequest(files, USER);
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        if (response.status != STATUS_FINISHED) {
+            printf("response: %N\n", response);
+        }
+        assertEq(STATUS_FINISHED, response.status);
+    }
+
+    createDeploymentRequestSuccessfulTest() {
+        if (m_options.verbose > 2) {
+            printf("START createDeploymentRequestSuccessfulTest\n");
+        }
+
+        DeployRequest request = new DeployRequest(remoteDevClient.createFileListFromDirectory(systemDir, True,
+            NOTHING, "\\.yaml$"), USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> response = remoteDevClient.post(request, 120s);
+        on_error printf("response: %N\n", response);
+        assertEq(STATUS_FINISHED, response.status);
+
+        if (m_options.verbose > 2) {
+            printf("END createDeploymentRequestSuccessfulTest\n");
+        }
+    }
+
+    cancelDeploymentRequestFailedTest() {
+        if (m_options.verbose > 2) {
+            printf("START cancelDeploymentRequestFailedTest\n");
+        }
+
+        list<auto> files = remoteDevClient.createFileListFromDirectory(systemDir, True, 1, "\\.yaml$");
+        DeployRequest request = new DeployRequest(files, USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        on_error printf("response: %N\n", response);
+        assertEq(STATUS_FINISHED, response.status);
+
+        hash<auto> info;
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", ".*410.*Gone.*",
+                     sub() { remoteDevClient.del(request, \info); });
+
+        assertEq(410, info."response-code");
+        assertRegex("Cannot cancel request", info."response-body");
+
+        if (m_options.verbose > 2) {
+            printf("END cancelDeploymentRequestFailedTest\n");
+        }
+    }
+
+    invalidOptionTest() {
+        if (m_options.verbose > 2) {
+            printf("START invalidOptionTest\n");
+        }
+        list<auto> files = remoteDevClient.createFileListFromDirectory(systemDir, True, 1, "\\.yaml$");
+        DeployRequest request = new DeployRequest(files, USER, NOTHING, {"invalid_option": True});
+
+        hash info;
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                     ".*400.*Bad Request.*",
+                     sub() { remoteDevClient.post(request, 60s, \info); });
+
+        assertEq(400, info."response-code");
+        assertRegex("Unknown option: invalid_option", info."response-body");
+
+        if (m_options.verbose > 2) {
+            printf("END invalidOptionTest\n");
+        }
+    }
+
+    private *softstring getWorkflowId(string name) {
+        AbstractTable workflowsTable = new Table(omq, "workflows").getTable();
+        hash<auto> select_hash = {
+            "columns": ("workflowid"),
+            "where": {
+                "name": name,
+                "version": "1.0",
+            }
+        };
+        return workflowsTable.selectRows(select_hash).first().workflowid;
+    }
+
+    private *softstring getStepId(string name) {
+        AbstractTable stepsTable = new Table(omq, "steps").getTable();
+        hash<auto> select_hash = {
+            "columns": ("stepid"),
+            "where": {
+                "name": name,
+                "version": "1.0",
+            }
+        };
+        return stepsTable.selectRows(select_hash).first().stepid;
+    }
+
+    createDeleteRequestSuccessfulTest() {
+        if (m_options.verbose > 2) {
+            printf("START createDeleteRequestSuccessfulTest\n");
+        }
+
+        list<auto> files = remoteDevClient.createFileListFromDirectory(srcWorkflowDir, True);
+        DeployRequest deploy_request = new DeployRequest(files, USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> deploy_response = remoteDevClient.post(deploy_request, 60s);
+        assertEq(STATUS_FINISHED, deploy_response.status);
+        assertNeq(NOTHING, getWorkflowId("BASICS-SIMPLE-WORKFLOW"));
+        assertNeq(NOTHING, getStepId("basics_simple_workflow_step"));
+
+        if (m_options.verbose > 2) {
+            printf("Deleting BASICS-SIMPLE-WORKFLOW, basics_simple_workflow_step\n");
+        }
+
+        DeleteRequest delete_request = new DeleteRequest(
+            {
+                "workflow": ({
+                    "name": "BASICS-SIMPLE-WORKFLOW",
+                    "version": "1.0",
+                },),
+                "step": ({
+                    "name": "basics_simple_workflow_step",
+                    "version": "1.0",
+                },),
+                "options": {
+                    "reload": True, "verbosity-level": 1,
+                }
+            }, USER, NOTHING
+        );
+        hash<auto> delete_response = remoteDevClient.post(delete_request, 60s);
+        assertEq(STATUS_FINISHED, delete_response.status);
+        assertNothing(getWorkflowId("BASICS-SIMPLE-WORKFLOW"));
+        assertNothing(getStepId("basics_simple_workflow_step"));
+
+        deploy_response = remoteDevClient.post(deploy_request, 60s);
+        {
+            on_error printf("deploy_response: %N\n", deploy_response);
+            assertEq(STATUS_FINISHED, deploy_response.status);
+        }
+
+        *softstring workflowid = getWorkflowId("BASICS-SIMPLE-WORKFLOW");
+        *softstring stepid= getStepId("basics_simple_workflow_step");
+        assertNeq(NOTHING, workflowid);
+        assertNeq(NOTHING, stepid);
+
+        if (m_options.verbose > 2) {
+            printf("Deleting %s workflow, %s step\n", workflowid, stepid);
+        }
+
+        delete_request = new DeleteRequest({"workflow": ({"id": workflowid},),
+                                            "step": ({"id": stepid},),
+                                            "options": {"reload": True, "verbosity-level": 1}},
+                                           USER, NOTHING);
+        delete_response = remoteDevClient.post(delete_request, 60s);
+        {
+            on_error printf("delete_response: %N\n", delete_response);
+            assertEq(STATUS_FINISHED, delete_response.status);
+        }
+        assertNothing(getWorkflowId("BASICS-SIMPLE-WORKFLOW"));
+        assertNothing(getStepId("basics_simple_workflow_step"));
+
+        if (m_options.verbose > 2) {
+            printf("END createDeleteRequestSuccessfulTest\n");
+        }
+    }
+
+    createReleaseRequestSuccessfulTest() {
+        if (m_options.verbose > 2) {
+            printf("START createReleaseRequestSuccessfulTest\n");
+        }
+
+        list<auto> files = remoteDevClient.createFileListFromDirectory(srcReleaseDir, True, 1);
+        ReleaseRequest request = new ReleaseRequest(files, USER, NOTHING, DEFAULT_OPTIONS + {"to-user": True});
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        on_error printf("files: %N\nresponse: %N\n", files, response);
+        assertEq(STATUS_FINISHED, response.status);
+        if (m_options.verbose > 2) {
+            printf("END createReleaseRequestSuccessfulTest\n");
+        }
+    }
+
+    createTestRequestSuccessfulTest() {
+        if (m_options.verbose > 2) {
+            printf("START createTestRequestSuccessfulTest\n");
+        }
+
+        # make sure test workflow is deployed
+        list<auto> deploy_files = remoteDevClient.createFileListFromDirectory(srcWorkflowDir, True);
+        DeployRequest deploy_request(deploy_files, USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> deploy_response = remoteDevClient.post(deploy_request, 60s);
+        assertEq(STATUS_FINISHED, deploy_response.status);
+
+        # test Qore qtests
+        list files = remoteDevClient.createFileListFromDirectory(srcTestDir, True, NOTHING, "\\.qtest$");
+        foreach auto file in (\files) {
+            file.args = {"t": "testX123"};
+        }
+
+        TestRequest request(files, USER);
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        if (response.status != STATUS_FINISHED) {
+            printf("response: %N\n", response);
+        }
+        assertEq(STATUS_FINISHED, response.status);
+
+        # run Python test
+        files = remoteDevClient.createFileListFromDirectory(srcTestDir, True, NOTHING, "test\\.py$");
+        request = new TestRequest(files, USER);
+        response = remoteDevClient.post(request, 60s);
+        if (response.status != STATUS_FINISHED) {
+            printf("response: %N\n", response);
+        }
+        assertEq(STATUS_FINISHED, response.status);
+
+        # test java test
+        files = remoteDevClient.createFileListFromDirectory(srcJavaTestDir, True);
+        foreach auto file in (\files) {
+            file.args = {"test": "javatestX1234"};
+        }
+
+        request = new TestRequest(files, USER);
+        on_error printf("req: %N\n", request);
+        response = remoteDevClient.post(request, 60s);
+        if (response.status != STATUS_FINISHED) {
+            printf("response: %N\n", response);
+        }
+        assertEq(STATUS_FINISHED, response.status);
+
+        if (m_options.verbose > 2) {
+            printf("END createTestRequestSuccessfulTest\n");
+        }
+    }
+
+    private bool checkDatasource() {
+        # load schema and add test if the omquser datasource exists
+        try {
+            hash<auto> h = qrest.put("connections/omquser/ping");
+            if (!h.ok) {
+                printf("omquser is invalid; skipping tests\n");
+                return False;
+            }
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REST-CLASS-ERROR" && ex.err != "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                rethrow;
+            }
+            printf("%s: %s: no omquser datasource; skipping tests\n", ex.err, ex.desc);
+        }
+        return False;
+    }
+}

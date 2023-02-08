@@ -1,0 +1,15 @@
+type: class
+name: Issue3485Action
+class-name: Issue3485Action
+version: "1.0"
+desc: Simple action class connector
+author:
+    - Qore Technologies, s.r.o.
+code: Issue3485Action.qclass
+class-connectors:
+    - name: action1
+      method: action1
+      type: input-output
+    - name: errorAction
+      method: errorAction
+      type: input

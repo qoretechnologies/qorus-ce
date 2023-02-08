@@ -1,0 +1,108 @@
+# This is a generated file, don't edit!
+type: type
+path: qoretechnologies/qorus/regression/issue-3446-hash
+typeinfo:
+  base_type: hash<auto>
+  can_manage_fields: false
+  fields:
+    key:
+      canBeNull: false
+      desc: key
+      isCustom: true
+      name: key
+      type:
+        base_type: string
+        can_manage_fields: false
+        fields: {}
+        mandatory: true
+        name: string
+        options:
+          qore.no_null: true
+        supported_options:
+          qore.no_null:
+            desc: >-
+                if True then NULL is not supported on
+                input if NOTHING is also not accepted
+            type: bool
+          string.encoding:
+            desc: >-
+                the output encoding when writing to the
+                type
+            type: string
+          string.max_size_chars:
+            desc: >-
+                the maximum length of the string in
+                characters
+            type: integer
+        typename: string
+        types_accepted:
+          - string
+        types_returned:
+          - string
+    subrec:
+        canBeNull: false
+        desc: subrec
+        isCustom: true
+        name: subrec
+        type:
+            base_type: auto
+            can_manage_fields: true
+            fields:
+                value:
+                    canBeNull: false
+                    desc: value
+                    isCustom: true
+                    name: value
+                    type:
+                        base_type: string
+                        can_manage_fields: false
+                        fields: {}
+                        mandatory: true
+                        name: string
+                        options:
+                            qore.no_null: true
+                        supported_options:
+                            qore.no_null:
+                                desc: >-
+                                    if True then NULL is not supported on
+                                    input if NOTHING is also not accepted
+                                type: bool
+                            string.encoding:
+                                desc: >-
+                                    the output encoding when writing to the
+                                    type
+                                type: string
+                            string.max_size_chars:
+                                desc: >-
+                                    the maximum length of the string in
+                                    characters
+                                type: integer
+                        typename: string
+                        types_accepted:
+                            - string
+                        types_returned:
+                            - string
+            mandatory: false
+            name: auto
+            options: null
+            supported_options: null
+            typename: any
+            types_accepted:
+                - any
+            types_returned:
+                - any
+  mandatory: true
+  name: hash<auto>
+  options:
+      qore.no_null: true
+  supported_options:
+      qore.no_null:
+          desc: >-
+              if True then NULL is not supported on input if
+              NOTHING is also not accepted
+          type: bool
+  typename: hash
+  types_accepted:
+      - hash<auto>
+  types_returned:
+      - hash<auto>

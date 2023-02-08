@@ -1,0 +1,9 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class ExampleSub2Step1 inherits QorusNormalStep {
+    primary() {
+    }
+}

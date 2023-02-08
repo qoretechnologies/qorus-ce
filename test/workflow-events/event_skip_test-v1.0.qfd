@@ -1,0 +1,52 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# name: event_skip_test
+# desc: test skip event step function
+# author: Qore Technologies, sro
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub event_skip_test() {
+    WorkflowApi::skipEvent();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test array step function
+# author: Qore Technologies, sro
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub array_event_skip_test(*string event) {
+    UserApi::logInfo("event: %y", event);
+    if (!event)
+        WorkflowApi::skipEvent();
+    else
+        WorkflowApi::bindEvent(event);
+}
+# END
+
+# type: ARRAY
+# version: 1.0
+# desc: array function test
+# author: Qore Technologies, sro
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+softlist sub array_event_skip_test_array() {
+    *hash sd = WorkflowApi::getStaticData();
+
+    UserApi::logInfo("returning %y", sd.list);
+    return sd.list;
+}
+# END

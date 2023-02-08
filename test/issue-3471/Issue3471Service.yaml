@@ -1,0 +1,27 @@
+# This is a generated file, don't edit!
+type: service
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3471Service
+desc: "issue 3390 Java test"
+groups:
+  - regression
+  - test
+lang: java
+name: Issue3471Service
+version: "1.0"
+servicetype: USER
+autostart: false
+code: Issue3471Service.java
+methods:
+  - name: init
+    desc: init
+config-items:
+  - name: issue-3471-service-cfg-item-1
+    default_value:
+        null
+    type: "*hash"
+    description: "test"
+    strictly_local: true
+    config_group: test

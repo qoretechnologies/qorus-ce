@@ -1,0 +1,16 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Processor3 inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto rec) {
+        UserApi::logInfo("Issue3485Processor3 was called: %y", rec);
+        *hash<auto> pstate = JobApi::getPersistentStateData();
+        JobApi::savePersistentStateData(pstate + rec);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

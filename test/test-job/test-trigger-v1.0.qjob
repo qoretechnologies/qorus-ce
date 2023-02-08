@@ -1,0 +1,26 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: test-trigger
+# version: 1.0
+# desc: test job trigger
+# author: Qore Technologies, sro
+# single-instance: false
+# active: false
+# run-skipped: false
+##duration: 5
+##schedule: min hour day month dow
+# schedule: */15 * * * *
+# define-group: test: test interfaces
+# define-group: extra-test: extra test objects
+# groups: test,	extra-test
+%new-style
+%strict-args
+%require-types
+
+sub run() {
+    date dt = 1m;
+    JobApi::setTrigger(dt);
+    UserApi::logInfo("trigger: %y", dt);
+    #UserApi::logInfo("info: %y", job_info());
+}
+# END

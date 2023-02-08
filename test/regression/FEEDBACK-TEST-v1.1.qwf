@@ -1,0 +1,24 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+$groups.regression.desc = "regression test group";
+
+# bug 1237: WorkflowApi::leaveParentFeedback() can fail if it is called as the first step in a segment dependent on a subworkflow step in the previous segment
+const dummy_subworkflow = (
+    "name": "feedback_subworkflow:1.0",
+    "subworkflow": True,
+    );
+
+$steps = (dummy_subworkflow, "feedback_child:1.0");
+
+$workflows."FEEDBACK-TEST"."1.1" = (
+    "desc"     : "feedback test workflow",
+    "author"   : "Qore Technologies, sro",
+    "steps"    : $steps,
+    "groups"   : ("test", "regression"),
+    );

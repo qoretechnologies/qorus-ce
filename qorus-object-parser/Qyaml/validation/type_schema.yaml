@@ -1,0 +1,10 @@
+required:
+  type:
+    type: string
+    allowed-values:
+    - type
+  path:
+    type: string
+    max-length: 4000
+  typeinfo:
+    type: hash

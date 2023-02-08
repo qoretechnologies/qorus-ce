@@ -1,0 +1,77 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue3102ClassTest
+# serviceversion: 1.0
+# servicedesc: class-based test service
+# serviceauthor: Qore Technologies, s.r.o.
+# serviceauthor: Alzhan Turlybekov
+# servicetype: USER
+# class-based: true
+# lang: qore
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: issue3102test_function2
+# resource:  resources/resource.xml
+# text-resource: resources/resource.txt
+# bin-resource: resources/resource.bin
+# parse-options: PO_REQUIRE_TYPES, PO_REQUIRE_PROTOTYPES, PO_STRICT_ARGS
+# TAG: my: tag
+# define-auth-label: auth-lbl-def=default
+# patch: 1.12
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3102ClassTest inherits QorusService {
+    # name: init
+    # desc: returns a string
+    init() {
+        logInfo("init() method called");
+    }
+
+    # name: getString
+    # desc: returns a string
+    string getString() {
+        return "string";
+    }
+
+    # name: echo
+    # desc: returns the argument
+    /** @param arg
+
+        @return the argument
+    */
+    auto echo(auto arg) {
+        return arg;
+    }
+
+    # name: echoInternal
+    # desc: returns the argument; internal only
+    # internal: true
+    auto echoInternal(auto arg) {
+        return arg;
+    }
+
+    private myPrivMethod() {
+    }
+
+    # name: getInt
+    # desc: get an int
+    int getInt() {
+        return 1;
+    }
+
+    # name: throwException
+    # desc: throws an exception
+    throwException() {
+        throw "ERROR", "test error";
+    }
+
+    int echo(int i) {
+        return i;
+    }
+}
+# END

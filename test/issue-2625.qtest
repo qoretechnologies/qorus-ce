@@ -1,0 +1,93 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue2625Test
+
+class Issue2625Test inherits QorusJobTest {
+    public {
+        const Timeout = 10s;
+        const PollInterval = 250ms;
+    }
+
+    constructor() : QorusJobTest("test", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # make sure ongoing alerts are raised for disabled workflows with autostart > 0
+        {
+            # make sure SIMPLETEST is started
+            UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setAutostart", {"autostart": 1});
+            UserApi::callRestApi("PUT", "workflows/SIMPLETEST/disable");
+            UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setRemote", {"remote": False});
+            on_exit {
+                UserApi::callRestApi("PUT", "workflows/SIMPLETEST/setAutostart", {"autostart": 0});
+                UserApi::callRestApi("PUT", "workflows/SIMPLETEST/enable");
+            }
+
+            # wait for alert to be raised in the backgrgound
+            waitForAlert("WORKFLOW-NOT-RUNNING", "SIMPLETEST");
+            assertTrue(True);
+        }
+
+        # make sure ongoing alerts are raised for disabled services with autostart = True
+        {
+            # make sure http-test is stopped
+            UserApi::callRestApi("PUT", "services/http-test/setAutostart", {"autostart": True});
+            UserApi::callRestApi("PUT", "services/http-test/disable");
+            UserApi::callRestApi("PUT", "services/http-test/setRemote", {"remote": False});
+            on_exit {
+                UserApi::callRestApi("PUT", "services/http-test/setAutostart", {"autostart": False});
+                UserApi::callRestApi("PUT", "services/http-test/enable");
+            }
+
+            # wait for alert to be raised in the backgrgound
+            waitForAlert("SERVICE-NOT-LOADED", "http-test");
+            assertTrue(True);
+        }
+
+        # make sure ongoing alerts are raised for disabled active jobs
+        {
+            # make sure test is stopped
+            UserApi::callRestApi("PUT", "jobs/test/setActive", {"active": True});
+            UserApi::callRestApi("PUT", "jobs/test/disable");
+            UserApi::callRestApi("PUT", "jobs/test/setRemote", {"remote": False});
+            on_exit {
+                UserApi::callRestApi("PUT", "jobs/test/setActive", {"active": False});
+                UserApi::callRestApi("PUT", "jobs/test/enable");
+            }
+
+            waitForAlert("STOPPED-JOB", "test");
+            assertTrue(True);
+        }
+    }
+
+    private hash<auto> waitForAlert(string alert, string name, date timeout = Timeout) {
+        date now = now_us();
+
+        while (True) {
+            *list<auto> rl = select UserApi::callRestApi("GET", "system/alerts/ongoing"),
+                ($1.alert == alert && $1.name == name);
+            if (rl) {
+                return rl[0];
+            }
+            if ((now_us() - now) > timeout) {
+                throw "WAIT-FOR-ALERT-ERROR", sprintf("timed out after %y waiting for alert %y name %y", timeout,
+                    alert, name);
+            }
+            usleep(PollInterval);
+        }
+    }
+}

@@ -1,0 +1,33 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-3166neg2-job
+# class-name: Issue3166JobNeg2
+# version: 1.0
+# desc: example job with configuration items
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3166JobNeg2 inherits QorusJob {
+    run() {
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3166-job-config-1": <ConfigItemInfo>{
+                "type": "bool",
+                "description": "This is an example configuration item of type bool",
+                "strictly_local": True,
+                "allowed_values": (True,)
+            },
+        };
+    }
+}
+# END

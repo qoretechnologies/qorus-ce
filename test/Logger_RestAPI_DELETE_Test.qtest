@@ -1,0 +1,172 @@
+#!/usr/bin/env qore
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%include Logger/AbstractLoggerRestApiTest.qc
+
+%exec-class LoggerRestApiGetTest
+
+class LoggerRestApiGetTest inherits AbstractLoggerRestApiTest {
+    constructor() : AbstractLoggerRestApiTest("LoggerRestApiGetTest") {
+        # qrest delete workflows/4/logger
+        # qrest delete workflows/4/logger/appenders id=1
+        addTestCase("deleteLoggerAndAppTest", \deleteLoggerAndAppTest());
+        # qrest delete system/audit/logger
+        # qrest delete system/audit/logger/appenders id=1
+        addTestCase("deleteSysLoggerTest", \deleteSysLoggerTest());
+
+        # qrest delete workflows?action=defaultLogger
+        # qrest delete workflows?action=defaultLoggerAppenders
+        addTestCase("deleteDefLoggerTest", \deleteDefLoggerTest());
+        # qrest delete system?action=defaultLogger
+        # qrest delete system?action=defaultLoggerAppenders
+        addTestCase("deleteDefSysLoggerTest", \deleteDefSysLoggerTest());
+
+        addTestCase("deleteLoggerNegativeTest", \deleteLoggerNegativeTest());
+        addTestCase("deleteAppendersNegativeTest", \deleteAppendersNegativeTest());
+
+        set_return_value(main());
+    }
+
+    deleteLoggerAndAppTest() {
+        hash<auto> createParams = {
+            "level": "ALL",
+            "name": "test",
+            "additivity": False
+        };
+
+        hash<auto> createAppParams = {
+            "appenderType": "LoggerAppenderStdOut",
+        };
+
+        foreach string url in (INTERFACE_URLS) {
+            on_error printf("url: %s\n", url);
+
+            int loggerId = qrest.post(url, createParams);
+            assertNeq(0, loggerId);
+
+            int appenderId = qrest.post(url + "/appenders", createAppParams);
+            assertNeq(0, appenderId);
+
+            auto response = qrest.del(url + "/appenders", {"id": appenderId});
+            assertEq("OK", response);
+
+            *list<hash<auto>> appenders = qrest.get(url + "/appenders");
+            assertEq((), appenders);
+
+            appenderId = qrest.post(url + "/appenders", createAppParams);
+            assertNeq(0, appenderId);
+
+            response = qrest.del(url);
+            assertEq("OK", response);
+
+            *hash<auto> loggerInfo = qrest.get(url);
+            assertEq(defParams{url}, loggerInfo{"params"});
+        }
+    }
+
+    deleteSysLoggerTest() {
+        hash<auto> createParams = {
+            "level": "ALL",
+            "name": "test",
+            "additivity": False
+        };
+
+        hash<auto> createAppParams = {
+            "appenderType": "LoggerAppenderStdOut",
+        };
+
+        foreach string url in (SYSTEM_URLS) {
+            # delete logger if it already exists
+            try { qrest.del(url); } catch () {}
+
+            int loggerId = qrest.post(url, createParams);
+            assertNeq(0, loggerId);
+
+            int appenderId = qrest.post(url + "/appenders", createAppParams);
+            assertNeq(0, appenderId);
+
+            auto response = qrest.del(url + "/appenders", {"id": appenderId});
+            assertEq("OK", response);
+
+            *list<hash<auto>> appenders = qrest.get(url + "/appenders");
+            assertEq((), appenders);
+
+            appenderId = qrest.post(url + "/appenders", createAppParams);
+            assertNeq(0, appenderId);
+
+            response = qrest.del(url);
+            assertEq("OK", response);
+
+            *hash<auto> loggerInfo = qrest.get(url);
+            assertEq(defParams{SYSTEM_URL}, loggerInfo{"params"});
+        }
+    }
+
+    deleteDefLoggerTest() {
+        foreach string url in (INTERFACES_URLS) {
+            *list<hash<auto>> appenders = qrest.get(url + "?action=defaultLoggerAppenders");
+            auto response = qrest.del(url + "?action=defaultLoggerAppenders", {"id": appenders.first(){"appenderid"}});
+            assertEq("OK", response);
+
+            appenders = qrest.get(url + "?action=defaultLoggerAppenders");
+            assertEq((), appenders);
+
+            response = qrest.del(url + "?action=defaultLogger");
+            assertEq("OK", response);
+
+            *hash<auto> loggerInfo = qrest.get(url + "?action=defaultLogger");
+            assertEq(NOTHING, loggerInfo);
+        }
+
+        # restore default interface loggers
+        foreach string url in (INTERFACES_URLS) {
+            defParams{url}{"level"} = "info";
+            int loggerId = qrest.post(url + "?action=defaultLogger", defParams{url});
+            assertNeq(0, loggerId);
+
+            int appenderId = qrest.post(url + "?action=defaultLoggerAppenders", defAppParams{url});
+            assertNeq(0, appenderId);
+        }
+    }
+
+    deleteDefSysLoggerTest() {
+        *list<hash<auto>> appenders = qrest.get(SYSTEM_URL + "?action=defaultLoggerAppenders");
+        auto response = qrest.del(SYSTEM_URL + "?action=defaultLoggerAppenders", {"id": appenders.first(){"appenderid"}});
+        assertEq("OK", response);
+
+        appenders = qrest.get(SYSTEM_URL + "?action=defaultLoggerAppenders");
+        assertEq((), appenders);
+
+        response = qrest.del(SYSTEM_URL + "?action=defaultLogger");
+        assertEq("OK", response);
+
+        *hash<auto> loggerInfo = qrest.get(SYSTEM_URL + "?action=defaultLogger");
+        assertEq(NOTHING, loggerInfo);
+
+        # restore default system loggers
+        int loggerId = qrest.post(SYSTEM_URL + "?action=defaultLogger", getRestoreLoggerParams(defParams{SYSTEM_URL}));
+        assertNeq(0, loggerId);
+
+        int appenderId = qrest.post(SYSTEM_URL + "?action=defaultLoggerAppenders", defAppParams{SYSTEM_URL});
+        assertNeq(0, appenderId);
+    }
+
+    deleteAppendersNegativeTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 400 received",
+                         \qrest.del(), (interfaceUrl + "/appenders", {"id": "112"}));
+        }
+    }
+
+    deleteLoggerNegativeTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR",
+                         "HTTP status code 404 received",
+                         \qrest.del(), interfaceUrl);
+        }
+    }
+}

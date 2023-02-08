@@ -1,0 +1,32 @@
+# This is a generated file, don't edit!
+type: pipeline
+name: factory-test
+desc: Factory test pipeline
+groups:
+  - regression
+  - test
+input-provider:
+    type: factory
+    name: csvread
+    path: ''
+    options:
+        path:
+            type: string
+            value: '$xconfig:{csv-input-path}'
+        header_names:
+            type: softbool
+            value: true
+        date_format:
+            type: string
+            value: DD.MM.YYYY
+        fields:
+            type: hash<auto>
+            value:
+                id: int
+                activation_date: date
+input-provider-options:
+    {}
+children:
+  - type: processor
+    name: Issue3485Processor4
+    pid: 08w9QCqkM

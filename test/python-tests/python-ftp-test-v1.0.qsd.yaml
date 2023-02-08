@@ -1,0 +1,24 @@
+# This is a generated file, don't edit!
+type: service
+name: python-ftp-test
+desc: Python FTP server test
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: PythonFtpTest
+groups:
+  - regression
+  - test
+lang: python
+version: "1.0"
+servicetype: USER
+code: python-ftp-test-v1.0.qsd.py
+methods:
+  - name: init
+    desc: init method
+  - name: info
+    desc: info method
+  - name: stop
+    desc: stop method
+  - name: port
+    desc: get port

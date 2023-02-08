@@ -1,0 +1,122 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: event-test
+# serviceversion: 1.0
+# servicedesc: event test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: EventTest
+# autostart: false
+# remote: false
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%enable-all-warnings
+
+class EventTest inherits QorusService {
+    private {
+        bool running;
+        bool stop;
+        Mutex m();
+        Condition cond();
+        int waiting;
+        list<hash<auto>> events();
+    }
+
+    # name: startListening
+    # desc: background thread for test service
+    startListening(auto cond, *int max_events) {
+        m.lock();
+        on_exit m.unlock();
+
+        stopClearIntern();
+        running = True;
+        startThread(\eventListener(), cond, max_events);
+    }
+
+    # name: stop
+    # desc: stops the service
+    stop() {
+        m.lock();
+        on_exit m.unlock();
+
+        stopClearIntern();
+    }
+
+    # name: stopAndGetEvents
+    # desc: returns the events
+    list<hash<auto>> stopAndGetEvents() {
+        m.lock();
+        on_exit m.unlock();
+
+        list<hash<auto>> rv = remove events;
+        events = ();
+
+        stopClearIntern();
+
+        return rv;
+    }
+
+    # name: isRunning
+    # desc: returns True if the event listener is running
+    bool isRunning() {
+        return running;
+    }
+
+    # name: size
+    # desc: returns the number of events in the event list
+    int size() {
+        return events.size();
+    }
+
+    # name: peekEvents
+    # desc: peek at the events
+    *list<hash<auto>> peekEvents() {
+        return events;
+    }
+
+    private eventListener(auto cond_hash, *int max_events) {
+        UserApi::logInfo("cond_hash: %y max_events: %y", cond_hash, max_events);
+        # get current last ID
+        int lastid = waitForEvents(9999999999).lastid;
+        while (True) {
+            hash<auto> event_hash = waitForEventsOr(lastid, cond_hash, 250ms);
+            if (event_hash.shutdown) {
+                logInfo("system is shutting down, breaking immediately");
+                break;
+            }
+            if (event_hash.events) {
+                events += event_hash.events;
+                UserApi::logInfo("event: %y events: %y", event_hash.events, events);
+                if (max_events && events.size() >= max_events) {
+                    splice events, max_events;
+                    break;
+                }
+            }
+            int new_lastid = event_hash.lastid + 1;
+            if (lastid != new_lastid) {
+                logDebug("events: %d lastid: %d", event_hash.events.size(), lastid);
+                lastid = new_lastid;
+            }
+
+            if (stop) {
+                break;
+            }
+        }
+
+        m.lock();
+        on_exit m.unlock();
+        cond.signal();
+        running = False;
+    }
+
+    private stopClearIntern() {
+        while (running) {
+            stop = True;
+            cond.wait(m);
+        }
+        stop = False;
+        events = ();
+    }
+}

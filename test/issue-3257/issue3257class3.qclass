@@ -1,0 +1,18 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3257class3
+# version: 1.0
+# desc: issue 3257 class 3
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class issue3257class3 inherits QorusService {
+    string test() {
+        return "issue3257class3_";
+    }
+}
+# END

@@ -1,0 +1,21 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class MyRestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("issue-3534", False, new PermissiveAuthenticator()) {
+    }
+
+    hash<HttpHandlerResponseInfo> get(hash<auto> cx, *hash<auto> ah) {
+        return UserApi::getConfigItemValue("issue-3534-test")
+            ? RestHandler::makeResponse(200, "OK")
+            : RestHandler::makeResponse(501, "ERROR");
+    }
+}
+
+class Issue3534 inherits QorusService {
+    init() {
+        bindHttp(new MyRestHandler());
+    }
+}

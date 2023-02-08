@@ -1,0 +1,24 @@
+# type: STEP
+# version: 1.0
+# desc: retry test
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub retry_test() {
+    *hash h = WorkflowApi::getDynamicData();
+    if (!h.retry) {
+        WorkflowApi::updateDynamicData({"retry": True});
+        # get retry delay; default = immediate retry
+        *softint i = WorkflowApi::getStaticData()."retry-delay";
+        date d = exists i ? seconds(i) : (UserApi::getOption("retry-delay") ?? 0s);
+        UserApi::logInfo("raising a RETRY-ERROR error with retry delay: %y", d);
+        WorkflowApi::stepError("RETRY-ERROR", {"delay": d}, d);
+        return;
+    }
+
+    UserApi::logInfo("not raising an error");
+}
+# END

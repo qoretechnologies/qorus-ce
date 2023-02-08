@@ -1,0 +1,169 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires yaml
+%requires QUnit
+%requires QorusClientCore
+%requires QorusRemoteDevelopmentClient
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        const STEP_NAME = "Issue3077Step";
+        const WORKFLOW_NAME = "ISSUE-3077-WORKFLOW";
+        const SERVICE_NAME = "issue-3077-service";
+        const JOB_NAME = "issue-3077-job";
+
+        const USER = "ignored";
+        const DEFAULT_OPTIONS = {"reload": True, "validate": True, "verbosity-level": 1, "allow-redef": True};
+
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3077" + Qore::DirSep;
+
+        RemoteDevelopment::Client remoteDevClient();
+    }
+
+    constructor(): Test("QorusIssue3077Alerts", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+        deleteInterfaces();
+
+        DeployRequest request = new DeployRequest(remoteDevClient.createFileListFromDirectory(srcDir, True),
+                                                  USER, NOTHING, DEFAULT_OPTIONS);
+        hash<auto> response = remoteDevClient.post(request, 60s);
+        on_error printf("Deployment response: %y\n", response);
+        assertEq(STATUS_FINISHED, response{"status"});
+    }
+
+    globalTearDown() {
+        deleteInterfaces();
+    }
+
+    deleteInterfaces() {
+        DeleteRequest delete_request = new DeleteRequest({
+                "service": ({
+                        "name": SERVICE_NAME,
+                        "version": "1.0"
+                    },
+                ),
+                "job": ({
+                        "name": JOB_NAME,
+                        "version": "1.0"
+                    },
+                ),
+                "class": ({
+                        "name": STEP_NAME,
+                        "version": "1.0"
+                    },
+                ),
+                "workflow": ({
+                        "name": WORKFLOW_NAME,
+                        "version": "1.0"
+                    },
+                ),
+                "step": ({
+                        "name": "Issue3077Step",
+                        "version": "1.0",
+                    },
+                ),
+                "options": DEFAULT_OPTIONS - "validate",
+            },
+            USER, NOTHING
+        );
+        hash<auto> delete_response = remoteDevClient.post(delete_request, 60s);
+        assertEq(STATUS_FINISHED, delete_response{"status"});
+    }
+
+    private checkAlerts(string interface_type, string interface_name, *string wf_name, int expected_count) {
+        string api_path = (wf_name ? "workflow" : interface_type) + "s/" + (wf_name ?? interface_name) + "/alerts";
+        printf("GET %s\n", api_path);
+        auto response = qrest.get(api_path);
+
+        # let's try 5 more times with 2s sleep in case alerts have not been deleted yet
+        int i = 5;
+        while (expected_count != response.size() && i > 0) {
+            sleep(2s);
+            response = qrest.get(api_path);
+            i--;
+        }
+        on_error printf("url: %y ec: %d response: %N\n", api_path, expected_count, response);
+        assertEq(expected_count, response.size());
+    }
+
+    private testInterfaceAlert(string interface_type, string interface_name, list config_items, *string wf_name) {
+        printf("Testing %s:%s\n", interface_type, interface_name);
+        int alert_count = config_items.size() + 1;
+        printf("Initial alert count: %d\n", alert_count);
+
+        checkAlerts(interface_type, interface_name, wf_name, alert_count);
+
+        int i = 0;
+        foreach hash<auto> config_item in (config_items) {
+            # printf("i: %d, config item: %y\n", i, config_item{"name"});
+
+            string api_path = interface_type + "s/" + interface_name + "/config/" + config_item{"name"};
+            printf("PUT %s, value: %y\n", api_path, config_item{"value"});
+            qrest.put(api_path, {"value": config_item{"value"}});
+
+            if (i == (elements config_items) - 1) {
+                alert_count -= 2;
+            } else {
+                alert_count--;
+            }
+
+            checkAlerts(interface_type, interface_name, wf_name, alert_count);
+
+            printf("delete value\n");
+            qrest.del(api_path);
+
+            if (i == (elements config_items) - 1) {
+                alert_count += 2;
+            } else {
+                alert_count++;
+            }
+            checkAlerts(interface_type, interface_name, wf_name, alert_count);
+
+            printf("PUT %s, value: %y\n", api_path, config_item{"value"});
+            qrest.put(api_path, {"value": config_item{"value"}});
+
+            if (i == (elements config_items) - 1) {
+                alert_count -= 2;
+            } else {
+                alert_count--;
+            }
+            checkAlerts(interface_type, interface_name, wf_name, alert_count);
+
+            i++;
+        }
+        printf("OK\n");
+    }
+
+    private mainTest() {
+        printf("=START=============mainTest===============\n");
+
+        testInterfaceAlert("job", JOB_NAME, ({"name": "issue-3077-job-config-4", "value": NOTHING},
+            {"name": "issue-3077-job-config-7", "value": ("test", "test2")}));
+
+        testInterfaceAlert("service", SERVICE_NAME, ({"name": "issue-3077-service-config-4", "value": NOTHING},
+            {"name": "issue-3077-service-config-5", "value": 2.4}));
+
+        testInterfaceAlert("step", STEP_NAME,
+            ({"name": "issue-3077-step-config-4", "value": NOTHING},
+             {"name": "issue-3077-step-config-7", "value": 324}), WORKFLOW_NAME);
+
+        printf("=END===============mainTest===============\n");
+    }
+
+
+} # class Main
+

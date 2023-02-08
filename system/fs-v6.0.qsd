@@ -1,0 +1,725 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus System Service Definitions
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+/** @see @ref ::QorusSystemFsService for method information
+
+    The @ref datastreamprotocol "streams" in the following table are provided.
+
+    @note See @ref stream-api for easy to use functionality.
+
+    <b>Supported Data Streams</b>
+    |!Stream|!Dir|!HTTP Method|!Args|!Description
+    |\c get-file|out|\c GET|\c path=<i>string</i> \n\c rename=<i>string</i> \n\c del=<i>boolean</i> \n\c timeout=<i>ms</i> \n\c [block=<i>integer</i>]|Reads a file and streams the raw data as binary data to the sender, where it can be converted to a string and encoded with a particular encoding if necessary.
+    |\c get-xml-data|out|\c GET|\c path=<i>string</i> \n\c rename=<i>string</i> \n\c del=<i>boolean</i> \n\c element=<i>string</i> \n\c timeout=<i>ms</i> \n\c [encoding=<i>string</i>] \n\c [block=<i>integer</i>]|Reads an XML file and streams records to the sender.
+    |\c get-csv-data|out|\c GET|\c path=<i>string</i> \n\c rename=<i>string</i> \n\c del=<i>boolean</i> \n\c timeout=<i>ms</i> \n\c [block=<i>integer</i>] \n\c csvutil=<i>hash</i> see @ref CsvUtil::CsvFileIterator::constructor() for details the structure of this hash]|Reads a CSV or other structured data file parsable with @ref CsvUtil::CsvFileIterator and streams records to the sender.
+    |\c get-fixed-data|out|\c GET|\c path=<i>string</i> \n\c rename=<i>string</i> \n\c del=<i>boolean</i> \n\c timeout=<i>ms</i> \n\c [block=<i>integer</i>] \n\c fixedlengthutil=<i>hash</i> with \c "spec" and \c "opts" keys; see @ref FixedLengthUtil::FixedLengthFileIterator::constructor() for details on the meanings of the values of these hash keys]|Reads a fixed-length file parsable with @ref FixedLengthUtil::FixedLengthFileIterator and streams records to the sender.
+    |\c put-file|in|\c POST|\c path=<i>string</i> \n\c timeout=<i>ms</i> \n\c [target_path=<i>string</i>] \n\c [mode=<i>int</i>] \n\c [encoding=<i>string</i>]|Accepts streamed string or binary data and writes the data to the given file
+
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+%requires CsvUtil
+%requires FixedLengthUtil
+
+const DefaultDataBlockSize = 32768;
+const MinDataBlockSize = 256;
+
+const DefaultRecordBlockSize = 20;
+const MinRecordBlockSize = 1;
+
+const DefaultTimeout = 30s;
+const MinTimeout = 250ms;
+
+class AbstractFsStreamBase {
+    private {
+        string path;
+        int size = 0;
+    }
+
+    constructor(hash<auto> cx, reference<hash<auto>> ah) {
+        if (!ah.path || ah.path.typeCode() != NT_STRING)
+            throw "FS-ERROR", sprintf("missing \"path\" argument giving the filesystem path");
+
+        if (ah.userconn) {
+            path = fs_get_conn_path(ah.userconn, remove ah.path);
+            delete ah.userconn;
+        } else
+            path = remove ah.path;
+    }
+}
+
+class FsRawStreamBase inherits AbstractServiceStream, AbstractFsStreamBase {
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : AbstractServiceStream(cx, ah), AbstractFsStreamBase(cx, \ah) {
+    }
+}
+
+class FsRawReadStreamBase inherits FsRawStreamBase {
+    private {
+        timeout timeout = DefaultTimeout;
+    }
+
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : FsRawStreamBase(cx, \ah) {
+        if (ah.hasKey("timeout")) {
+            timeout = (remove ah.timeout).toInt();
+            if (timeout <= MinTimeout)
+                throw "GET-FILE-STREAM-ERROR", sprintf("timeout value cannot be <= %y; value passed: %y", MinTimeout, timeout);
+            setTimeout(timeout);
+        }
+    }
+
+    hash getResponseHeaderMessageImpl() {
+        return ("code": 200, "hdr": ("Content-Type": MimeTypeOctetStream, "Transfer-Encoding": "chunked"));
+    }
+
+    private nothing recvImpl(hash<auto> v) {
+    }
+}
+
+class FsRawReadStream inherits FsRawReadStreamBase {
+    private {
+        int block = DefaultDataBlockSize;
+        ReadOnlyFile f;
+        bool send_done = False;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : FsRawReadStreamBase(cx, \ah) {
+        if (ah.hasKey("block")) {
+            block = (remove ah.block).toInt();
+            if (block <= MinDataBlockSize)
+                throw "GET-FILE-STREAM-ERROR", sprintf("data block value cannot be <= %d; value passed: %y", MinDataBlockSize, block);
+        }
+
+        f = new ReadOnlyFile(path);
+
+        UserApi::logInfo("%y: get-file-raw: timeout: %y args: %y", path, timeout, ah);
+    }
+
+    destructor() {
+        if (f)
+            UserApi::logInfo("%y: get-file-raw: returned %d byte%s", path, size, size == 1 ? "" : "s");
+    }
+
+    private any sendImpl() {
+        if (send_done)
+            return;
+
+        *data d = f.readBinary(block, timeout);
+        size += d.size();
+        if (!d)
+            send_done = True;
+        return d;
+    }
+}
+
+class FsRawWriteStream inherits FsRawStreamBase {
+    private {
+        *string target_path;
+        int mode = 0664;
+        File f();
+        bool recv_done = False;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : FsRawStreamBase(cx, \ah) {
+        if (ah.target_path && ah.target_path.typeCode() == NT_STRING)
+            target_path = ah.target_path;
+
+        if (ah.hasKey("mode"))
+            mode = ah.mode.toInt();
+
+        f = new File();
+        f.open2(path, O_CREAT|O_TRUNC|O_WRONLY, mode, ah.encoding);
+
+        UserApi::logInfo("%y: write-file-raw: args: %y", path, ah);
+    }
+
+    destructor() {
+        if (!f) {
+            UserApi::logInfo("%y: no file created due to error in constructor", path);
+            return;
+        }
+
+        if (ex) {
+            UserApi::logInfo("%y: deleting file due to error: %s: %s", path, ex.err, ex.desc);
+            del();
+            return;
+        }
+
+        if (!recv_done) {
+            UserApi::logInfo("%y: deleting file due to premature termination of stream; %d byte%s received without terminating chunk", path, size, size == 1 ? "" : "s");
+            del();
+            return;
+        }
+    }
+
+    hash getResponseHeaderMessageImpl() {
+        UserApi::logInfo("%y: closing file: size: %d byte%s", path, size, size == 1 ? "" : "s");
+        f.close();
+
+        hash rh = (
+            "path": path,
+            "size": size,
+            );
+
+        # move file to target_path if necessary
+        if (target_path) {
+            rename(path, target_path);
+            rh.target_path = target_path;
+        }
+
+        return ("code": 200, "body": rh);
+    }
+
+    del() {
+        delete f;
+        if (unlink(path))
+            UserApi::logInfo("%y: WARNING: deletion failed: %s", path, strerror());
+    }
+
+    private nothing recvImpl(hash h) {
+        UserApi::logDebug("FsRawWriteStream::recvImpl: h: %y", h);
+        if (h.hasKey("hdr")) {
+            recv_done = True;
+            return;
+        }
+
+        if (!exists h.data) {
+            recv_done = True;
+            return;
+        }
+
+        try {
+            f.write(h.data);
+            size += h.data.size();
+        } catch (hash<ExceptionInfo> n_ex) {
+            ex = n_ex;
+            rethrow;
+        }
+    }
+
+    private any sendImpl() {
+    }
+}
+
+class FsStreamBase inherits AbstractServiceDataStreamResponseHandler, AbstractFsStreamBase {
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : AbstractServiceDataStreamResponseHandler(cx, ah), AbstractFsStreamBase(cx, \ah) {
+    }
+}
+
+class FsReadStreamBase inherits FsStreamBase {
+    private {
+        timeout timeout = DefaultTimeout;
+    }
+
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : FsStreamBase(cx, \ah) {
+        if (ah.hasKey("timeout")) {
+            timeout = (remove ah.timeout).toInt();
+            if (timeout <= MinTimeout)
+                throw "GET-FILE-STREAM-ERROR", sprintf("timeout value cannot be <= %y; value passed: %y", MinTimeout, timeout);
+            setTimeout(timeout);
+        }
+    }
+
+    private nothing recvDataImpl(any data) {
+    }
+}
+
+class FsReadIteratorStringBase inherits FsReadStreamBase {
+    private {
+        int block = DefaultRecordBlockSize;
+        AbstractIterator i;
+    }
+
+    constructor(hash<auto> cx, reference<hash<auto>> ah) : FsReadStreamBase(cx, \ah) {
+        if (ah.hasKey("block")) {
+            block = (remove ah.block).toInt();
+            if (block <= MinRecordBlockSize)
+                throw "GET-FILE-STREAM-ERROR", sprintf("record block value cannot be <= %d; value passed: %y", MinRecordBlockSize, block);
+        }
+    }
+
+    private any sendDataImpl() {
+        if (send_done || !i.next())
+            return;
+        if (block == 1) {
+            ++size;
+            return i.getValue();
+        }
+
+        softlist l = i.getValue();
+        ++size;
+        int c = block;
+        while (--c) {
+            if (!i.next()) {
+                send_done = True;
+                break;
+            }
+            l += i.getValue();
+            ++size;
+        }
+        return l;
+    }
+}
+
+class FsReadStream inherits FsReadStreamBase {
+    private {
+        int block = DefaultDataBlockSize;
+        ReadOnlyFile f;
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : FsReadStreamBase(cx, \ah) {
+        if (ah.hasKey("block")) {
+            block = (remove ah.block).toInt();
+            if (block <= MinDataBlockSize)
+                throw "GET-FILE-STREAM-ERROR", sprintf("data block value cannot be <= %d; value passed: %y", MinDataBlockSize, block);
+        }
+
+        f = new ReadOnlyFile(path);
+
+        UserApi::logInfo("%y: get-file: timeout: %y args: %y", path, timeout, ah);
+    }
+
+    destructor() {
+        if (f)
+            UserApi::logInfo("%y: get-file: returned %d byte%s", path, size, size == 1 ? "" : "s");
+    }
+
+    private any sendDataImpl() {
+        if (send_done)
+            return;
+
+        *data d = f.readBinary(block, timeout);
+            size += d.size();
+        if (!d)
+            send_done = True;
+        return d;
+    }
+}
+
+class FsReadXmlDataStream inherits FsReadIteratorStringBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : FsReadIteratorStringBase(cx, \ah) {
+        if (!ah.element || ah.element.typeCode() != NT_STRING)
+            throw "XML-FS-ERROR", sprintf("missing \"element\" argument giving the XML element name to iterate");
+
+        i = new FileSaxIterator(path, ah.element, ah.encoding);
+
+        UserApi::logInfo("%y: get-xml-data: timeout: %y block: %d args: %y", path, timeout, block, ah);
+    }
+
+    destructor() {
+        if (i)
+            UserApi::logInfo("%y: get-xml-data: returned %d record%s", path, size, size == 1 ? "" : "s");
+    }
+}
+
+class FsReadCsvDataStream inherits FsReadIteratorStringBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : FsReadIteratorStringBase(cx, \ah) {
+        i = new CsvFileIterator(path, ah."csvutil");
+
+        UserApi::logInfo("%y: get-csv-data: timeout: %y block: %d args: %y", path, timeout, block, ah);
+    }
+
+    destructor() {
+        if (i)
+            UserApi::logInfo("%y: get-csv-data: returned %d record%s", path, size, size == 1 ? "" : "s");
+    }
+}
+
+class FsReadFixedLengthDataStream inherits FsReadIteratorStringBase {
+    constructor(hash<auto> cx, *hash<auto> ah) : FsReadIteratorStringBase(cx, \ah) {
+        i = new FixedLengthFileIterator(path, ah.fixedlength.spec, ah.fixedlength.opts);
+
+        UserApi::logInfo("%y: get-fixedlength-data: timeout: %y block: %d args: %y", path, timeout, block, ah);
+    }
+
+    destructor() {
+        if (i)
+            UserApi::logInfo("%y: get-fixedlength-data: returned %d record%s", path, size, size == 1 ? "" : "s");
+    }
+}
+
+class FsWriteStream inherits FsStreamBase {
+    private {
+        *string target_path;
+        int mode = 0664;
+        File f();
+    }
+
+    constructor(hash<auto> cx, *hash<auto> ah) : FsStreamBase(cx, \ah) {
+        if (ah.target_path && ah.target_path.typeCode() == NT_STRING)
+            target_path = ah.target_path;
+
+        if (ah.hasKey("mode"))
+            mode = ah.mode.toInt();
+
+        f = new File();
+        f.open2(path, O_CREAT|O_TRUNC|O_WRONLY, mode, ah.encoding);
+
+        UserApi::logInfo("%y: write-file: args: %y", path, ah);
+    }
+
+    destructor() {
+        if (!f) {
+            UserApi::logInfo("%y: no file created due to error in constructor", path);
+            return;
+        }
+
+        if (ex) {
+            UserApi::logInfo("%y: deleting file due to error: %s: %s", path, ex.err, ex.desc);
+            del();
+            return;
+        }
+
+        if (err) {
+            UserApi::logInfo("%y: deleting file due to error; HTTP status code %d returned to request", path, err);
+            del();
+            return;
+        }
+
+        if (!recv_done) {
+            UserApi::logInfo("%y: deleting file due to premature termination of stream; %d byte%s received without terminating chunk", path, size, size == 1 ? "" : "s");
+            del();
+            return;
+        }
+    }
+
+    hash getResponseHeaderMessageImpl() {
+        *hash h = getErrorResponse();
+        if (h)
+            return h;
+
+        UserApi::logInfo("%y: closing file: size: %d byte%s", path, size, size == 1 ? "" : "s");
+        f.close();
+
+        hash rh = (
+            "path": path,
+            "size": size,
+            );
+
+        # move file to target_path if necessary
+        if (target_path) {
+            rename(path, target_path);
+            rh.target_path = target_path;
+            path = target_path;
+        }
+
+        return ("code": 200, "body": rh);
+    }
+
+    del() {
+        delete f;
+        if (unlink(path))
+            UserApi::logInfo("%y: WARNING: deletion failed: %s", path, strerror());
+    }
+
+    private nothing recvDataImpl(any data) {
+        if (err || !exists data)
+            return;
+
+        try {
+            f.write(data);
+            size += data.size();
+        } catch (hash<ExceptionInfo> n_ex) {
+            ex = n_ex;
+            rethrow;
+        }
+    }
+
+    private any sendDataImpl() {
+    }
+}
+
+string sub fs_get_conn_path(string conn, *string path) {
+    object o = UserApi::getUserConnection(conn, False, False);
+    if (!(o instanceof Qore::Dir))
+        throw "FS-USER-CONNECTION-ERROR", sprintf("Connection %y is not of type filesystem (Dir)", conn);
+    return path ? o.path() + DirSep + path : o.path();
+}
+
+#! main fs service class
+class QorusSystemFsService inherits QorusSystemService {
+    # initalizes the system fs service
+    constructor() {
+        streamRegister("get-file", "GET", FsReadStream sub (hash<auto> cx, *hash<auto> ah) {return new FsReadStream(cx, ah);}, "returns a stream of binary data for the given file");
+        streamRegister("get-xml-data", "GET", FsReadXmlDataStream sub (hash<auto> cx, *hash<auto> ah) {return new FsReadXmlDataStream(cx, ah);}, "returns a stream of records for the given XML file");
+        streamRegister("get-csv-data", "GET", FsReadCsvDataStream sub (hash<auto> cx, *hash<auto> ah) {return new FsReadCsvDataStream(cx, ah);}, "returns a stream of records for the given CSV file");
+
+        streamRegister("put-file", "POST", FsWriteStream sub (hash<auto> cx, *hash<auto> ah) {return new FsWriteStream(cx, ah);}, "accepts string or binary data and writes the data to the given file");
+
+        # raw streams
+        streamRegister("get-file-raw", "GET", FsRawReadStream sub (hash<auto> cx, *hash<auto> ah) {return new FsRawReadStream(cx, ah);}, "returns a stream of raw binary data for the given file");
+        streamRegister("put-file-raw", "POST", FsRawWriteStream sub (hash<auto> cx, *hash<auto> ah) {return new FsRawWriteStream(cx, ah);}, "accepts raw string or binary data and writes the data to the given file");
+    }
+
+    #!  rename/move a file
+    /** @param source the source path
+        @param target the target path
+        @param man rename the file manually by copying the file's data and then deleting the source file, this is sometimes necessary on some OSes when renaming files across filesystem boundaries
+
+        If any errors occur, an exception is thrown
+
+        @throw RENAME-ERROR cannot stat() source file
+    */
+    nothing rename(string source, string target, softbool man = False) {
+        if (!man) {
+            Qore::rename(source, target);
+        } else {
+            *hash<StatInfo> h = hstat(source);
+            if (!h)
+                throw "RENAME-ERROR", sprintf("cannot stat() source file %y: %s", source, strerror());
+
+            {
+                File f();
+                f.open2(target, O_CREAT|O_TRUNC|O_WRONLY, h.mode);
+                f.write(ReadOnlyFile::readBinaryFile(source));
+            }
+            QorusSystemFsService::del(source);
+        }
+        logInfo("rename() %y -> %y (man: %y)", source, target, man);
+    }
+
+    #!  rename/move a file
+    /**
+        @param conn_src the source user connection name
+        @param source the source path, relative to conn_src
+        @param conn_tgt the target user connection name
+        @param target the target path, relative to conn_tgt
+        @param man rename the file manually by copying the file's data and then deleting the source file, this is sometimes necessary on some OSes when renaming files across filesystem boundaries
+
+        If any errors occur, an exception is thrown
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+        @throw RENAME-ERROR cannot stat() source file
+    */
+    nothing rename_conn(string conn_src, string source, string conn_tgt, string target, softbool man = False) {
+        rename(fs_get_conn_path(conn_src, source), fs_get_conn_path(conn_tgt, target), man);
+    }
+
+    #!  copy a file
+    /** @param source the source path
+        @param target the target path
+
+        If any errors occur, an exception is thrown
+
+        @throw COPY-ERROR cannot stat() source file
+    */
+    nothing _copy(string source, string target) {
+        *hash h = hstat(source);
+        if (!h)
+            throw "COPY-ERROR", sprintf("cannot stat() source file %y: %s", source, strerror());
+        File f();
+        f.open2(target, O_CREAT|O_TRUNC|O_WRONLY, h.mode);
+        f.write(ReadOnlyFile::readBinaryFile(source));
+
+        logInfo("copy() %y -> %y", source, target);
+    }
+
+    #!  copy a file
+    /**
+        @param conn_src the source user connection name
+        @param source the source path, relative to conn_src
+        @param conn_tgt the target user connection name
+        @param target the target path, relative to conn_tgt
+
+        If any errors occur, an exception is thrown
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw COPY-ERROR cannot stat() source file
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+    */
+    nothing copy_conn(string conn_src, string source, string conn_tgt, string target) {
+        _copy(fs_get_conn_path(conn_src, source), fs_get_conn_path(conn_tgt, target));
+    }
+
+    #!  delete a file
+    /** @param path the path of the file to delete
+
+        If any errors occur, an exception is thrown
+
+        @throw UNLINK-ERROR error removing the file
+    */
+    nothing del(string path) {
+        if (unlink(path))
+            throw "UNLINK-ERROR", sprintf("%s: %s", path, strerror());
+        logInfo("del() %y", path);
+    }
+
+    #!  delete a file
+    /**
+        @param conn an user connection name
+        @param path the path of the file to delete, relative to conn
+
+        If any errors occur, an exception is thrown
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+        @throw UNLINK-ERROR error removing the file
+    */
+    nothing del_conn(string conn, string path) {
+        del(fs_get_conn_path(conn, path));
+    }
+
+    #!  lists files in the given directory
+    /** @param path the path to list
+        @param regex an optional regex to filter the results
+        @param reopts option regular expression options; see @ref regex_constants for possible values
+        @param encoding the encoding of the filesystem string data
+
+        @return a list of @ref Qore::StatInfo "StatInfo" file status value hashes for each matched file plus a \c "name" key with the file or directory name and optionally a \c "link" key for symbolic link targets
+
+        @throw DIR-ERROR directory does not exist
+    */
+    list ls(string path, *string regex, *softint reopts, *string encoding) {
+        Dir dir(encoding);
+        dir.chdir(path);
+        if (!dir.exists())
+            throw "DIR-ERROR", sprintf("%s: cannot chdir(): %s", path, strerror());
+
+        return regex ? dir.list(regex, reopts, True) : dir.list(True);
+    }
+
+    #!  lists files in the given directory
+    /**
+        @param conn an user connection name
+        @param path the path to list, relative to conn. It can be empty, then the toplevel connection directory is listed.
+        @param regex an optional regex to filter the results
+        @param reopts option regular expression options; see @ref regex_constants for possible values
+        @param encoding the encoding of the filesystem string data
+
+        @return a  list of @ref Qore::StatInfo "StatInfo" file status value hashes for each matched file plus a \c "name" key with the file or directory name and optionally a \c "link" key for symbolic link targets
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw DIR-ERROR directory does not exist
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+    */
+    list ls_conn(string conn, *string path, *string regex, *softint reopts, *string encoding) {
+        return ls(fs_get_conn_path(conn, path), regex, reopts, encoding);
+    }
+
+    #!  returns the given file as binary data
+    /** @param path the path of the file to retrieve
+
+        @return the file data as binary data
+    */
+    binary get_file_bin(string path) {
+        binary data = ReadOnlyFile::readBinaryFile(path);
+        logInfo("get_file_bin() %y: returned %d byte%s", path, data.size(), data.size() == 1 ? "" : "s");
+        return data;
+    }
+
+    #!  returns the given file as binary data
+    /**
+        @param conn an user connection name
+        @param path the path of the file to retrieve, relative to conn
+
+        @return the file data as binary data
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+    */
+    binary get_file_bin_conn(string conn, string path) {
+        return get_file_bin(fs_get_conn_path(conn, path));
+    }
+
+    #!  returns the given file as string data
+    /** @param path the path of the file to retrieve
+        @param encoding the encoding of the source file
+
+        @return the file data as a string
+    */
+    string get_file_string(string path, *string encoding) {
+        string data = ReadOnlyFile::readTextFile(path, encoding);
+        logInfo("get_file_string() %y: returned %d byte%s", path, data.size(), data.size() == 1 ? "" : "s");
+        return data;
+    }
+
+    #!  returns the given file as string data
+    /**
+        @param conn anuser connection
+        @param path the path of the file to retrieve
+        @param encoding the encoding of the source file
+
+        @return the file data as a string
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+    */
+    string get_file_string_conn(string conn, string path, *string encoding) {
+        return get_file_string(fs_get_conn_path(conn, path), encoding);
+    }
+
+    #!  writes the input data to the given location
+    /** @param path the path of the file to write
+        @param data the file data to write
+        @param mode the file's creation mode
+        @param encoding the encoding of the target file
+    */
+    nothing write_file(string path, data data, int mode = 0664, *string encoding) {
+        File f();
+        f.open2(path, O_CREAT|O_TRUNC|O_WRONLY, mode, encoding);
+        f.write(data);
+        logInfo("write_file() %y: wrote %d byte%s", path, data.size(), data.size() == 1 ? "" : "s");
+    }
+
+    #!  writes the input data to the given location
+    /** @param conn a user connection
+        @param path the path of the file to write, relative to conn
+        @param data the file data to write
+        @param mode the file's creation mode
+        @param encoding the encoding of the target file
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+    */
+    nothing write_file_conn(string conn, string path, data data, int mode = 0664, *string encoding) {
+        write_file(fs_get_conn_path(conn, path), data, mode, encoding);
+    }
+
+    #!  runs @ref Qore::hstat() on a file target and returns the result
+    /** @param path the path of the file to @ref Qore::hstat() "stat"
+
+        @return @ref nothing or a @ref Qore::StatInfo "StatInfo" file status value hashes for the path argument
+
+        @see @ref Qore::hstat()
+    */
+    *hash hstat_file(string path) {
+        return hstat(path);
+    }
+
+    #!  runs @ref Qore::hstat() on a file target and returns the result
+    /** @param conn a user connection; must be a filesystem connection
+        @param path the path of the file to @ref Qore::hstat() "stat"
+
+        @return @ref nothing or a @ref Qore::StatInfo "StatInfo" file status value hashes for the path argument
+
+        @throw CONNECTION-ERROR the given connection is not known
+        @throw FS-USER-CONNECTION-ERROR the given connection is not a filesystem connection
+
+        @see @ref Qore::hstat()
+    */
+    *hash hstat_file_conn(string conn, string path) {
+        return hstat_file(fs_get_conn_path(conn, path));
+    }
+}

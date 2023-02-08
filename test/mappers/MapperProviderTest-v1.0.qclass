@@ -1,0 +1,43 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class MapperProviderTest inherits QoreTest {
+    deleteOutput(Mapper mapper) {
+        # delete all rows in the target table
+        AbstractDataProvider provider = mapper.getOutputProvider();
+        int records = provider.deleteRecords();
+        UserApi::logInfo("deleted %d record(s) from %y", records, provider.getName());
+    }
+
+    testMapper(Mapper mapper) {
+        {
+            on_error {
+                mapper.rollback();
+            }
+            on_success {
+                mapper.commit();
+            }
+
+            # map to target table
+            mapper.runAutonomous();
+
+            AbstractDataProvider provider = mapper.getOutputProvider();
+            hash<auto> record = provider.searchSingleRecord({"output_1": "1"});
+            assertEq("number 1", record.output_2);
+            assertEq(123, record.output_3);
+            record = provider.searchSingleRecord({"output_1": "2"});
+            assertEq("number 2", record.output_2);
+            assertEq(123, record.output_3);
+        }
+
+        # test raw SQL data provider
+        {
+            DbRemoteRawReceive recv("mapper-test-2", "omquser", "select * from table_2 where output_1 = %v", "2");
+            list<hash<auto>> rows = recv.getAllDataRows();
+            assertEq(1, rows.size());
+            assertEq("number 2", rows[0].output_2);
+        }
+    }
+}

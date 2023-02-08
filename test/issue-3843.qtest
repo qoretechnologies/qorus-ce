@@ -1,0 +1,856 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+%requires Schema
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    public {
+        const PollInterval = 250ms;
+    }
+
+    constructor(): Test("Issue 3843", "1.0") {
+        QorusClient::initFast();
+        addTestCase("public", \publicApiTest());
+        addTestCase("sla", \slaApiTest());
+        addTestCase("data provider", \dataProviderTest());
+        addTestCase("main", \mainTest());
+        addTestCase("listeners", \listenersTest());
+        qrest.setSchema();
+        set_return_value(main());
+    }
+
+    private publicApiTest() {
+        QorusSystemRestHelper qrest2();
+        qrest2.setPublicSchema();
+        hash<auto> h = qrest2.get("info");
+        assertEq(Type::String, h.edition.type());
+    }
+
+    private slaApiTest() {
+        string sla = get_random_string();
+        hash<auto> info = qrest.post("slas", {
+            "name": sla,
+            "description": "test",
+        });
+        on_exit {
+            qrest.del("slas/" + sla);
+        }
+        assertEq(sla, info.name);
+        assertEq("test", info.description);
+        assertEq("seconds", info.units);
+
+        assertTrue(qrest.post("slas/" + sla + "/success", {"value": 1.5n}));
+        assertTrue(qrest.post("slas/" + sla + "/error", {
+            "value": 1.5n,
+            "err": "test",
+            "desc": "test",
+        }));
+
+        assertFalse(qrest.post("slas/xxxxxx-invalid-xxxxxx/success", {"value": 1.5n}));
+        assertFalse(qrest.post("slas/xxxxxx-invalid-xxxxxx/error", {
+            "value": 1.5n,
+            "err": "test",
+            "desc": "test",
+        }));
+    }
+
+    private dataProviderTest() {
+        {
+            hash<auto> type_info = qrest.put("dataprovider/type", {
+                "type": {
+                    "type": "factory",
+                    "name": "qorus-api",
+                    "path": "util/log-message",
+                    "subtype": "request",
+                },
+            });
+            assertEq(3, type_info.fields.size());
+        }
+
+        {
+            string schema = File::readTextFile(get_script_dir() + "/issue-3834/billing-demo-1.0.yaml");
+            list<hash<auto>> l =
+                qrest.put("dataprovider/factories/swagger/provider/apiEndpoints?context=ui&context=api", {
+                    "provider_options": {
+                        "schema": schema,
+                    }
+                });
+            assertEq(5, l.size());
+            assertEq("/accounts/*/GET", l[0].endpoint);
+        }
+
+        string str = get_random_string();
+        assertEq(str, qrest.post("dataprovider/callApi", {
+            "type": "factory",
+            "name": "qorus-api",
+            "path": "/util/get-data",
+            "args": str,
+        }));
+
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "400.*Bad Request", \qrest.post(),
+            ("dataprovider/callApi", {
+                "type": "factory",
+                "name": "csvwrite",
+                "options": {
+                    "path": "/tmp/x.csv",
+                },
+                "args": str,
+            })
+        );
+
+        if (!checkDatasource()) {
+            testSkip("no omquser datasouce; skipping dependent tests");
+        }
+
+        hash<auto> h = qrest.get("connections/omquser/provider");
+        assertEq(Type::String, h.name.type());
+
+        assertEq(Type::String, qrest.put("connections/omquser/enable").info.type());
+        h = qrest.get("connections/omquser");
+        assertEq(Type::String, qrest.put("connections/omquser", {"desc": h.description}).info.type());
+
+        TestSchema schema(omqclient.getDatasource("omquser"));
+        schema.align(False, m_options.verbose - 3);
+        on_exit schema.drop(False, m_options.verbose - 3);
+
+        h = qrest.get("connections/omquser/provider/childDetails");
+        #on_error printf("h: %N\n", h);
+        assertEq(Type::String, h.children[0].name.type());
+        assertTrue(h.children[0].supports_read);
+
+        assertEq({
+            "col_1": 1,
+            "col_2": "number 1",
+        }, qrest.post("dataprovider/searchSingleRecord", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "arg": "$local:id",
+                    "op": "=",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq({
+            "col_1": 1,
+            "col_2": "number 1",
+        }, qrest.post("dataprovider/searchSingleRecordFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "type": "string",
+                    "value": "$local:id",
+                    "op": "=",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq(({
+            "col_1": 1,
+            "col_2": "number 1",
+        },), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "arg": "$qore-expr:{$local:id + 1}",
+                    "op": "<",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq(({
+            "col_1": 1,
+            "col_2": "number 1",
+        },), qrest.post("dataprovider/searchRecordsFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "type": "string",
+                    "value": "$qore-expr:{$local:id + 1}",
+                    "op": "<",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 1",
+            }, {
+                "col_1": 2,
+                "col_2": "number 2",
+            },
+        ), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "not",
+                    "arg": {
+                        "op": "<",
+                        "arg": 1,
+                    },
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 1",
+            }, {
+                "col_1": 2,
+                "col_2": "number 2",
+            },
+        ), qrest.post("dataprovider/searchRecordsFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "type": "int",
+                    "value": 1,
+                    "op": ("not", "<"),
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertThrows("SEARCH-OPTION-ERROR", \qrest.post(), ("dataprovider/searchSingleRecord", {
+            "type": "datasource",
+            "name": "omquser",
+            "where": {
+                "col_1": {
+                    "arg": "$local:id",
+                    "op": "=",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertThrows("INVALID-FIELD", \qrest.post(), ("dataprovider/searchSingleRecord", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1x": {
+                    "arg": "$local:id",
+                    "op": "=",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq({
+            "affected_records": 1,
+        }, qrest.post("dataprovider/updateRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "set": {
+                "col_2": "$local:str",
+            },
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+            "context": {"str": "number 9"},
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 9",
+            },
+        ), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        assertEq({
+            "affected_records": 1,
+        }, qrest.post("dataprovider/updateRecordsFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "set": {
+                "col_2": {
+                    "type": "string",
+                    "value": "$local:str",
+                },
+            },
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "type": "int",
+                    "value": 1,
+                },
+            },
+            "context": {"str": "number 8"},
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 8",
+            },
+        ), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        assertEq({
+            "affected_records": 1,
+        }, qrest.post("dataprovider/deleteRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": "$local:id",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq((), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 7",
+            },
+        ), qrest.post("dataprovider/createRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "records": ({
+                    "col_1": 1,
+                    "col_2": "number 7",
+                },
+            )
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 7",
+            },
+        ), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        assertEq({
+            "affected_records": 1,
+        }, qrest.post("dataprovider/deleteRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": "$local:id",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 6",
+            },
+        ), qrest.post("dataprovider/createRecordsFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "records": ({
+                    "col_1": {
+                        "type": "int",
+                        "value": 1,
+                    },
+                    "col_2": {
+                        "type": "string",
+                        "value": "number 6",
+                    },
+                },
+            )
+        }));
+
+        assertEq(({
+                "col_1": 1,
+                "col_2": "number 6",
+            },
+        ), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        assertEq({
+            "affected_records": 1,
+        }, qrest.post("dataprovider/deleteRecordsFromUi", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "type": "string",
+                    "value": "$local:id",
+                },
+            },
+            "context": {"id": 1},
+        }));
+
+        assertEq((), qrest.post("dataprovider/searchRecords", {
+            "type": "datasource",
+            "name": "omquser",
+            "path": "test_table_1",
+            "where": {
+                "col_1": {
+                    "op": "=",
+                    "arg": 1,
+                },
+            },
+        }));
+
+        h = qrest.get("dataprovider/browse?context=api");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.get("dataprovider/browse?context=record");
+        assertEq("nav", h.type);
+        assertEq(4, h.children.size());
+
+        h = qrest.get("dataprovider/browse?context=event");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.get("dataprovider/browse?context=message");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.get("dataprovider/browse?context=type");
+        assertEq("nav", h.type);
+        assertEq(5, h.children.size());
+
+        h = qrest.put("dataprovider/browse?context=api");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.put("dataprovider/browse?context=record");
+        assertEq("nav", h.type);
+        assertEq(4, h.children.size());
+
+        h = qrest.put("dataprovider/browse?context=event");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.put("dataprovider/browse?context=message");
+        assertEq("nav", h.type);
+        assertEq(3, h.children.size());
+
+        h = qrest.put("dataprovider/browse?context=type");
+        assertEq("nav", h.type);
+        assertEq(5, h.children.size());
+
+        h = qrest.get("dataprovider/browse/factory/qorus-api?context=type");
+        assertEq("data-provider", h.type);
+        assertEq(5, h.children.size());
+
+        h = qrest.get("dataprovider/browse/factory/qorus-api?context=api");
+        assertEq("data-provider", h.type);
+        assertEq(5, h.children.size());
+
+        h = qrest.put("dataprovider/browse/factory/qorus-api?context=type");
+        assertEq("data-provider", h.type);
+        assertEq(5, h.children.size());
+
+        h = qrest.put("dataprovider/browse/factory/qorus-api?context=api");
+        assertEq("data-provider", h.type);
+        assertEq(5, h.children.size());
+    }
+
+    mainTest() {
+        assertTrue(qrest.getValidator() instanceof SwaggerSchema);
+        hash<auto> h = qrest.get("system");
+        assertFalse(h.shutting_down);
+
+        # issue #3943: check that a 400 Bad Request response is returned from a request with a bad msg body
+        {
+            HTTPClient client({"url": qrest.getURL()});
+            hash<auto> hdr = {
+                "Content-Type": MimeTypeJson,
+                "Accept": MimeTypeJson,
+            };
+            hash<auto> info;
+            on_error printf("info: %N\n", info);
+            assertThrows("HTTP-CLIENT-RECEIVE-ERROR", \client.send(),
+                ("[x x]", "POST", "api/public/login", hdr, False, \info));
+            assertEq(400, info."response-headers".status_code);
+            if (h.options."cors-enable".value) {
+                assertEq("*", info."response-headers"."access-control-allow-origin");
+            }
+        }
+
+        {
+            QorusSystemRestHelper qrest2();
+            string region = "Antarctica/Casey";
+            if (TimeZone::get().region() == region) {
+                region = "Antarctica/Davis";
+            }
+            TimeZone client(region);
+            AbstractRestSchemaValidator validator = qrest2.getValidator();
+            validator.setTimeZoneLocale(client);
+            on_exit validator.setTimeZoneLocale();
+            qrest2.addDefaultHeaders({
+                "Qorus-Client-Time-Zone": region,
+            });
+
+            date starttime = qrest2.get("system").starttime;
+            assertEq(region, starttime.info().zone.region());
+            assertEq(h.starttime, starttime);
+            assertNeq(region, h.starttime.info().zone.region());
+
+            date now = now_us();
+            date d = qrest2.put("system/echo", {"date": now})."date";
+            assertEq(now, d);
+            assertEq(region, d.info().zone.region());
+        }
+
+        auto val = qrest.post("dataprovider/callApi", {
+            "type": "factory",
+            "name": "qorus-api",
+            "path": "/util/get-data",
+            "args": {
+                "a": {
+                    "b": "c",
+                },
+            }
+        });
+        assertEq({"a": {"b": "c"}}, val);
+
+        val = qrest.post("dataprovider/callApiFromUi", {
+            "type": "factory",
+            "name": "qorus-api",
+            "path": "/util/get-data",
+            "args": {
+                "a": {
+                   "type": "hash",
+                   "value": "b: c",
+                },
+            }
+        });
+        assertEq({"a": {"b": "c"}}, val);
+
+        assertEq(Type::Int, qrest.put("workflows/DUMMY-TEST/disable").workflowid.type());
+        assertEq(0, qrest.put("workflows/DUMMY-TEST/setAutostart", {"autostart": 0}).autostart);
+        assertEq(Type::Int, qrest.put("workflows/DUMMY-TEST/enable").workflowid.type());
+
+        hash<auto> info = qrest.get("workflows/DUMMY-TEST");
+        assertEq(Type::Int, info.workflowid.type());
+        assertEq("DUMMY-TEST", info.name);
+
+        val = qrest.post("workflows/DUMMY-TEST/createOrder", {"staticdata": {}}).workflow_instanceid;
+        softint workflow_instanceid = val;
+        assertEq("BLOCKED", qrest.put("orders/" + workflow_instanceid + "/block").workflow_status);
+        assertEq("READY", qrest.put("orders/" + workflow_instanceid + "/unblock").workflow_status);
+        assertEq("CANCELED", qrest.put("orders/" + workflow_instanceid + "/cancel").workflow_status);
+
+        assertEq(Type::String, val.type());
+        assertTrue(val.intp());
+
+        string key = get_random_string();
+        val = qrest.put("orders/" + workflow_instanceid + "/updateKeys", {
+            "orderkeys": {
+                "test1": key,
+            },
+        });
+        assertEq({
+            "test1": key,
+        }, val);
+
+        val = qrest.put("orders/" + workflow_instanceid + "/staticData", {
+            "newdata": {
+                key: "value",
+            },
+        });
+        assertEq("OK", val);
+        val = qrest.put("orders/" + workflow_instanceid + "/dynamicData", {
+            "newdata": {
+                key: "value",
+            },
+        });
+        assertEq("OK", val);
+        val = qrest.put("orders/" + workflow_instanceid + "/sensitiveData", {
+            "skey": "key",
+            "svalue": key,
+            "data": {
+                key: "value",
+            },
+        });
+        assertEq("OK", val);
+
+        val = qrest.get("orders/" + workflow_instanceid);
+        assertEq(workflow_instanceid, val.workflow_instanceid);
+        assertEq(info{"workflowid", "name", "version"}, val{"workflowid", "name", "version"});
+        assertEq({
+            key: "value",
+        }, val.staticdata);
+        assertEq({
+            key: "value",
+        }, val.dynamicdata);
+        assertEq({
+            key: "value",
+        }, val.sensitive_data.key{key}."data");
+
+        val = qrest.post("workflows/DUMMY-TEST/execSynchronous", {"staticdata": {}});
+        assertEq("COMPLETE", val.status);
+
+        val = qrest.post("workflows/DUMMY-TEST/execSynchronousAsync", {"staticdata": {}});
+        assertEq(Type::Int, val.workflow_instanceid.type());
+        workflow_instanceid = val.workflow_instanceid;
+        waitForStatus("async", workflow_instanceid);
+
+        # create a workflow order with user interaction
+        val = qrest.post("workflows/USER-INTERACTION-TEST/execSynchronousAsync", {"staticdata": {}});
+        assertEq(Type::Int, val.workflow_instanceid.type());
+        workflow_instanceid = val.workflow_instanceid;
+
+        # negative test
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404", \qrest.post(), (
+            "orders/" + workflow_instanceid + "/lockUserInteractionStep", {
+                "stepname": "user-interaction-test-1x",
+            }
+        ));
+
+        # wait for order to be in ASYNC-WAITING status
+        waitForStatus("user-interaction", workflow_instanceid, OMQ::StatAsyncWaiting);
+
+        # lock the user interaction step
+        val = qrest.post("orders/" + workflow_instanceid + "/lockUserInteractionStep", {
+            "stepname": "user-interaction-test-1",
+        });
+        assertEq(Type::Int, val.stepid.type());
+        assertEq(Type::String, val.queuename.type());
+        hash<auto> sh = val;
+
+        # break the lock
+        val = qrest.post("orders/" + workflow_instanceid + "/breakUserInteractionStepLock",
+            {"stepid": sh.stepid, "ind": sh.ind, "note": "test"});
+        assertEq("OK", val);
+
+        # lock the step again
+        val = qrest.post("orders/" + workflow_instanceid + "/lockUserInteractionStep", {
+            "stepname": "user-interaction-test-1",
+        });
+        assertEq(Type::Int, val.stepid.type());
+        assertEq(Type::String, val.queuename.type());
+
+        # update locked step data
+        val = qrest.put("orders/" + workflow_instanceid + "/stepData", {
+            "stepid": sh.stepid,
+            "ind": sh.ind,
+            "newdata": {
+                "test1": "test",
+            },
+        });
+        assertEq("OK", val);
+
+        # post workflow queue data
+        qrest.post("async-queues/" + sh.queuename + "/update", {"key": sh.queuekey, "data": {}});
+        # wait for order to go to COMPLETE
+        waitForStatus("user-interaction-complete", workflow_instanceid);
+
+        assertEq(Type::Int, qrest.put("jobs/test-shortrun/disable").jobid.type());
+        assertEq(False, qrest.put("jobs/test-shortrun/setActive", {"active": False}).active);
+        assertEq(Type::Int, qrest.put("jobs/test-shortrun/enable").jobid.type());
+
+        info = qrest.get("jobs/test-shortrun");
+        assertEq(Type::Int, info.jobid.type());
+        assertEq("test-shortrun", info.name);
+
+        val = qrest.put("jobs/test-shortrun/run");
+        assertEq(OMQ::JS_Complete, val.status);
+        assertEq(Type::Int, val.job_instanceid.type());
+
+        val = qrest.put("jobs/test-shortrun/setRemote", {"remote": info.remote});
+        assertEq(info.remote, val.remote);
+        assertFalse(val.updated);
+
+        val = qrest.put("jobs/test-shortrun/setExpiry", {"date": info.expiry_date});
+        assertEq(info.expiry_date, val.expiry_date);
+
+        {
+            string schedule = sprintf("%s %s %s %s %s", info.minute, info.hour, info.day, info.month, info.wday);
+            val = qrest.put("jobs/test-shortrun/schedule", {"schedule": schedule});
+            assertEq(schedule, val.schedule);
+            assertEq(info.name, val.name);
+        }
+
+        val = qrest.put("jobs/test-shortrun/reset");
+        assertEq(Type::String, val.type());
+    }
+
+    listenersTest() {
+        hash<auto> info;
+        foreach hash<auto> l in (qrest.get("system/listeners").iterator()) {
+            if (l.ssl) {
+                info = l;
+                break;
+            }
+        }
+        assertEq(Type::Hash, info.type());
+
+        hash<auto> info1 = qrest.get("system/listeners/" + info.id);
+        assertEq(info, info1);
+
+        qrest.post("system/listeners/" + info.id + "/reloadCertificate");
+        assertTrue(True);
+    }
+
+    private waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status) {
+                break;
+            }
+
+            if (exists errors && inlist(h.workflowstatus, errors)) {
+                break;
+            }
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+    }
+
+    private bool checkDatasource() {
+        # load schema and add test if the omquser datasource exists
+        try {
+            hash<auto> h = qrest.put("connections/omquser/ping");
+            if (!h.ok) {
+                printf("omquser is invalid; skipping tests\n");
+                return False;
+            }
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REST-CLASS-ERROR" && ex.err != "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                rethrow;
+            }
+            printf("%s: %s: no omquser datasource; skipping tests\n", ex.err, ex.desc);
+        }
+        return False;
+    }
+}
+
+class TestSchema inherits AbstractSchema {
+    public {
+        const SchemaName = "TestSchema";
+        const SchemaVersion = "1.0";
+
+        const T_Test_Table_1 = {
+            "columns": {
+                "col_1": c_number(15, True, "PK column"),
+                "col_2": c_varchar(15, True, "string column"),
+            },
+            "primary_key": {"name": "pk_test_table_1", "columns": "col_1"},
+        };
+
+        const Tables = {
+            "test_table_1": T_Test_Table_1,
+        };
+
+        const SRD_Test_Table_1 = (
+            ("col_1", "col_2"),
+            (1, "number 1"),
+            (2, "number 2"),
+        );
+
+        const StrictReferenceData = {
+            "test_table_1": SRD_Test_Table_1,
+        };
+    }
+
+    constructor(AbstractDatasource ds, *string dts, *string its) : AbstractSchema(ds, dts, its) {
+    }
+
+    private string getNameImpl() {
+        return SchemaName;
+    }
+
+    private string getVersionImpl() {
+        return SchemaVersion;
+    }
+
+    private *hash<auto> getTablesImpl() {
+        return Tables;
+    }
+
+    private hash<auto> getStrictReferenceDataHashImpl() {
+        return StrictReferenceData;
+    }
+}

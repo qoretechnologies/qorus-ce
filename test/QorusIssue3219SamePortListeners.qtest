@@ -1,0 +1,142 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+%requires QorusQscriptUtil
+
+%requires Util
+%requires RestClient
+
+%exec-class Issue3219Test
+
+class Issue3219Test inherits QorusServiceTest {
+    constructor() : QorusServiceTest("Issue 3219 test", "1.0", \ARGV) {
+        addTestCase("issue-3219 test", \issue_3219());
+        set_return_value(main());
+    }
+
+    globalSetUp() {
+    }
+
+    globalTearDown() {
+    }
+
+    issue_3219() {
+        hash<auto> info;
+
+        string url = UserApi::qorusGetLocalUrl();
+        if (url =~ /:[0-9]{3,5}/) {
+            hash<auto> h = parse_url(url);
+            url = "http://" + h.host;
+        }
+
+        int port = getSetRandomPort();
+        qrest.put("services/issue-3219-a/reset");
+        qrest.put("services/issue-3219-a/load");
+        on_exit qrest.put("services/issue-3219-a/unload");
+        qrest.put("services/issue-3219-b/reset");
+        qrest.put("services/issue-3219-b/load");
+        on_exit qrest.put("services/issue-3219-b/unload");
+
+        url += ":" + port;
+
+        code okTest = sub (string svc) {
+            RestClient rest({"url": url + "/issue-3219-" + svc});
+            auto result = rest.get("/" + svc, NOTHING, \info);
+            assertEq(200, result.status_code);
+            assertEq("issue-3219-" + svc, result.body);
+        };
+
+        code notFoundTest = sub (string svc) {
+            RestClient rest({"url": url + "/issue-3219-" + svc});
+            assertThrows("REST-RESPONSE-ERROR", "404 Not Found.*no subclass", \rest.get(), ("/" + svc, NOTHING, \info));
+        };
+
+        code connectErrTest = sub (string svc) {
+            assertThrows("SOCKET-CONNECT-ERROR", sub() { RestClient rest({"url": url + "/issue-3219" + svc}); });
+        };
+
+        assertThrows("SERVICE-INIT-ERROR", "LISTENER-SHARING-ERROR", sub() {
+            qrest.put("services/issue-3219-c/reset");
+            qrest.put("services/issue-3219-c/load");
+        });
+
+        okTest("a");
+        okTest("b");
+
+        # unload A, test that B is still running
+        qrest.put("services/issue-3219-a?action=unload");
+        notFoundTest("a");
+        okTest("b");
+
+        # unload B, test both are dead
+        qrest.put("services/issue-3219-b?action=unload");
+        connectErrTest("a");
+        connectErrTest("b");
+
+        # load both and test that both are ok
+        qrest.put("services/issue-3219-a?action=load");
+        qrest.put("services/issue-3219-b?action=load");
+        okTest("a");
+        okTest("b");
+
+        # get the listener name
+        list listeners = qrest.get("system/listeners?list=true");
+        *string lname;
+        foreach string l in (listeners) {
+            if (l =~ /svc-issue-3219/) {
+                lname = l;
+                break;
+            }
+        }
+
+        if (!lname)
+            assertEq(True, False);
+
+        # stop the listener via api
+        qrest.post(sprintf("system/listeners/%s?action=stop", lname));
+        connectErrTest("a");
+        connectErrTest("b");
+
+        # unload and load the services again
+        qrest.put("services/issue-3219-a?action=unload");
+        qrest.put("services/issue-3219-b?action=unload");
+        qrest.put("services/issue-3219-a?action=load");
+        okTest("a");
+        notFoundTest("b");
+        qrest.put("services/issue-3219-b?action=load");
+        okTest("b");
+
+        qrest.put("services/issue-3219-a?action=unload");
+        qrest.put("services/issue-3219-b?action=unload");
+        qrest.put("services/issue-3219-c/reset");
+        qrest.put("services/issue-3219-c/load");
+        on_exit qrest.put("services/issue-3219-c/unload");
+
+        assertThrows("SERVICE-INIT-ERROR", "LISTENER-SHARING-ERROR", sub(){
+            qrest.put("services/issue-3219-a/load");
+        });
+        assertThrows("SERVICE-INIT-ERROR", "LISTENER-SHARING-ERROR", sub(){
+            qrest.put("services/issue-3219-b/load");
+        });
+    }
+
+    int getSetRandomPort() {
+        Socket s();
+        s.bind(0);
+        int port = s.getSocketInfo().port;
+        delete s;
+
+        # set port number for services
+        qrest.put("system/config/issue-3219-port", {"value": port});
+        return port;
+    }
+}

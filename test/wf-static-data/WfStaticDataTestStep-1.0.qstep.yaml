@@ -1,0 +1,12 @@
+# This is a generated file, don't edit!
+type: step
+name: WfStaticDataTestStep
+desc: "Workflow static data test step"
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusNormalStep
+class-name: WfStaticDataTestStep
+lang: qore
+version: "1.0"
+steptype: NORMAL
+code: WfStaticDataTestStep-1.0.qstep

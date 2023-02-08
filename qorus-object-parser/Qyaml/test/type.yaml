@@ -1,0 +1,34 @@
+type: type
+path: /qore/hash
+typeinfo:
+    base_type: hash<auto>
+    can_manage_fields: true
+    fields:
+        test:
+            canBeNull: false
+            desc: test
+            firstCustomInHierarchy: true
+            isCustom: true
+            name: test
+            type:
+                base_type: int
+                can_manage_fields: false
+                fields: {}
+                mandatory: true
+                name: int
+                options:
+                    qore.no_null: true
+                supported_options:
+                    qore.no_null:
+                        desc: >-
+                            if True then NULL is not supported on input if NOTHING
+                            is also not accepted
+                        type: bool
+                typename: int
+                types_accepted:
+                    - int
+                    - integer
+                types_returned:
+                    - int
+                    - integer
+    name: hash<auto>

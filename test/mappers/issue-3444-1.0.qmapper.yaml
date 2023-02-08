@@ -1,0 +1,384 @@
+# This is a generated file, don't edit!
+type: mapper
+name: issue-3444
+desc: "test for https://git.qoretechnologies.com/qorus/issues/issues/3444"
+author:
+  - Qore Technologies, s.r.o.
+fields:
+    id:
+        name: id
+    string:
+        name: rec.key
+options:
+    mapper-input:
+        can_manage_fields: true
+        custom-fields:
+            id:
+                canBeNull: false
+                desc: id
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: id
+                parentPath: false
+                path: id
+                type:
+                    base_type: int
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: int
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: int
+                    types_accepted:
+                        - int
+                    types_returned:
+                        - int
+            rec:
+                canBeNull: false
+                desc: rec
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: rec
+                parentPath: false
+                path: rec
+                type:
+                    base_type: hash<auto>
+                    can_manage_fields: true
+                    fields:
+                        key:
+                            canBeNull: false
+                            desc: key
+                            isCustom: true
+                            name: key
+                            type:
+                                base_type: string
+                                can_manage_fields: false
+                                fields: {}
+                                mandatory: true
+                                name: string
+                                options:
+                                    qore.no_null: true
+                                supported_options:
+                                    qore.no_null:
+                                        desc: >-
+                                            if True then NULL is not supported on
+                                            input if NOTHING is also not accepted
+                                        type: bool
+                                    string.encoding:
+                                        desc: >-
+                                            the output encoding when writing to the
+                                            type
+                                        type: string
+                                    string.max_size_chars:
+                                        desc: >-
+                                            the maximum length of the string in
+                                            characters
+                                        type: integer
+                                typename: string
+                                types_accepted:
+                                    - string
+                                types_returned:
+                                    - string
+                        subrec:
+                            canBeNull: false
+                            desc: subrec
+                            isCustom: true
+                            name: subrec
+                            type:
+                                base_type: auto
+                                can_manage_fields: true
+                                fields:
+                                    value:
+                                        canBeNull: false
+                                        desc: value
+                                        isCustom: true
+                                        name: value
+                                        type:
+                                            base_type: string
+                                            can_manage_fields: false
+                                            fields: {}
+                                            mandatory: true
+                                            name: string
+                                            options:
+                                                qore.no_null: true
+                                            supported_options:
+                                                qore.no_null:
+                                                    desc: >-
+                                                        if True then NULL is not supported on
+                                                        input if NOTHING is also not accepted
+                                                    type: bool
+                                                string.encoding:
+                                                    desc: >-
+                                                        the output encoding when writing to the
+                                                        type
+                                                    type: string
+                                                string.max_size_chars:
+                                                    desc: >-
+                                                        the maximum length of the string in
+                                                        characters
+                                                    type: integer
+                                            typename: string
+                                            types_accepted:
+                                                - string
+                                            types_returned:
+                                                - string
+                                mandatory: false
+                                name: auto
+                                options: null
+                                supported_options: null
+                                typename: any
+                                types_accepted:
+                                    - any
+                                types_returned:
+                                    - any
+                    mandatory: true
+                    name: hash<auto>
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: hash
+                    types_accepted:
+                        - hash<auto>
+                    types_returned:
+                        - hash<auto>
+            string:
+                canBeNull: false
+                desc: string
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: string
+                parentPath: false
+                path: string
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: string
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+        name: qore
+        path: /hash
+        type: type
+    mapper-output:
+        can_manage_fields: true
+        custom-fields:
+            id:
+                canBeNull: false
+                desc: id
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: id
+                parentPath: false
+                path: id
+                type:
+                    base_type: int
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: int
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: int
+                    types_accepted:
+                        - int
+                    types_returned:
+                        - int
+            rec:
+                canBeNull: false
+                desc: rec
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: rec
+                parentPath: false
+                path: rec
+                type:
+                    base_type: hash<auto>
+                    can_manage_fields: true
+                    fields:
+                        key:
+                            canBeNull: false
+                            desc: key
+                            isCustom: true
+                            name: key
+                            type:
+                                base_type: string
+                                can_manage_fields: false
+                                fields: {}
+                                mandatory: true
+                                name: string
+                                options:
+                                    qore.no_null: true
+                                supported_options:
+                                    qore.no_null:
+                                        desc: >-
+                                            if True then NULL is not supported on
+                                            input if NOTHING is also not accepted
+                                        type: bool
+                                    string.encoding:
+                                        desc: >-
+                                            the output encoding when writing to the
+                                            type
+                                        type: string
+                                    string.max_size_chars:
+                                        desc: >-
+                                            the maximum length of the string in
+                                            characters
+                                        type: integer
+                                typename: string
+                                types_accepted:
+                                    - string
+                                types_returned:
+                                    - string
+                        subrec:
+                            canBeNull: false
+                            desc: subrec
+                            isCustom: true
+                            name: subrec
+                            type:
+                                base_type: auto
+                                can_manage_fields: true
+                                fields:
+                                    value:
+                                        canBeNull: false
+                                        desc: value
+                                        isCustom: true
+                                        name: value
+                                        type:
+                                            base_type: string
+                                            can_manage_fields: false
+                                            fields: {}
+                                            mandatory: true
+                                            name: string
+                                            options:
+                                                qore.no_null: true
+                                            supported_options:
+                                                qore.no_null:
+                                                    desc: >-
+                                                        if True then NULL is not supported on
+                                                        input if NOTHING is also not accepted
+                                                    type: bool
+                                                string.encoding:
+                                                    desc: >-
+                                                        the output encoding when writing to the
+                                                        type
+                                                    type: string
+                                                string.max_size_chars:
+                                                    desc: >-
+                                                        the maximum length of the string in
+                                                        characters
+                                                    type: integer
+                                            typename: string
+                                            types_accepted:
+                                                - string
+                                            types_returned:
+                                                - string
+                                mandatory: false
+                                name: auto
+                                options: null
+                                supported_options: null
+                                typename: any
+                                types_accepted:
+                                    - any
+                                types_returned:
+                                    - any
+                    mandatory: true
+                    name: hash<auto>
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                    typename: hash
+                    types_accepted:
+                        - hash<auto>
+                    types_returned:
+                        - hash<auto>
+            string:
+                canBeNull: false
+                desc: string
+                firstCustomInHierarchy: true
+                isChild: false
+                isCustom: true
+                level: 0
+                name: string
+                parentPath: false
+                path: string
+                type:
+                    base_type: string
+                    can_manage_fields: false
+                    fields: {}
+                    mandatory: true
+                    name: string
+                    options:
+                        qore.no_null: true
+                    supported_options:
+                        qore.no_null:
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                            type: bool
+                        string.encoding:
+                            desc: the output encoding when writing to the type
+                            type: string
+                        string.max_size_chars:
+                            desc: the maximum length of the string in characters
+                            type: integer
+                    typename: string
+                    types_accepted:
+                        - string
+                    types_returned:
+                        - string
+        name: qore
+        path: /hash
+        type: type
+mappertype: Mapper
+version: "1.0"

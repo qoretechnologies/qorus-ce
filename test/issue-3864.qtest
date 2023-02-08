@@ -1,0 +1,52 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    constructor(): Test("Issue 3864", "1.0") {
+        QorusClient::initFast();
+        addTestCase("main", \mainTest());
+        set_return_value(main());
+    }
+
+    mainTest() {
+        if (ENV.KUBERNETES_SERVICE_HOST) {
+            testSkip("this test cannot be run under Kubernetes");
+        }
+        hash<auto> info = qrest.get("workflows/DUMMY-TEST");
+        if (!info.remote) {
+            qrest.put("workflows/DUMMY-TEST/setRemote", {"remote": True});
+        }
+        if (info.autostart) {
+            qrest.put("workflows/DUMMY-TEST/setAutostart", {"autostart": 0});
+        }
+        if (!info.enabled) {
+            qrest.put("workflows/DUMMY-TEST/enable");
+        }
+
+        # create a signal file so that the qwf process will crash when the workflow starts
+        string signal_file = sprintf("%s/qwf-%s-v%s-%s-check-system-props", tmp_location(),
+            info.name, info.version, info.workflowid);
+        {
+            File f();
+            f.open2(signal_file, O_CREAT | O_WRONLY | O_TRUNC);
+        }
+        # remove the file in case the test fails
+        on_exit unlink(signal_file);
+
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        assertThrows("WORKFLOW-START-ERROR", \qrest.post(), ("workflows/DUMMY-TEST/execSynchronous", oh));
+    }
+}
+

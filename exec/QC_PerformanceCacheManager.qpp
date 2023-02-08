@@ -1,0 +1,74 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+  QC_PerformanceCacheManager.cpp
+*/
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include "QC_PerformanceCacheManager.h"
+#include "QC_PerformanceCache.h"
+
+//! The PerformanceCacheManager class implements a performance cache manager object
+/**
+ */
+qclass PerformanceCacheManager [arg=PerformanceCacheManager* pcm; ns=OMQ];
+
+//! Creates a new PerformanceCacheManager object
+/**
+    @par Example:
+    @code
+my PerformanceCacheManager $pcm();
+    @endcode
+ */
+PerformanceCacheManager::constructor() {
+   ReferenceHolder<PerformanceCacheManager> pcm(new PerformanceCacheManager, xsink);
+   if (pcm->start(xsink))
+      return;
+
+   self->setPrivate(CID_PERFORMANCECACHEMANAGER, pcm.release());
+}
+
+//! throws an exception
+/**
+ */
+PerformanceCacheManager::copy() {
+   xsink->raiseException("PERFORMANCECACHEMANAGER-COPY-ERROR", "PerformanceCacheManager::copy() is not implemented");
+}
+
+//! shuts down and destroys the cache
+/**
+ */
+PerformanceCacheManager::destructor() {
+   pcm->shutdown(xsink);
+   pcm->deref();
+}
+
+//! shuts down the cache
+/**
+ */
+PerformanceCacheManager::shutdown() {
+   pcm->shutdown(xsink);
+}
+
+//! adds a cache to the manager
+/** @param name the name of the cache to be returned in events
+ */
+PerformanceCache PerformanceCacheManager::add(string name) {
+   return new QoreObject(QC_PERFORMANCECACHE, 0, pcm->add(name));
+}
+
+//! removes the given cache from the manager
+/**
+ */
+PerformanceCacheManager::del(PerformanceCache[PerformanceCache] cache) {
+   ReferenceHolder<PerformanceCache> c(cache, xsink);
+   pcm->del(cache, xsink);
+}

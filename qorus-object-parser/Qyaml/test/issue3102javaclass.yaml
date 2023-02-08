@@ -1,0 +1,8 @@
+type: class
+name: issue3102javaclass
+version: "1.0"
+desc: Java test class
+author:
+  - Qore Technologies, s.r.o.
+lang: java
+code: javaclass.java

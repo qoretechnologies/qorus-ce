@@ -1,0 +1,1532 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include QorusDistributedProcess.qc
+
+%include cpc-dsp-api.ql
+
+%exec-class QDsp
+
+#! duplicated from qorus.ql
+const QSE_STARTUP_ERROR = 99;
+
+hashdecl DspTransInfo {
+    Queue q();
+    string process;
+    # issue #3863: set to True to ensure that the transaction will not be reused
+    bool closing;
+}
+
+our QDsp Qorus;
+
+class QDsp inherits AbstractQorusDistributedProcess {
+    public {
+        # the full datasource connection string with Qorus options
+        string connstr;
+
+        # the connection string as used to create the pool; without Qorus options
+        string db_connstr;
+
+        # datasource connection description (w/o password but with Qorus options)
+        string conndesc;
+
+        # log message client object
+        QorusLogWebSocketHandlerClient eventLog;
+
+        # the datasource pool being served
+        DatasourcePool dsp;
+
+        # thread pool for handling requests
+        ThreadPool tp;
+
+        # transaction, process, and statement Mutex
+        Mutex tpsm();
+
+        # trans -> DspTransInfo
+        hash<string, hash<DspTransInfo>> trans_info_map();
+
+        # process -> trans -> True
+        hash<string, hash<string, bool>> process_trans_map();
+
+        # process -> statement ID -> SQLStatement
+        hash<string, hash<string, SQLStatement>> process_stmt_map();
+
+        # trans -> statement ID -> True
+        hash<string, hash<string, bool>> trans_stmt_map;
+
+        # statement ID -> trans
+        hash<string, string> stmt_trans_map;
+
+        # datasource warning timeout in ms
+        int dsp_warning_timeout;
+
+        # datasource error timeout in ms
+        int dsp_error_timeout;
+
+        # datasource pool notification queue
+        Queue notification_queue();
+
+        # datasource pool notification thread counter
+        Counter notification_cnt();
+
+        # coordinator mode
+        bool coord_mode;
+
+        # maximum number of connections
+        softint max;
+
+        # coordinator transaction map; key (process-trans) -> True
+        hash<string, bool> coord_info_map;
+
+        # coordinator wait list
+        list<hash<auto>> coord_waiting;
+
+        # is qorus-core interested in our logs?
+        bool log_subscribed = False;
+
+        #! in case a startup error occurred
+        string startup_error_string;
+
+        # process options
+        const Opts = AbstractQorusDistributedProcess::Opts + {
+            "oracle": "oracle",
+        };
+
+        # alert type string
+        const AlertType = "DATASOURCE";
+
+        # check every second for expired coordinated requests
+        const CoordTimeoutPollInterval = 1s;
+    }
+
+    private {
+        # logger params
+        *hash<LoggerParams> loggerParams;
+
+        #! counter for asynchronous starts
+        Counter qdsp_cnt(1);
+
+        # connection to qorus-core
+        AbstractQorusClient core;
+    }
+
+    constructor() : AbstractQorusDistributedProcess(\ARGV, Opts) {
+        # make sure the process exits if the datasource can't be initialized
+        on_error deleteAllClients();
+
+        *softint dsp_warning_timeout = shift ARGV;
+        *softint dsp_error_timeout = shift ARGV;
+        *softbool coord_mode = shift ARGV;
+        if (!exists dsp_warning_timeout || !exists dsp_error_timeout || !exists coord_mode || !exists ENV.CONNSTR) {
+            usage();
+        }
+
+        Qorus = self;
+
+        self.connstr = ENV.CONNSTR;
+        self.dsp_warning_timeout = dsp_warning_timeout;
+        self.dsp_error_timeout = dsp_error_timeout;
+        self.coord_mode = coord_mode;
+
+        # parse config string
+        hash<auto> db_config_info = getDatasourceConfigInfo(connstr);
+        db_connstr = db_config_info.db_connstr;
+        conndesc = db_config_info.conndesc;
+
+        if (exists db_config_info.coord_mode) {
+            self.coord_mode = coord_mode = db_config_info.coord_mode;
+        }
+
+        # set maximum number of connections
+        max = db_config_info.db_conn_hash.options.max ?? 10;
+
+%ifdef HAVE_SIGNAL_HANDLING
+        # install shutdown signal handlers
+        set_signal_handler(SIGTERM, \signalHandler());
+        set_signal_handler(SIGINT,  \signalHandler());
+        set_signal_handler(SIGHUP,  \signalHandler());
+        set_signal_handler(SIGUSR2, \debugSignalHandler());
+%endif
+
+        # get the URLs for the qorus-core process and register it as a server
+        try {
+            # get the URLs for the qorus-core process and register it as a server
+            registerServer(QDP_NAME_QORUS_CORE);
+            # create the qorus-core client object
+            createCoreClient();
+        } catch (hash<ExceptionInfo> ex) {
+            logError("%s", get_exception_string(ex));
+            logInfo("no qorus-core process yet; notifications and warnings pending update from qorus-master");
+        }
+
+        eventLog = new QorusLogWebSocketHandlerClient(core);
+
+%ifdef QorusDebugInternals
+        if (core) {
+            # issue #2833: if a signal file exists, then terminate the process here
+            # get instance key value
+            *list<string> msgs = core.sendCheckResponse(CPC_CORE_CALL_STATIC_METHOD,
+                {"cname": "UserApi", "mname": "getQorusOptions", "args": "instance-key"}, CPC_OK);
+            string instance_key = msgs ? qorus_cluster_deserialize(msgs[0])."instance-key" : NOTHING;
+
+            if (is_file(string filename = sprintf("%s/%s-%s-constructor", tmp_location(),
+                instance_key, client_id))) {
+                QDBG_LOG("QDsp::constructor() SIGNAL FILE %y found; unlinking", filename);
+                unlink(filename);
+                QDBG_LOG("QDsp::constructor() TERMINATING");
+                exit(1);
+            } else {
+                QDBG_LOG("QDsp::constructor() NOT FOUND: %s", filename);
+            }
+        }
+%endif
+
+        # start pool notification thread
+        notification_cnt.inc();
+        background poolNotificationThread();
+
+        # issue #3535: authorize start before creating the pool, otherwise we cannot report errors to qorus-master
+        doAuthStart();
+
+        # create the pool when not in coordinated mode
+        if (!coord_mode) {
+            try {
+                dsp = getPool(db_config_info.db_conn_hash);
+                # thread pool must be created with unlimited threads so warnings and errors can be processed normally
+                tp = new ThreadPool(-1, 1);
+                logInfo("started in qdsp mode for %y: %s", client_id, conndesc);
+            } catch (hash<ExceptionInfo> ex) {
+                startup_error_string = get_exception_string(ex);
+                logInfo("Unable to initialize qdsp server: %s", startup_error_string);
+                # issue #3245: signal that processing is ready to avoid a deadlock
+                qdsp_cnt.dec();
+                reportStartupErrorAndDie("failed to create qdsp server: %s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            }
+        } else {
+            logInfo("started in coordinated mode for %y: %s", client_id, conndesc);
+        }
+
+        # signal that processing is ready
+        qdsp_cnt.dec();
+    }
+
+    #! create the qorus-core client
+    private createCoreClient() {
+        proc_lck.lock();
+        on_exit proc_lck.unlock();
+
+        if (!core) {
+            core = new AbstractQorusClient(self, QDP_NAME_QORUS_CORE);
+            notifyClientIntern(QDP_NAME_QORUS_CORE);
+        }
+    }
+
+    DatasourcePool getPool(hash<auto> db_conn_hash) {
+        DatasourcePool dsp;
+%ifndef NO_ORACLE
+        if (db_conn_hash.type == "oracle" && opts.oracle) {
+            dsp = new OMQ::QorusOracleDatasourcePool(db_conn_hash, notification_queue,
+                {"mon": AlertType, "name": client_id},
+                \OMQ::QorusOracleDatasourcePool::getOracleInstrumentation());
+        } else {
+            dsp = new DatasourcePool(db_conn_hash, notification_queue, {"mon": AlertType, "name": client_id});
+        }
+%else
+        dsp = new DatasourcePool(db_conn_hash, notification_queue, {"mon": AlertType, "name": client_id});
+%endif
+
+        # check driver version
+        if (*string ver = OMQ::MinSystemDBDriverVersion{db_conn_hash.type}) {
+            hash<auto> driver_info_hash = get_module_hash(){db_conn_hash.type};
+            if (compare_version(ver, driver_info_hash.version) > 0) {
+                throw "DRIVER-VERSION-ERROR", sprintf("ERROR: incompatible system driver; Qorus requires %s driver "
+                    "version %s or greater; the current module %y supplies version %s; please install a compatible "
+                    "version of the %s driver and try again", db_conn_hash.type,
+                    OMQ::MinSystemDBDriverVersion{db_conn_hash.type}, driver_info_hash.filename,
+                    driver_info_hash.version, db_conn_hash.type);
+            }
+        }
+
+        if (dsp_warning_timeout) {
+            dsp.setWarningCallback(dsp_warning_timeout, \poolWarning(), client_id);
+        }
+        dsp.setErrorTimeout(dsp_error_timeout);
+
+        logInfo("created datasource pool for %y: %s (hash %s)", client_id, conndesc, dsp.uniqueHash());
+        return dsp;
+    }
+
+    hash<auto> getDatasourceConfigInfo(string connstr) {
+        # parse config string
+        hash<auto> db_conn_hash = parse_datasource(connstr);
+
+        # create connection description string
+        string db_connstr = string conndesc = db_conn_hash.type + ":";
+        db_connstr = conndesc = db_conn_hash.type + ":";
+        if (db_conn_hash.user) {
+            conndesc += db_conn_hash.user;
+            db_connstr += db_conn_hash.user;
+        }
+        if (db_conn_hash.pass) {
+            db_connstr += "/" + db_conn_hash.pass;
+        }
+
+        # issue #3931: the "@" symbol must be present in the connection string in all cases, even if there is no DB name
+        conndesc += "@" + db_conn_hash.db;
+        db_connstr += "@" + db_conn_hash.db;
+
+        if (db_conn_hash.charset) {
+            conndesc += "(" + db_conn_hash.charset + ")";
+            db_connstr += "(" + db_conn_hash.charset + ")";
+        }
+        if (db_conn_hash.host) {
+            conndesc += "%" + db_conn_hash.host;
+            db_connstr += "%" + db_conn_hash.host;
+        }
+        if (db_conn_hash.port) {
+            conndesc += ":" + db_conn_hash.port;
+        }
+        if (db_conn_hash.options) {
+            conndesc += "{" + (foldl $1 + "," + $2,
+                (map sprintf("%s=%s", $1.key, $1.value), db_conn_hash.options.pairIterator())) + "}";
+        }
+        *bool coord_mode;
+        # process and remove Qorus-only options
+        if (exists db_conn_hash.options."coord-mode") {
+            coord_mode = parse_boolean(remove db_conn_hash.options."coord-mode");
+        }
+        # process DB connstr options after Qorus options have been removed
+        if (db_conn_hash.options) {
+            db_connstr += "{" + (foldl $1 + "," + $2,
+                (map sprintf("%s=%s", $1.key, $1.value), db_conn_hash.options.pairIterator())) + "}";
+        }
+
+        return {
+            "db_connstr": db_connstr,
+            "conndesc": conndesc,
+            "db_conn_hash": db_conn_hash,
+        } + (exists coord_mode ? {"coord_mode": coord_mode} : NOTHING);
+    }
+
+    hash getRuntimePropsImpl() {
+        return {};
+    }
+
+    private stopServer() {
+        logInfo("stopping notification thread");
+        # stop pool notification thread
+        notification_queue.push();
+        notification_cnt.waitForZero();
+        AbstractQorusDistributedProcess::stopServer();
+    }
+
+    # returns information about the process
+    hash<auto> getInfo() {
+%ifdef QorusDebugInternals
+        if (!connstr) {
+            QDBG_LOG("ERROR: no connection string self: %N", self);
+            QDBG_ASSERT(False);
+        }
+%endif
+        # wait for asynchronous start if necessary
+        if (!coord_mode && !dsp) {
+            qdsp_cnt.waitForZero();
+            # issue #3245: if there is no pool here, then return an error response
+            if (!dsp) {
+                throw "QDSP-STARTUP-ERROR", startup_error_string;
+            }
+        }
+        return AbstractQorusDistributedProcess::getInfo() + {
+            # connection string
+            "connstr": connstr,
+            # driver real name
+            "driver_real_name": dsp.getDriverRealName(),
+            # DB connecton string without Qorus options
+            "db_connstr": db_connstr,
+            # processes with active transactions
+            "trans": (map {$1.key: keys $1.value}, process_trans_map.pairIterator()),
+            # mode
+            "coord_mode": coord_mode,
+        } + (coord_mode
+            ? {
+                # coordinator mode info map (dsp )
+                "coord_info_map": coord_info_map,
+                # coordinator mode waiting list
+                "coord_waiting": (map $1 - "sock", coord_waiting),
+            }
+            : {
+                # db pool status
+                "db-pool": dsp.toString(),
+                # thread pool status
+                "thread-pool": tp.toString(),
+                # processes with active statements
+                "stmt": (map {$1.key:
+                    (map {$1.key: $1.value.uniqueHash()}, $1.value.pairIterator())}, process_stmt_map.pairIterator()),
+                # dsp hash
+                "pool-hash": dsp.uniqueHash(),
+            });
+    }
+
+    private logEvent() {
+        if (log_subscribed) {
+            core.sendCmdOneWay(CPC_CORE_LOG_IF, {"method": "qdspLogEvent", "args": argv});
+        }
+    }
+
+    private bool processCmdImpl(ZSocketRouter sock, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        try {
+            processCmdIntern(sock, index, sender, mboxid, cmd, msg);
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            string errstr = debug_system
+                ?  get_exception_string(ex)
+                : sprintf("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+
+            error("exception handling cmd: %y from sender: %y %y: %s", cmd, sender, mboxid, errstr);
+            sock.send(sender, mboxid, CPC_EXCEPTION, serializeExceptionResponse(ex));
+        }
+
+        return True;
+    }
+
+    private logArgs(int lvl, string msg, auto args) {
+        string fmsg = vsprintf(msg, args);
+        try {
+            if (core) {
+                logger.log(lvl, "%s", fmsg, new LoggerEventParameter(\Qorus.logEvent(), client_id,
+                    sprintf("%s T%d [%s]: ", now_us().format("YYYY-MM-DD HH:mm:SS.xx"), gettid(),
+                    LoggerLevel::getLevel(lvl).getStr()) + fmsg + "\n"));
+            } else {
+                logger.log(lvl, "%s", fmsg);
+            }
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf("logging error: %s\n", get_exception_string(ex));
+            stderr.printf("log msg was: %y\n", fmsg);
+        }
+    }
+
+    private processCmdIntern(ZSocketRouter sock, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        # first process commands that do not require a transaction and have no payload
+        switch (cmd) {
+            case CPC_UPDATE_LOGGER: {
+                *binary data = msg.popBin();
+                loggerParams = data ? qorus_cluster_deserialize(data) : NOTHING;
+                updateLogger(loggerParams);
+                sock.send(sender, mboxid, CPC_OK);
+                return;
+            }
+
+            case CPC_ROTATE_LOGGER:
+                rotateLogFiles();
+                sock.send(sender, mboxid, CPC_OK);
+                return;
+
+            case CPC_CORE_LOG_SUBSCRIBE: {
+                QDBG_LOG("log subscribe: %y -> %y", log_subscribed, True);
+                log_subscribed = True;
+                sendResponse(index, sender, mboxid, CPC_OK);
+                return;
+            }
+
+            case CPC_CORE_LOG_UNSUBSCRIBE: {
+                QDBG_LOG("log unsubscribe: %y -> %y", log_subscribed, False);
+                log_subscribed = False;
+                sendResponse(index, sender, mboxid, CPC_OK);
+                return;
+            }
+        }
+
+        # wait for asynchronous startup
+        if (!coord_mode && !dsp) {
+            qdsp_cnt.waitForZero();
+        }
+
+        # now process commands that do not require a transaction and have no payload but require the pool to be in place
+        switch (cmd) {
+            case CPC_DSP_GET_CAPS:
+                sock.send(sender, mboxid, CPC_OK, dsp.getCapabilities().toString());
+                return;
+
+            case CPC_DSP_GET_USAGE:
+                if (coord_mode) {
+                    sock.send(sender, mboxid, CPC_OK, qorus_cluster_serialize({}));
+                } else {
+                    sock.send(sender, mboxid, CPC_OK, qorus_cluster_serialize(dsp.getUsageInfo() - "callback"));
+                }
+                return;
+
+            case CPC_DSP_TO_STRING:
+                code get_process_stmt = *string sub (hash h) {
+                    return foldl $1 + "," + $2, map sprintf("%s=%s", $1.key, $1.value.uniqueHash()), h.pairIterator();
+                };
+                *string stmt = foldl $1 + "," + $2, map sprintf("%s: {%s}", $1.key, get_process_stmt($1.value)), process_stmt_map.pairIterator();
+                string desc;
+                if (!coord_mode) {
+                    *string trans = foldl $1 + "," + $2,
+                        map sprintf("%s: {%s}", $1.key, (foldl $1 + "," + $2, keys $1.value)),
+                            process_trans_map.pairIterator();
+                    desc = sprintf("db pool: %s, thread pool: %s, trans: {%s}, stmts: {%s}", dsp.toString(),
+                        tp.toString(), trans, stmt);
+                } else {
+                    *string wstr = foldl $1 + "," + $2,
+                        (map sprintf("%y", $1 - "sock"), coord_waiting);
+                    desc = sprintf("coord map: %y waiting: [%s]", keys coord_info_map, wstr);
+                }
+                sock.send(sender, mboxid, CPC_OK, desc);
+                return;
+
+            case CPC_DSP_GET_DRIVER_INFO: {
+                string driver = dsp.getDriverName();
+                if (driver == "jdbc") {
+                    driver = "jni";
+                }
+                sock.send(sender, mboxid, CPC_OK, qorus_cluster_serialize(get_module_hash(){driver}));
+                return;
+            }
+        }
+
+        # get info; all further commands require a hash argument
+        hash<auto> h;
+        {
+            # user-friendly arg passing in case of arguments from "qctl api qdsp-..."
+            auto val;
+            if (*binary msgarg = msg.popBin()) {
+                val = qorus_cluster_deserialize(msgarg);
+            }
+            if (val.typeCode() != NT_HASH) {
+                throw "QDSP-API-ERROR", sprintf("missing hash argument to API %y; got type %y instead (%y)", cmd,
+                    val.type(), val);
+            }
+            h += val;
+        }
+
+        if (cmd == CPC_DSP_RESET) {
+            hash<auto> db_config_info = getDatasourceConfigInfo(h.connstr);
+            logInfo("connection string change %y -> %y", conndesc, db_config_info.conndesc);
+            if (exists db_config_info.coord_mode) {
+                if (coord_mode != db_config_info.coord_mode) {
+                    logInfo("COORDINATED MODE CHANGE: old mode %y -> %y; terminating process immediately",
+                        coord_mode, db_config_info.coord_mode);
+%ifdef QorusDebugInternals
+                    sleep(2);
+%endif
+                    exit(-1);
+                }
+                remove db_config_info.coord_mode;
+            }
+            hash<auto> db_conn_hash = remove db_config_info.db_conn_hash;
+
+            # coordinated mode remains the same; we just need to make an atomic update of the datasource
+            hash update_hash;
+
+            if (!coord_mode) {
+                try {
+                    update_hash.dsp = getPool(db_conn_hash);
+                } catch (hash<ExceptionInfo> ex) {
+                    logFatal("%s: %s", ex.err, ex.desc);
+%ifdef QorusDebugInternals
+                    sleep(2);
+%endif
+                    exit(-1);
+                }
+            }
+            update_hash += db_config_info + {
+                "connstr": h.connstr,
+                # set maximum number of connections
+                "max": db_conn_hash.options.max ?? 10,
+            };
+            self += update_hash;
+            logInfo("updated remote datasource pool; new requests will be assigned connections from "
+                "the new pool");
+            sock.send(sender, mboxid, CPC_ACK);
+            return;
+        }
+
+        if (coord_mode) {
+            switch (cmd) {
+                case CPC_DSP_CONN_GET:
+                    connectionGet(sock, index, sender, mboxid, h.process, h.trans);
+                    return;
+                case CPC_DSP_CONN_REL:
+                    connectionRelease(sock, sender, mboxid, h.process, h.trans);
+                    return;
+                case CPC_DSP_PING:
+                    sock.send(sender, mboxid, CPC_DSP_PONG, qorus_cluster_serialize({"status": True}));
+                    return;
+                default:
+                    throw "COMMAND-ERROR", sprintf("cannot handle cmd %y with arg %y in coordinator mode", cmd, h);
+            }
+        }
+
+        string trans = h.trans;
+        if (h.trans == QDSP_TempTrans) {
+            QDBG_LOG("processCmdIntern() temp trans: sender: %y %y cmd: %y trans: %y h: %y", sender, mboxid, cmd,
+                trans, h);
+            code c = sub () {
+                try {
+%ifndef NO_ORACLE
+                    # issue #2168: support oracle context auditing
+                    if (h.ctx && dsp instanceof QorusOracleDatasourcePool) {
+                        save_thread_data(("dsp_thread_ctx": h.ctx));
+                        #logDebug("set dsp_thread_ctx: %y", h.ctx);
+                    }
+                    on_exit if (h.ctx && dsp instanceof QorusOracleDatasourcePool) {
+                        delete_thread_data("dsp_thread_ctx");
+                    }
+%endif
+
+                    doCommand(dsp, index, sender, mboxid, cmd, h);
+                } catch (hash<ExceptionInfo> ex) {
+                    error("FATAL ERROR in temporary transaction: %s", get_exception_string(ex));
+                    error("arg: %y", h);
+                }
+            };
+            tp.submit(c);
+            return;
+        }
+
+        {
+            # ensure atomicity of the transaction and process hash operations
+            tpsm.lock();
+            on_exit tpsm.unlock();
+
+            # if the transaction exists, then submit the command on the queue
+            if (trans_info_map{trans} && !trans_info_map{trans}.closing) {
+                QDBG_LOG("processCmdIntern() submitting on existing transaction queue: sender: %y %y cmd: %y "
+                    "process: %y trans: %y ah: %y", sender, mboxid, cmd, trans_info_map{trans}.process, trans,
+                    h - "trans");
+                # issue #3863: do not allow the transaction to be reuse when it will be closed
+                if (cmd == CPC_DSP_COMMIT || cmd == CPC_DSP_ROLLBACK || cmd == CPC_DSP_STMT_ROLLBACK) {
+                    h.closing = trans_info_map{trans}.closing = True;
+                }
+                trans_info_map{trans}.q.push(h + {"cmd": cmd});
+                return;
+            }
+
+            if (cmd == CPC_DSP_BEGIN_TRANS) {
+                QDBG_LOG("processCmdIntern() BEGIN TRANS process: %y trans: %y", h.process, trans);
+                hash<DspTransInfo> dti = <DspTransInfo>{"process": h.process};
+                trans_info_map{trans} = dti;
+                process_trans_map{h.process}{trans} = True;
+                code c = sub () {
+                    # capture the current pool in the closure in case it's updated
+                    DatasourcePool dsp_ref = dsp;
+
+                    # confirm begin trans in the queue thread
+                    # with contention, it could take some time for a thread to come available
+                    QDBG_LOG("queue thread trans: %y sender: %y %y cmd: %y process: %y", trans, sender, mboxid, cmd, h.process);
+
+%ifndef NO_ORACLE
+                    # issue #2168: support oracle context auditing
+                    if (h.ctx && dsp_ref instanceof QorusOracleDatasourcePool) {
+                        save_thread_data(("dsp_thread_ctx": h.ctx));
+                        #logDebug("set dsp_thread_ctx: %y", h.ctx);
+                    }
+%endif
+
+                    # process queue messages until done
+                    try {
+                        if (!doCommand(dsp_ref, index, sender, mboxid, CPC_DSP_BEGIN_TRANS, {"trans": trans})) {
+                            QDBG_LOG("processing queue msgs");
+                            while (hash<auto> sh = dti.q.get()) {
+                                QDBG_LOG("got cmd: %y", sh);
+                                if (doCommand(dsp_ref, index, sender, mboxid, sh.cmd, sh))
+                                    break;
+                            }
+                        }
+                        QDBG_LOG("terminating transaction thread");
+                    } catch (hash<ExceptionInfo> ex) {
+                        error("FATAL ERROR in transaction thread: %s", get_exception_string(ex));
+                        # do not rethrow the exception here
+                    }
+                };
+                tp.submit(c);
+                return;
+            } else if (cmd == CPC_DSP_ROLLBACK) {
+                # ignore rollback commands for nonexistent transactions
+                sock.send(sender, mboxid, CPC_ACK);
+                return;
+            } else {
+                throw "DSP-SERVER-TRANSACTION-ERROR", sprintf("invalid transaction: %y for command: %y; transaction "
+                    "state has been lost", trans, cmd);
+            }
+        }
+
+        throw "DSP-SERVER-ERROR", sprintf("unrecognized command or invalid state for command: %y trans: %y (%s)", cmd,
+            trans, trans_info_map{trans} ? "in progress" : "unknown");
+    }
+
+    # coodinator mode connection get command
+    private connectionGet(ZSocketRouter sock, int index, string sender, string mboxid, string process, string trans) {
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        if (coord_info_map.size() < max) {
+            connectionGetIntern(sock, sender, mboxid, process, trans);
+        } else {
+            coord_waiting += {
+                "index": index,
+                "sender": sender,
+                "mboxid": mboxid,
+                "process": process,
+                "trans": trans,
+                "timestamp": clock_getmillis(),
+            };
+        }
+    }
+
+    # coodinator mode connection release command
+    private connectionRelease(ZSocketRouter sock, string sender, string mboxid, string process, string trans) {
+        #QDBG_LOG("connectionRelease(): proc: %y trans: %y (exists %y)", process, trans, exists process_trans_map{process}{trans});
+        if (!process_trans_map{process}{trans}) {
+            throw "CONNECTION-RELEASE-ERROR", sprintf("cannot release unknown connection for process: %y trans: %y; "
+                "known processes and transactions: %y", process, trans, process_trans_map);
+        }
+
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        connectionReleaseIntern(process, trans, sock);
+        sock.send(sender, mboxid, CPC_ACK);
+    }
+
+    private connectionReleaseIntern(string process, string trans, *ZSocketRouter sock) {
+        string key = process + "-" + trans;
+        QDBG_ASSERT(coord_info_map{key});
+        QDBG_LOG("connectionReleaseIntern() process: %y trans: %y", process, trans);
+
+        # remove reverse mapping
+        remove process_trans_map{process}{trans};
+        if (!process_trans_map{process}) {
+            remove process_trans_map{process};
+        }
+        # remove forward mapping
+        remove coord_info_map{key};
+
+        # confirm the next waiting connection request in the list, if any
+        if (coord_waiting) {
+            hash<auto> wh = shift coord_waiting;
+            if (sock) {
+                connectionGetIntern(sock, wh.sender, wh.mboxid, wh.process, wh.trans, wh.timestamp);
+            } else {
+                connectionGetIntern(wh.index, wh.sender, wh.mboxid, wh.process, wh.trans, wh.timestamp);
+            }
+        }
+    }
+
+    private connectionGetIntern(ZSocket sock, string sender, string mboxid, string process, string trans, *int timestamp) {
+        QDBG_LOG("connectionGetIntern() INLINE proc: %y trans: %y (exists: %y)", process, trans, exists process_trans_map{process}{trans});
+        # do warning if necessary
+        if (timestamp && dsp_warning_timeout
+            && ((int wait_ms = (clock_getmillis() - timestamp)) > dsp_warning_timeout)) {
+            doPoolWarning(wait_ms);
+        }
+        process_trans_map{process}{trans} = True;
+        coord_info_map{process + "-" + trans} = True;
+        hash<auto> response_hash = {
+            "connstr": connstr,
+            "db_connstr": db_connstr,
+        };
+        sock.send(sender, mboxid, CPC_OK, qorus_cluster_serialize(response_hash));
+    }
+
+    private connectionGetIntern(softstring index, string sender, string mboxid, string process, string trans, int timestamp) {
+        # do warning if necessary
+        if (dsp_warning_timeout && ((int wait_ms = (clock_getmillis() - timestamp)) > dsp_warning_timeout)) {
+            doPoolWarning(wait_ms);
+        }
+        QDBG_LOG("connectionGetIntern() QUEUED proc: %y trans: %y (exists: %y)", process, trans, exists process_trans_map{process}{trans});
+        process_trans_map{process}{trans} = True;
+        coord_info_map{process + "-" + trans} = True;
+        hash<auto> response_hash = {
+            "connstr": connstr,
+            "db_connstr": db_connstr,
+        };
+
+        sendResponse(index, sender, mboxid, CPC_OK, response_hash);
+    }
+
+    #! returns True if there is no transaction in progress, False if so
+    private bool doCommand(DatasourcePool dsp, int index, string sender, string mboxid, string cmd, hash<auto> ah) {
+        auto rh;
+        code sqlc;
+        bool rv = False;
+        string rcmd;
+
+        if (ah.trans != QDSP_TempTrans) {
+            if (!dsp.currentThreadInTransaction() && cmd != CPC_DSP_BEGIN_TRANS)
+                error("trans: %y but no connection allocated!", ah.trans);
+        } else if (dsp.currentThreadInTransaction())
+            error("trans: %y but connection allocated!", ah.trans);
+
+        {
+            on_exit if (!dsp.currentThreadInTransaction()) {
+                # ensure that the queue thread is terminated if the transaction state is
+                # committed, rolled back, or lost for any reason
+                rv = True;
+                transDone(ah.trans, ah.process ?? trans_info_map{ah.trans}.process);
+            } else if (ah.closing) {
+                tpsm.lock();
+                on_exit tpsm.unlock();
+
+                QDBG_ASSERT(ah.trans);
+                QDBG_ASSERT(trans_info_map{ah.trans}.closing);
+                remove trans_info_map{ah.trans}.closing;
+            }
+
+            try {
+                switch (cmd) {
+                    case CPC_DSP_BEGIN_TRANS:
+                        rcmd = CPC_ACK;
+                        dsp.beginTransaction();
+                        break;
+
+                    case CPC_DSP_SELECT_COLUMNS:
+                        sqlc = \dsp.vselect();
+                        break;
+
+                    case CPC_DSP_SELECT_ROWS:
+                        sqlc = \dsp.vselectRows();
+                        break;
+
+                    case CPC_DSP_SELECT_ROW:
+                        sqlc = \dsp.vselectRow();
+                        break;
+
+                    case CPC_DSP_EXEC:
+                        sqlc = \dsp.vexec();
+                        # QDBG_ASSERT(ah.trans != QDSP_TempTrans);
+                        break;
+
+                    # in this case it's up to the client not to send any args
+                    case CPC_DSP_EXEC_RAW:
+                        sqlc = \dsp.execRaw();
+                        # QDBG_ASSERT(ah.trans != QDSP_TempTrans);
+                        break;
+
+                    case CPC_DSP_COMMIT: {
+                        rcmd = CPC_ACK;
+                        dsp.commit();
+                        break;
+                    }
+
+                    case CPC_DSP_ROLLBACK: {
+                        rcmd = CPC_ACK;
+                        dsp.rollback();
+                        break;
+                    }
+
+                    case CPC_DSP_GET_OPTION: {
+                        rcmd = CPC_OK;
+                        rh.val = dsp.getOption(ah.opt);
+                        break;
+                    }
+
+                    case CPC_DSP_GET_OPTION_HASH: {
+                        rcmd = CPC_OK;
+                        rh.val = dsp.getOptionHash();
+                        break;
+                    }
+
+                    case CPC_DSP_GET_SERVER_VER: {
+                        rcmd = CPC_OK;
+                        rh.val = dsp.getServerVersion();
+                        break;
+                    }
+
+                    case CPC_DSP_GET_CLIENT_VER: {
+                        rcmd = CPC_OK;
+                        rh.val = dsp.getClientVersion();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_PREPARE: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        list<auto> vargs += ah.sql;
+                        if (ah.args) {
+                            vargs += ah.args;
+                        }
+                        call_function_args(\stmt.prepare(), vargs);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_PREPARE_RAW: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        stmt.prepareRaw(ah.sql);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_FETCH_ROWS: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.fetchRows(ah.rows);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_FETCH_COLUMNS: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.fetchColumns(ah.rows);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_FETCH_ROW: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.fetchRow();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_GET_SQL: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        rh.val = stmt.getSQL();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_EXEC: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        stmt.execArgs(ah.args);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_ACTIVE: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        rh.val = stmt.active();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_NEXT: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.next();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_VALID: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        rh.val = stmt.valid();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_GET_OUTPUT_ROWS: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.getOutputRows();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_GET_OUTPUT: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.getOutput();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_BIND: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        stmt.bindArgs(ah.args);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_BIND_VALUES: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        stmt.bindValuesArgs(ah.args);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_BIND_PLACEHOLDERS: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        stmt.bindPlaceholdersArgs(ah.args);
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_DEFINE: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        stmt.define();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_DESCRIBE: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.describe();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_GET_VALUE: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.getValue();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_AFFECTED_ROWS: {
+                        rcmd = CPC_OK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid, True);
+                        rh.val = stmt.affectedRows();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_CLOSE: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        stmt.close();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_COMMIT: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        stmt.commit();
+                        break;
+                    }
+
+                    case CPC_DSP_STMT_ROLLBACK: {
+                        rcmd = CPC_ACK;
+                        SQLStatement stmt = getStatement(ah.trans, ah.process, ah.sid);
+                        stmt.rollback();
+                        break;
+                    }
+
+                    # qore issue #2334: the statement must be deleted in the same thread if there is an active transaction
+                    case CPC_DSP_STMT_DELETE:
+                        rcmd = CPC_ACK;
+                        # ensure atomicity of the transaction and process hash operations
+                        # issue #2987: do not delete the statement in the tpsm lock
+                        # issue #3311: statement might have already been deleted in case of a process crash
+                        *SQLStatement stmt = getRemoveStatement(ah.trans, ah.process, ah.sid);
+                        delete stmt;
+                        break;
+
+                    case CPC_DSP_PING: {
+                        rcmd = CPC_DSP_PONG;
+
+                        pingDs(dsp);
+                        #logDebug("ping successful");
+                        rh = {"status": True};
+                        break;
+                    }
+
+                    # issue #3404: statements must be rolled back in the connection thread when processes abort
+                    case CPC_DSP_ABORTED_PROCESS: {
+                        rcmd = cmd;
+                        on_exit ah.cnt.dec();
+                        foreach SQLStatement stmt in (getRemoveAllStatementsForTransaction(ah.trans, ah.process)) {
+                            QDBG_LOG("aborted process; rolling back transaction for process %y transaction %y stmt %y", ah.process, ah.trans, stmt.uniqueHash());
+                            closeDeleteStatement(stmt);
+                        }
+                        dsp.rollback();
+                        break;
+                    }
+
+                    default:
+                        throw "DSP-SERVER-ERROR", sprintf("unknown command %y", cmd);
+                }
+                if (!rh && sqlc) {
+                    rcmd = CPC_OK;
+                    rh.val = sqlc(ah.sql, ah.args);
+                }
+
+                if (dsp.currentThreadInTransaction() && ah.trans == QDSP_TempTrans) {
+                    dsp.rollback();
+                    throwTransactionError();
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                error("error executing cmd: %y for sender: %y %y: %s: %s", cmd, sender, mboxid, ex.err, ex.desc);
+                if (cmd != CPC_DSP_ABORTED_PROCESS) {
+                    rcmd = CPC_DSP_EXCEPTION;
+                    rh.ex = ex;
+                    rh.in_trans = dsp.currentThreadInTransaction();
+                }
+            }
+            if (cmd == CPC_DSP_ABORTED_PROCESS) {
+                QDBG_LOG("doCommand sender: %y %y aborted", sender, mboxid);
+            } else {
+                QDBG_LOG("doCommand sender: %y %y cmd: %y rh: %y", sender, mboxid, cmd, rh);
+                # exception handling in case of serialization errors
+                try {
+                    sendResponse(index, sender, mboxid, rcmd, rh, ah);
+                } catch (hash<ExceptionInfo> ex1) {
+                    remove rh.ex.arg;
+                    rh.ex.desc += sprintf("; removed argument for retransmission: %s: %s", ex1.err, ex1.desc);
+                    sendResponse(index, sender, mboxid, rcmd, rh, ah);
+                }
+            }
+        }
+
+        return rv;
+    }
+
+    # probably need to strip types from "h"
+    private data serializeResponse(reference<string> cmd, hash h, *hash<auto> sctx) {
+        data d;
+        try {
+            d = qorus_cluster_serialize(h);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SERIALIZATION-ERROR") {
+                # we must have an SQLStatement in the result
+                foreach hash<auto> sh in (h.val.pairIterator()) {
+                    if (sh.value instanceof SQLStatement) {
+                        string sid = UUID::get();
+                        string process;
+                        {
+                            # register statement & ensure atomicity of the transaction and process hash operations
+                            tpsm.lock();
+                            on_exit tpsm.unlock();
+                            process = sctx.process ?? trans_info_map{sctx.trans}.process;
+                            process_stmt_map{process}{sid} = sh.value;
+                            QDBG_ASSERT(sctx.trans);
+                            QDBG_ASSERT(sctx.trans != QDSP_TempTrans);
+                            trans_stmt_map{sctx.trans}{sid} = True;
+                            stmt_trans_map{sid} = sctx.trans;
+                        }
+                        # replace statement with a statement placeholder; a statement wrapper will be created in the client
+                        h.val{sh.key} = {"_sid_": sid};
+                        h.sids{sid} = True;
+                        QDBG_LOG("created sid: %y for process %y", sid, process);
+                    }
+                    QDBG_ASSERT(!(sh.value instanceof object));
+                }
+                d = qorus_cluster_serialize(h);
+            } else {
+                cmd = CPC_DSP_EXCEPTION;
+                h = getSerializationException(h, ex);
+                d = qorus_cluster_serialize(h);
+            }
+        }
+        return d;
+    }
+
+    private hash<auto> getSerializationException(hash<auto> h, hash<ExceptionInfo> ex) {
+        return {"in_trans": h.in_trans, "ex": ex};
+    }
+
+    private throwTransactionError() {
+        throw "TRANSACTION-ERROR", sprintf("transaction started in datasource pool %y (%s) without "
+            "allocating a connection with beginTransaction(); transaction has been rolled back",
+            client_id, conndesc);
+    }
+
+    SQLStatement getStatement(string trans, string process, string sid, *bool bind) {
+        QDBG_ASSERT(!coord_mode);
+        # ensure atomicity of the transaction and process hash operations
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        if (bind && !trans_stmt_map{trans}{sid}) {
+            if (trans == QDSP_TempTrans) {
+                throwTransactionError();
+            }
+            trans_stmt_map{trans}{sid} = True;
+            QDBG_ASSERT(!stmt_trans_map{sid});
+            stmt_trans_map{sid} = trans;
+            QDBG_LOG("getStatement() bound sid %y to trans %y", sid, trans);
+        }
+
+        if (process_stmt_map{process}{sid}) {
+            QDBG_LOG("getStatement() returning existing statement for process %y sid %y (trans %y)", process, sid, trans);
+            return process_stmt_map{process}{sid};
+        }
+        QDBG_LOG("getStatement() creating statement for process %y sid %y (trans %y)", process, sid, trans);
+        return process_stmt_map{process}{sid} = dsp.getSQLStatement();
+    }
+
+    *SQLStatement getRemoveStatement(string trans, string process, string sid) {
+        QDBG_ASSERT(!coord_mode);
+        # ensure atomicity of the transaction and process hash operations
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        *SQLStatement rv = remove process_stmt_map{process}{sid};
+        if (rv) {
+            if (trans_stmt_map{trans}{sid}) {
+                remove trans_stmt_map{trans}{sid};
+                if (!trans_stmt_map{trans}) {
+                    remove trans_stmt_map{trans};
+                }
+                QDBG_ASSERT(stmt_trans_map{sid} == trans);
+                remove stmt_trans_map{sid};
+            }
+            # issue #3644: remove statement when deleted from a temporary transaction
+            if (stmt_trans_map{sid}) {
+                QDBG_ASSERT(trans == QDSP_TempTrans);
+                # issue #3644: remove statement from trans_stmt_map if necessary
+                string stmt_trans = remove stmt_trans_map{sid};
+                QDBG_ASSERT(stmt_trans != trans);
+                QDBG_ASSERT(trans_stmt_map{stmt_trans}{sid});
+                remove trans_stmt_map{stmt_trans}{sid};
+                if (!trans_stmt_map{stmt_trans}) {
+                    remove trans_stmt_map{stmt_trans};
+                }
+                QDBG_LOG("removed statement sid %y (for trans %y from %y)", sid, stmt_trans, trans);
+            }
+            if (!process_stmt_map{process}) {
+                remove process_stmt_map{process};
+            }
+
+            QDBG_LOG("removed statement for process %y sid %y (trans %y)", process, sid, trans);
+        }
+
+        QDBG_ASSERT(!trans_stmt_map{trans}{sid});
+        QDBG_ASSERT(!stmt_trans_map{sid});
+        return rv;
+    }
+
+    *list<SQLStatement> getRemoveAllStatementsForTransaction(string trans, string process) {
+        QDBG_ASSERT(!coord_mode);
+        *list<SQLStatement> rv;
+
+        # ensure atomicity of the transaction and process hash operations
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        foreach string sid in (keys trans_stmt_map{trans}) {
+            QDBG_ASSERT(process_stmt_map{process}{sid});
+            QDBG_ASSERT(trans_stmt_map{trans}{sid});
+            QDBG_ASSERT(stmt_trans_map{sid} == trans);
+            remove trans_stmt_map{trans}{sid};
+            if (!trans_stmt_map{trans}) {
+                remove trans_stmt_map{trans};
+            }
+            remove stmt_trans_map{sid};
+            rv += remove process_stmt_map{process}{sid};
+            if (!process_stmt_map{process}) {
+                remove process_stmt_map{process};
+            }
+            QDBG_LOG("removed statement for process %y sid %y (trans %y)", process, sid, trans);
+        }
+        return rv;
+    }
+
+    private transDone(string trans, *string process) {
+        QDBG_ASSERT(!coord_mode);
+        QDBG_LOG("transDone() process: %y trans: %y tim: %y trans_stmt_map{%y}: %y", process, trans,
+            trans_info_map{trans}, trans, trans_stmt_map{trans});
+        QDBG_ASSERT(!dsp.currentThreadInTransaction());
+
+        if (trans_info_map{trans} || trans_stmt_map{trans}) {
+            {
+                # ensure atomicity of the transaction and process hash operations
+                tpsm.lock();
+                on_exit tpsm.unlock();
+
+                # in case of a race condition with a process cleanup action,
+                # the transaction and process may have already been removed
+                if (trans_info_map{trans}) {
+                    if (!process) {
+                        process = trans_info_map{trans}.process;
+                    }
+                    QDBG_ASSERT(process == trans_info_map{trans}.process);
+                    remove trans_info_map{trans};
+                }
+                # remove statements from transaction statement map
+                foreach string sid in (keys trans_stmt_map{trans}) {
+                    QDBG_ASSERT(stmt_trans_map{sid} == trans);
+                    # in case the statement was deleted in another thread before this call, the process_stmt_map entry
+                    # will not be there
+                    remove trans_stmt_map{trans}{sid};
+                    if (!trans_stmt_map{trans}) {
+                        remove trans_stmt_map{trans};
+                    }
+                    remove stmt_trans_map{sid};
+%ifdef QorusDebugInternals
+                    if (process && process_stmt_map{process}{sid}) {
+                        QDBG_LOG("retaining statement %y in process map for process %y", sid, process);
+                    }
+%endif
+                }
+            }
+        }
+
+        if (process && process_trans_map{process}{trans}) {
+            tpsm.lock();
+            on_exit tpsm.unlock();
+
+            remove process_trans_map{process}{trans};
+            if (!process_trans_map{process}) {
+                remove process_trans_map{process};
+            }
+        }
+    }
+
+    private closeDeleteStatement(SQLStatement stmt) {
+        QDBG_LOG("closeDeleteStatement() rolling back and deleting stmt %y", stmt.uniqueHash());
+        try {
+            stmt.rollback();
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("ignoring error rolling back transaction in statement: %s: %s", ex.err, ex.desc);
+        }
+        try {
+            delete stmt;
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("ignoring error deleting statement: %s: %s", ex.err, ex.desc);
+        }
+    }
+
+    private processAbortNotificationImpl(string process) {
+        if (coord_mode) {
+            tpsm.lock();
+            on_exit tpsm.unlock();
+
+            map connectionReleaseIntern(process, $1), keys process_trans_map{process};
+            return;
+        }
+
+        Counter done();
+        {
+            # ensure atomicity of the transaction and process hash operations
+            tpsm.lock();
+            on_exit tpsm.unlock();
+
+            *hash<string, bool> pth = process_trans_map{process};
+            if (!pth) {
+                logInfo("no transactions in progress for aborted process: %y", process);
+            } else {
+                # rollback all transactions in progress for the aborted process
+                foreach string trans in (keys pth) {
+                    logInfo("rolling back transaction: %y for aborted process: %y", trans, process);
+                    # this command also causes the queue thread to terminate
+                    done.inc();
+                    hash<auto> sh = (
+                        "trans": trans,
+                        "process": process,
+                        "cmd": CPC_DSP_ABORTED_PROCESS,
+                        "cnt": done,
+                    );
+                    trans_info_map{trans}.q.push(sh);
+                }
+                if (done.getCount()) {
+                    logInfo("%d transactions to be rolled back", done.getCount());
+                }
+            }
+        }
+
+        if (done.getCount()) {
+            # do not block the notification thread in case we need to wait for transactions to be rolled back
+            background waitForRollback(process, done);
+        } else {
+            waitForRollback(process);
+        }
+    }
+
+    private waitForRollback(string process, *Counter done) {
+        if (done) {
+            done.waitForZero();
+        }
+
+        *list<SQLStatement> stmt_list;
+        {
+            tpsm.lock();
+            on_exit tpsm.unlock();
+
+            # delete all SQLStatement objects belonging to the process after transactions have been rolled back
+            stmt_list = map remove process_stmt_map{process}.$1, keys process_stmt_map{process};
+            remove process_stmt_map{process};
+        }
+        map closeDeleteStatement($1), stmt_list;
+    }
+
+    private processAbortedImpl(string process, *hash<ClusterProcInfo> info, bool restarted, date abort_timestamp) {
+        if (restarted) {
+            if (info.new_active_master_id) {
+                process = master.getRemoteProcessId();
+                logInfo("active master updated from %y -> %y", process, info.new_active_master_id);
+            }
+            # NOTE: external processes have no queue URLs
+            QDBG_ASSERT(!info.new_active_master_id || info.queue_urls);
+            if (info.queue_urls) {
+                updateUrls(process, info, abort_timestamp);
+            }
+            abortedProcessNotification(process, info, restarted, abort_timestamp);
+
+            if (!core && process == QDP_NAME_QORUS_CORE) {
+                core = new AbstractQorusClient(self, QDP_NAME_QORUS_CORE);
+            }
+        }
+
+        # recover processes
+        switch (process) {
+            # disable log streaming if the qorus-core process has aborted
+            case QDP_NAME_QORUS_CORE: {
+                log_subscribed = False;
+                break;
+            }
+        }
+    }
+
+    private *int usageImpl() {
+        stderr.printf("usage: CONNSTR=<connstr> %s [options] <api> <node> <master-node> <master-urls> <interfaces> "
+            "<network-key-path> <process-type> <unique-proc-name> <logpath> <restarted> <warn-ms> <err-ms> "
+            "<def-ds-coord>\n",
+            get_script_name());
+        stderr.printf("this program is not meant to be started by hand\n");
+        printOption("   --oracle", "use Oracle instrumentation", OffsetColumn);
+    }
+
+    poolWarning(string desc, int time, int to, string dsn) {
+        # raise a transient alert when the connection pool time is exceeded
+        doPoolWarning(time / 1000);
+    }
+
+    doPoolWarning(int time_ms) {
+        string err = sprintf("datasource %y pool connection waited for %y, exceeding the warning timeout limit of %y, "
+            "consider raising the maximum connection value from %d to a higher number to avoid congestion in the "
+            "pool", client_id, milliseconds(time_ms), milliseconds(dsp_warning_timeout), max);
+        logInfo(err);
+        # send warning to qorus-core
+        hash<auto> h = {
+            "desc": conndesc,
+            "time": time_ms * 1000,
+            "to": dsp_warning_timeout,
+            "dsn": client_id,
+        };
+        if (core) {
+            logInfo("sending warning to qorus-core: %y", h);
+            core.sendCmdOneWay(CPC_CORE_DSP_TIMEOUT_WARNING, h);
+        } else {
+            logInfo("ignoring warning: no qorus-core process yet: %y", h);
+        }
+    }
+
+    poolNotificationThread() {
+        logInfo("started datasource pool notification thread");
+        on_exit {
+            logInfo("terminating datasource pool notification thread");
+            notification_cnt.dec();
+        }
+
+        while (True) {
+            *hash<auto> eh;
+            try {
+                # NOTE: Queue::get() timeout = 0 means never time out
+                eh = notification_queue.get(coord_mode && dsp_error_timeout > 0 ? CoordTimeoutPollInterval : 0);
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "QUEUE-TIMEOUT") {
+                    checkExpiredCoordinatedRequest();
+                    continue;
+                }
+                rethrow;
+            }
+            if (!eh) {
+                break;
+            }
+
+            if (core) {
+                logInfo("sending event to qorus-core: %y", eh);
+                core.sendCmdOneWay(CPC_CORE_DSP_EVENT, eh);
+            } else {
+                logInfo("ignoring event: no qorus-core process yet: %y", eh);
+            }
+        }
+    }
+
+    private checkExpiredCoordinatedRequest() {
+        QDBG_ASSERT(coord_mode);
+        QDBG_ASSERT(dsp_error_timeout > 0);
+
+        # ensure atomicity of wait list operations
+        tpsm.lock();
+        on_exit tpsm.unlock();
+
+        if (!coord_waiting) {
+            return;
+        }
+
+        # check how long we've been waiting
+        int wait_ms = clock_getmillis() - coord_waiting[0].timestamp;
+        # check for error
+        if (wait_ms > dsp_error_timeout) {
+            hash<auto> wh = shift coord_waiting;
+            string errstr = sprintf("%s: timed out on datasource pool after waiting %d millisecond%s for a free "
+                "connection (max %d connections in use)", conndesc, wait_ms, wait_ms == 1 ? "" : "s", max);
+            try {
+                throw "DATASOURCEPOOL-TIMEOUT", errstr;
+            } catch (hash<ExceptionInfo> ex) {
+                error("%s: sending error to %s TID %d: %s", ex.err, wh.sender, wh.index, ex.desc);
+                sendExceptionResponse(wh.index, wh.sender, wh.mboxid, ex);
+            }
+        }
+    }
+
+    private removeSignalHandlers() {
+%ifdef HAVE_SIGNAL_HANDLING
+        remove_signal_handler(SIGTERM);
+        remove_signal_handler(SIGINT);
+        remove_signal_handler(SIGHUP);
+        remove_signal_handler(SIGUSR2);
+%endif
+    }
+
+    private debugSignalHandler(softstring sig) {
+        logInfo("debug signal received");
+        *hash<string, list<hash<CallStackInfo>>> stacks = get_all_thread_call_stacks();
+        hash<auto> smap;
+        foreach hash<auto> i in (stacks.pairIterator()) {
+            smap{i.key} = map $1.type != "new-thread"
+                ? sprintf("%s %s()", get_ex_pos($1), $1.function)
+                : "new-thread",
+                i.value;
+        }
+        logInfo("threads: %N", smap);
+        logInfo("info: %N", getInfo());
+    }
+
+    private signalHandler(softstring sig) {
+        removeSignalHandlers();
+        logFatal("signal %y received; removed signal handlers; subsequent signals will cause the program to exit "
+            "immediately", SignalToName{sig});
+    }
+
+    auto deserialize(data d) {
+        return Serializable::deserialize(d);
+    }
+}
+
+%ifdef QorusDebugInternals
+*list<auto> sub get_stack() {
+    if (!HAVE_RUNTIME_THREAD_STACK_TRACE)
+        return;
+    *list<auto> stack = get_thread_call_stack();
+    if (!stack)
+        return;
+    splice stack, 0, 2;
+    return map $1.type != "new-thread" ? sprintf("%s %s()", get_ex_pos($1), $1.function) : "new-thread", stack;
+}
+sub qdbg_assert(bool b) {
+    if (!b)
+        throw "ASSERT-ERROR", sprintf("stack: %N", get_stack());
+}
+# lines with QDBG_* must be on one line
+sub QDBG_LOG(code func, string fmt) { call_function_args(func, (LoggerLevel::INFO, fmt, argv)); }
+sub QDBG_LOG(string fmt) { if (Qorus) Qorus.logInfo("%s", vsprintf(fmt, argv)); else vprintf("DEBUG: " + fmt + "\n", argv); }
+sub QDBG_ASSERT(auto v) { qdbg_assert(v.toBool()); }
+%endif

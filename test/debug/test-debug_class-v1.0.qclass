@@ -1,0 +1,25 @@
+# type: GENERIC
+# name: test-debug_class
+# desc: Test debug class
+# version: 1.0
+# parse-options: PO_NEW_STYLE
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+
+class TestDebugClass {
+    private {
+        hash props;
+    }
+
+    constructor() {
+    }
+
+    testMethod() {
+
+    }
+}
+# END

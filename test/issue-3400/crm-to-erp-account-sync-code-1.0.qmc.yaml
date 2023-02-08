@@ -1,0 +1,15 @@
+# This is a generated file, don't edit!
+type: mapper-code
+author:
+  - Qore Technologies, s.r.o.
+name: CrmToErpAccountSyncCode
+desc: "CRM to ERP demo mapper code"
+version: "1.0"
+code: crm-to-erp-account-sync-code-1.0.qmc
+methods:
+  - name: get_event_id
+    desc: ensures order is created once for unique values
+  - name: get_account_ids
+    desc: returns account ids
+  - name: get_message_body
+    desc: returns message body

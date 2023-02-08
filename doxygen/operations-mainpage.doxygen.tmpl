@@ -1,0 +1,1749 @@
+/** @page operations Operations Manual
+
+    @tableofcontents
+
+    @section opsintro Introduction
+
+    @subsection opsoverview Overview
+
+    This document is intended to provide a guide to usage of the Qorus Integration Engine system.  For more detailed information on the system’s design, please see the @ref systemref.
+
+    Common operational tasks are covered here, as well as common errors and some troubleshooting information.
+
+    Common tasks included:
+    - @ref dbmaint
+    - @ref startqorus
+    - @ref stopqorus
+    - @ref viewoptions
+    - @ref setoptions
+    - @ref workingworkflows
+    - @ref workingservices
+    - @ref workingjobs
+    - @ref ops_sensitive_data
+
+    Note that this manual does not cover performing common operational tasks from the Qorus Integration Engine Web UI; all tasks (aside from starting the system) can also be performed with the Qorus Web UI as well.
+
+    In addition to the topics above, database administration is a critical area that must be covered properly in order to ensure the correct operation of the system, in particular database free space (for example, the data and index tablespaces with Oracle and PostgreSQL installations) and transaction log space must be monitored closely, and all indexes must be kept current.
+
+    If indexes are invalidated for whatever reason, Qorus Integration Engine may deadlock (as row locks may be silently converted into table locks) or performance will suffer.
+
+    Database administration regarding basic tasks such as index maintenance and data deletion are documented in @ref dbmaint, however detailed Oracle, MySQL, and PostgreSQL database administration is beyond the scope of this manual; make sure a competent DBA is monitoring your system any time Qorus is used for business-critical process automation.
+
+    @subsection tasksummary Task Summary
+
+    For all the commands in this section, the UNIX or Windows environment must be set up properly to run the \c qore binary and the Qorus system.  For more information on these requirements, see @ref installation "Installation Guide".
+
+    All commands should be typed on a single line.  Text in italics should be replaced with the appropriate value.  Optional arguments are enclosed in square brackets (\c []),
+
+    <b>System / General Task Overview</b>
+    |!Task|!Commands
+    |Start Qorus|@ref qctl "qctl" <tt>start</tt>\n @ref qorus "qorus" <tt><i>[options]</i></tt>
+    |Shutdown Qorus|@ref qctl "qctl" <tt>stop</tt>\n\
+        @ref qrest "qrest" <tt>put system/shutdown</tt>
+    |Restart Qorus|@ref qctl "qctl" <tt>restart</tt>\n\
+        @ref qrest "qrest" <tt>put system/restart [restart=<i>seconds</i>]</tt>
+    |Check System Options|@ref ostatus "ostatus" <tt> -o</tt>
+    |Set System Options|@ref qrest "qrest" <tt>put system/options/set <i>option=value[,...]</i></tt>
+    |Redefine Datasources|oload or edit DB connection in the system DB, then: \
+        @ref qrest "qrest" <tt>put remote/datasources/reload</tt>
+    |Rotate Log Files|@ref qrest "qrest" <tt>put system/rotateLogFiles</tt>
+    |View System Properties|@ref oprop "oprop" <tt>get</tt>
+    |Update System Properties|@ref oprop "oprop" <tt>set <i>domain key [value]</i></tt>
+    |Delete a Class|@ref qrest "qrest" <tt>del classes/<i>name</i></tt>
+    |Delete Qorus Objects|@ref oload "oload" <tt>-X<i>objecttype</i>:<i>name</i>:<i>version</i> -R</tt>
+    |Delete Global Config Item Value|@ref qrest "qrest" <tt>delete system/config/<i>name</i></tt>
+    |Check Global Config Item Value|@ref qrest "qrest" <tt>system/config/<i>name</i>/value</tt>
+    |Set Global Config Item Value|@ref qrest "qrest" <tt>put system/config/<i>name</i> \
+        value=<i>@ref Util::parse_to_qore_value() "qore-value"</i></tt>
+    |Delete Global Config Item Value|@ref qrest "qrest" <tt>delete system/config/<i>name</i></tt>
+    |Live Upgrades|@ref oload "oload" <tt>-lvR @<release file></tt>
+
+    <b>Workflow Task Overview</b>
+    |!Task|!Commands
+    |List Running Workflows|@ref ostatus "ostatus" <tt> -w</tt>
+    |Disable a Workflow|@ref qrest "qrest" <tt>put workflows/<i>name</i>/disable</tt>
+    |Enable a Workflow|@ref qrest "qrest" <tt>put workflows/<i>name</i>/enable</tt>
+    |Check Workflow Options|@ref qrest "qrest" \
+        <tt>put workflows/<i>name</i>/setOptions options=&quot;(<i>option=value[,...]</i>)&quot;</tt>
+    |Reset a Workflow|@ref qrest "qrest" <tt>put workflows/<i>name</i>/reset</tt>
+    |Check System Status|@ref ostatus "ostatus" <tt> -oS</tt>
+    |Check Running Workflow Status|@ref ostatus "ostatus" <tt> -w</tt>
+    |Check Workflow Data Status|@ref oview "oview" <tt>-ssg w:<i>id</i></tt>
+    |Check Step Config Item Value|@ref qrest "qrest" \
+        <tt>workflows/<i>workflow-name</i>/stepinfo/<i>step-name</i>/config/<name></tt>
+    |Set Step Config Item Value|@ref qrest "qrest" \
+        <tt>put workflows/<i>workflow-name</i>/stepinfo/<i>step-name</i>/config/<i>name</i> \
+        value=<i>@ref Util::parse_to_qore_value() "qore-value"</i></tt>
+    |Delete Step Config Item Value|@ref qrest "qrest" \
+        <tt>delete workflows/<i>workflow-name</i>/stepinfo/<i>step-name</i>/config/<i>name</i></tt>
+    |Delete a Workflow|@ref oload "oload" <tt>-Xworkflow:<i>name</i>:<i>version</i> -R</tt>
+
+    <b>Service Task Overview</b>
+    |!Task|!Commands
+    |Check Service Status|@ref ostatus "ostatus" <tt> -sv</tt>
+    |Call a Service Method|@ref qrest "qrest" <tt>put services/<i>name</i>/<i>method</i>/call [args=...]</tt>
+    |Disable a Service|@ref qrest "qrest" <tt>put services/<i>name</i>/disable</tt>
+    |Enable a Service|@ref qrest "qrest" <tt>put services/<i>name</i>/enable</tt>
+    |Set Service Options|@ref qrest "qrest" \
+        <tt>put services/<i>name</i>/setOptions options=&quot;(<i>option=value[,...]</i>)&quot;</tt>
+    |Check Service Config Item Value|@ref qrest "qrest" <tt>services/<i>service-name</i>/config/<name></tt>
+    |Set Service Config Item Value|@ref qrest "qrest" <tt>put services/<i>service-name</i>/config/<i>name</i> \
+        value=<i>@ref Util::parse_to_qore_value() "qore-value"</i></tt>
+    |Delete Service Config Item Value|@ref qrest "qrest" \
+        <tt>delete services/<i>service-name</i>/config/<i>name</i></tt>
+    |Delete a Service|@ref oload "oload" <tt>-Xservice:<i>name</i>:<i>version</i> -R</tt>
+
+    <b>Job Task Overview</b>
+    |!Task|!Commands
+    |Run a Job|@ref qrest "qrest" <tt>put jobs/<i>name</i>/run</tt>
+    |Check Job Status|@ref ojview "ojview"
+    |View Job Instance|@ref ojview "ojview" <tt>j:<i>id</i></tt>
+    |Set Job Options|\
+        @ref qrest "qrest" <tt>put jobs/<i>name</i>/setOptions options=&quot;(<i>option=value[,...]</i>)&quot;</tt>
+    |Activate a Job|@ref qrest "qrest" <tt>put jobs/<i>name</i>/setActive active=true</tt>
+    |Deactivate a Job|@ref qrest "qrest" <tt>put jobs/<i>name</i>/setActive active=false</tt>
+    |Disable a Job|@ref qrest "qrest" <tt>put jobs/<i>name</i>/disable</tt>
+    |Enable a Job|@ref qrest "qrest" <tt>put jobs/<i>name</i>/enable</tt>
+    |Check Job Config Item Value|@ref qrest "qrest" <tt>jobs/<i>job-name</i>/config/<name></tt>
+    |Set Job Config Item Value|@ref qrest "qrest" <tt>put jobs/<i>job-name</i>/config/<i>name</i> \
+        value=<i>@ref Util::parse_to_qore_value() "qore-value"</i></tt>
+    |Delete Job Config Item Value|@ref qrest "qrest" <tt>delete jobs/<i>job-name</i>/config/<i>name</i></tt>
+    |Delete a Job|@ref qrest "qrest" <tt>del jobs/<i>name</i></tt>
+
+    <b>Interface Group Task Overview</b>
+    |!Task|!Commands
+    |List Interface Groups|@ref qrest "qrest" <tt>groups?short=1</tt>
+    |Disable an Interface Group|@ref qrest "qrest" <tt>put groups/<i>name</i>/disable</tt>
+    |Enable an Interface Group|@ref qrest "qrest" <tt>put groups/<i>name</i>/enable</tt>
+    |Synchronize Offline RBAC Changes|@ref user-tool "user-tool" <tt>-s</tt>
+
+    @section dbmaint Database Maintenance And Administration
+
+    In order for the system to perform properly, the system database must be properly maintained and administered.   This is most important on Oracle, where maintaining up to date DB statistics and performing proper index maintenance can be critical to system performance.
+
+    Qorus Integration Engine includes some facilities for assisting DBAs with maintaining the database.  These facilities are documented in this section.
+
+    @subsection indexes Index Maintenance
+
+    On Oracle dataservers, indexes must be maintained; as data is changed or deleted from indexed tables, indexes become less efficient;  the number of dead leaf nodes and the number of indirections grow, slowing down table accesses.  When these parameters breach pre-defined maximum values; the indexes should be rebuilt.
+
+    Qorus has two different ways of analyzing and rebuilding Oracle indexes that need it: internally in the system, using the @link ##arch system.arch @endlink service, and from the command-line, using the @ref schema-tool "schema-tool" program.
+
+    Additionally, Qorus provides a facility for unconditionally rebuilding all indexes in a schema; for more information on this topic, see @ref idxunconditional.
+
+    @subsubsection idxschematool Analyzing and Rebuilding Oracle Indexes with schema-tool
+
+    To analyze and rebuild indexes on the entire system schema in Oracle using @ref schema-tool "schema-tool", execute the following command:
+
+    @verbatim unixprompt% schema-tool -R @endverbatim
+
+    The thresholds by default are given in the following table:
+    |!Criteria|!Value
+    |maximum index height|3
+    |maximum percentage of deleted leaf nodes|20%
+
+    To override these values, use the \c --max-height and \c --max-leaf-pct options.
+
+    If either value is above the threshold, then the index will be rebuilt.  The command used to rebuild the index is:
+
+    @verbatim alter index [name] rebuild nologging compute statistics @endverbatim
+
+    Note that indexes in any Oracle schema can be analyzed and rebuilt, as long as the Oracle user has permission to do so.  To analyze and rebuild indexes in another schema, pass the name of the datasource as an argument to the \c -R option; for example:
+
+    @verbatim unixprompt% schema-tool -R=billing @endverbatim
+
+    @subsubsection idxunconditional Unconditionally Rebuilding Indexes
+
+    Indexes in the system schema can be unconditionally rebuilt using @ref schema-tool "schema-tool" as follows:
+
+    @verbatim unixprompt% schema-tool -F @endverbatim
+
+    To unconditionally rebuild indexes in another schema, pass the name of the datasource to the \c -F option as follows:
+
+    @verbatim unixprompt% schema-tool -F=datasourcename @endverbatim
+
+    On Oracle, the list of indexes in the schema is acquired executing the following SQL (note that partitioned indexes are ignored):
+
+    @verbatim select index_name, tablespace_name from user_indexes
+where partitioned = 'NO' and index_type != 'LOB'"
+    @endverbatim
+
+    Then indexes are rebuilt with the following command:
+
+    @verbatim alter index [name] rebuild nologging compute statistics @endverbatim
+
+    On PostgreSQL, the list of indexes is acquired by executing the following SQL:
+
+    @verbatim SELECT c.relname as name
+FROM pg_catalog.pg_class c
+     JOIN pg_catalog.pg_permissions r ON r.oid = c.relowner
+     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+     LEFT JOIN pg_catalog.pg_index i ON i.indexrelid = c.oid
+     LEFT JOIN pg_catalog.pg_class c2 ON i.indrelid = c2.oid
+WHERE n.nspname <> 'pg_catalog'
+  AND n.nspname !~ '^pg_toast'
+  AND pg_catalog.pg_table_is_visible(c.oid)
+  and r.rolname = 'schemaname' and c.relkind = 'i'
+ORDER BY
+    @endverbatim
+
+    Then indexes are rebuilt with the following command:
+
+    @verbatim reindex index [name] @endverbatim
+
+    On MySQL, indexes are rebuilt by using the \c "repair table" command.  A list of tables is acquired by executing \c "show tables".  Then indexes on each table are rebuild by executing the following command on each table:
+
+    @verbatim repair table [name] quick @endverbatim
+
+    @subsection gathering Gathering Table or Schema Statistics
+
+    The @ref schema-tool "schema-tool" program can be used to gather statistics on Oracle, MySQL, and PostgreSQL databases.
+
+    @subsubsection gatherentire Gathering Statistics on an Entire Schema
+
+    To gather statistics on the entire system schema, execute the following command:
+
+    @verbatim unixprompt% schema-tool -S @endverbatim
+
+    Note that by giving a valid Qorus datasource name (defined in the @ref dsconn), you can analyze statistics on any datasource known to Qorus (as long as the user has the appropriate permissions); for example, to gather statistics on the schema defined by the datasource named billing, execute the following:
+
+    @verbatim unixprompt% schema-tool -S=billing @endverbatim
+
+    For Oracle, the following SQL is executed:
+
+    @verbatim begin dbms_stats.gather_schema_stats(ownname => 'schemaname',
+	estimate_percent => 10, granularity => 'all',
+	method_opt => 'for all columns size auto',
+	degree => dbms_stats.default_degree,
+	options => 'gather auto', cascade => true );
+end;
+    @endverbatim
+
+    For PostgreSQL, the following command is executed:
+
+    @verbatim analyze @endverbatim
+
+    For MySQL, the following command is executed for each table in the schema (as determined by executing \c "show tables"):
+
+    @verbatim analyze table [tablename] @endverbatim
+
+    @subsubsection gathertable Gathering Statistics on a Table
+
+    To gather statistics on a particular table, in the system schema execute the following command:
+
+    @verbatim unixprompt% schema-tool -T=tablename @endverbatim
+
+    To gather statistics on a particular table in another schema in a defined datasource, type the following:
+
+    @verbatim unixprompt% schema-tool -T=datasourcename=tablename @endverbatim
+
+    For Oracle, the following SQL is executed:
+
+    @verbatim begin dbms_stats.gather_table_stats (ownname => 'schemaname',
+	tabname => 'tablename', partname => null,
+	estimate_percent => dbms_stats.auto_sample_size,
+	degree => 3, cascade => true);
+end;
+    @endverbatim
+
+    For PostgreSQL, the following command is executed:
+
+    @verbatim analyze [tablename] @endverbatim
+
+    For MySQL, the following command is executed:
+
+    @verbatim analyze table [tablename] @endverbatim
+
+    @subsection archiving Deleting Old Data From the Database
+
+    See @ref system_arch "Arch system service".
+
+    @section workingsystem Working With the System
+
+    @subsection startqorus Start Qorus Integration Engine
+
+    In order to start the Qorus Integration Engine system, log in with a user account with write access to the Qorus log directory, with read access to the Qorus configuration files (normally the UNIX user \c qorus), and the UNIX environment configured as specified in the @ref installation "installation instructions", and enter the following at the command line:
+
+    @verbatim unixprompt% qorus [option=value ...] @endverbatim
+
+    Output similar to the following should appear:
+
+    @verbatim
+Qorus Integration Engine v{qorus_version} (build {qorus_build}), Copyright (C) 2003 - 2023 Qore Technologies
+auto-recover quark-1: no sessions need recovery
+starting instance quark-1 on omq@omq (pgsql) with session ID 459
+starting HTTP listener on: <all interfaces>:8001, <all interfaces>:8001, /tmp/qorus-sock-manatee-dev1
+HTTP listener 0 started on ipv6[::]:8001
+HTTP listener 3 started on unix:/tmp/qorus-sock-manatee-dev1
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note See the @ref systemref for more information on the Qorus @ref systemstartup "startup sequence", @ref commandline "system programs", and @ref systemoptions "system options".  In particular, note that there are functional limitations when starting more than one Qorus instance on the same database schema.  These are documented in the Qorus Integration Engine System Reference Manual.
+
+    @par Common Errors Starting the System
+
+    <hr>
+    <i>Error: Cannot Open System Datasources</i>
+
+    @par Error Message:
+    @verbatim ERROR opening datasource omq: DBI:ORACLE:OCI-ERROR
+ERROR opening datasource omquser: DBI:ORACLE:OCI-ERROR
+cannot open system datasources, aborting @endverbatim
+
+    @par Explanation:
+    The Qorus system cannot connect to one or more system datasources.  The omq and omquser datasources must be accessible for the system to start.  To get more detailed information, try to connect from the command-line with \c sqlplus (Oracle), \c mysql (MySQL) or \c psql (PostgreSQL), depending on the database server used for the system schema.
+
+    |!Possible Cause|!Action to Take
+    |No \c TNSNAMES.ORA entry for Oracle Databases|Have the DBA make the correct entries in the \c TNSNAMES.ORA file
+    |Database is down|Check with DBA and start database if necessary
+    |Login or connection parameters are incorrect|Edit the login parameters in options' @ref systemdb
+    |Network connectivity loss|Check with network administrators to fix the problem
+
+    <hr>
+    <i>Error: Unable to Open Session</i>
+
+    @par Error Message:
+    @verbatim 2010.10.19 12:18:31.023745 T0: OMQ: Unable to open session (ACTIVE-SESSION-ERROR: [instance name] sessionid 20 is currently active. If this is incorrect, then restart Qorus with auto-recover=True) @endverbatim
+
+    @par Explanation:
+    There is an entry in the sessions table with this instance key and with <tt>status = ACTIVE</tt>.   Check active sessions with <tt>schema-tool -L</tt> and the process list to verify if the instance is running or not.
+
+    |!Possible Cause|!Action to Take
+    |The instance is already running|Take no action (system is already running) or start the system with a new instance key and new HTTP server port.
+    |The instance stopped abnormally|Launch the instance with \c auto-recover=true (see @ref auto-recover) to recover the previous instance
+
+    <hr>
+    <i>Error: Unable to Create HTTP Server</i>
+
+    @par Error Message:
+    @verbatim 2010.10.19 12:18:31.023745 T0: OMQ: Unable to start HTTP server on "[host:]port" (HTTP-SERVER-ERROR: could not bind to socket "[host:]port": Address already in use), aborting @endverbatim
+
+    @par Explanation:
+    The Qorus system could not open the port given with the @ref http-server option because another process is already using that port.
+
+    |!Possible Cause|!Action to Take
+    |Another process is already listening on this port|Start the system with a different HTTP server port (change the @ref http-server option), or stop the other process before trying to start Qorus on the same port.
+
+    <hr>
+    <i>Error: Cannot Load System Services</i>
+
+    @par Error Message:
+    @verbatim 2010.10.19 12:18:31.023745 T0: OMQ: Unable to load system services (SERVICE-ERROR: system service "name" does not exist) @endverbatim
+
+    @par Explanation:
+    The Qorus system could not load the system service listed in the error message.
+
+    |!Possible Cause|!Action to Take
+    |The system has not been completely installed|Make sure the system schema has been installed and all system services have been loaded in the database.  Run <tt>schema-tool -Vv</tt> and see instructions in the @ref installation for more information.
+    |System datasource points to the wrong database|Check that the \c omq datasource is correctly configured to access the Qorus system schema in the @ref systemdb option.
+    <hr>
+
+    @subsection stopqorus Stop Qorus Integration Engine
+
+    To stop the Qorus system, use @ref qctl "qctl" to send a stop message to the server.
+
+    The system shutdown process proceeds as follows: first, workflows are stopped, then jobs, then services are
+    stopped and unloaded.  Because interfaces must complete any current processing before stopping, there can be a
+    delay between sending the stop message and the time the system is fully stopped.
+
+    To shut down the system, execute the following command-line to send this command to the server:
+
+    @verbatim unixprompt% qctl stop @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+stopping cluster:
+ + qorus-core: stopping workflow snapshot manager...
+ + qorus-core: stopping job snapshot manager...
+ + qorus-core: stopped snapshot managers
+ + qorus-core: stopping all workflows
+ + qorus-core: stopped all workflows
+ + qorus-core: stopped all jobs
+ + qorus-core: stopping all services
+ + qorus-core: stopped user connections
+ + qorus-core: stopped performance monitoring
+ + qorus-core: stopped remote connections
+ + qorus-core: stopped db connections
+ + qorus-core: stopped segment manager
+ + qorus-core: stopped workflow synchronization event manager
+ + qorus-core: stopped all services
+ + qorus-core: stopped performance cache manager
+ + qorus-core: stopped workflow queue thread pool
+ + qorus-core: stopped alert manager
+ + qorus-core: closed application session
+ + qorus-core: stopped user connection monitoring
+ + qorus-core: stopped remote Qorus connection monitoring
+ + qorus-core: stopped datasource connection monitoring
+ + qorus-core: stopped FTP server
+ + qorus-core: stopped HTTP server
+ + qorus-core: stopped HTTP token store
+ + qorus-core: stopped all server threads
+ + qorus-master: qorus has been shut down
+ + qorus-master: shutdown complete
+done
+    @endverbatim
+
+    No error messages should appear.
+
+    @note For more information, see the @ref systemref for more information on the Qorus
+    @ref systemshutdown "shutdown sequence"; for information on Qorus command-line programs, see @ref commandline, for
+    API method information, see the @ref qorusapi, and see @ref systemservices for more information on system service
+    methods.
+
+    @subsection viewoptions View System Options
+
+    To view Qorus system options, use @ref ostatus "ostatus" as follows:
+    @verbatim unixprompt% ostatus -o @endverbatim
+
+    Output similar to the following should appear:
+
+    @verbatim
+Qorus {qorus_version} development-qore2-1 sessionid 1920 (up 20 hours 2 minutes 32 seconds)
+* auto-recover                    = True
+* daemon-mode                     = True
+* max-log-files                   = 5
+* system-pool-minimum             = 3
+* system-pool-maximum             = 10
+  loglevel                        = 20000
+  max-retries                     = 5
+  max-async-retries               = 20
+  recover_delay                   = 300
+  async_delay                     = 1200
+  detach-delay                    = 1200
+  cache-max                       = 1000000
+* logdir                          = "/opt/qorus/log/"
+* http-server                     = "8001", "8001", "/tmp/qorus-sock-meteor-1"
+* http-secure-server              = "8011{cert=$OMQ_DIR/etc/cert.pem;key=$OMQ_DIR/etc/key.pem;password=help}", "8111{cert=$OMQ_DIR/etc/cert2.pem;key=$OMQ_DIR/etc/key2.pem;password=test}"
+* http-secure-certificate         =
+* http-secure-private-key         =
+* http-secure-private-key-password =
+* instance-key                    = "meteor-1"
+* option-file                     = "/opt/qorus/etc/options"
+* dbparams-file                   =
+  logfile-template                = "OMQ-$instance-$name.log"
+  wf-logfile-template             = "OMQ-$instance-WF-$name.log"
+  svc-logfile-template            = "OMQ-$instance-SVC-$name.log"
+  job-logfile-template            = "OMQ-$instance-JOB-$name.log"
+* force-gui-encoding              =
+* max-events                      = 10000
+  workflow-params                 =
+* db-max-threads                  = 10
+* audit                           = "*"
+* max-service-threads             = 200
+* compat-strict-bool-eval         = False
+* compat-string-numbers           = False
+  debug-system                    = True
+* defines                         = (QoreDebug="1", FAKE_NAS="1", SCMHUB_MOCK="1")
+* auto-error-update               = True
+* compat-http-utf8                = False
+* transient-alert-max             = 1000
+* alert-smtp-connection           =
+* alert-smtp-to                   =
+* alert-smtp-from                 = "alert_noreply@$instance"
+* alert-smtp-interval             = 60
+  alert-smtp-enable               = False
+* alert-fs-full                   = 85
+  sql-default-blocksize           = 5000
+  sql-init-blocksize              = 200
+* connection-modules              = "RabbitMQConnection", "JavaHttpConnection"
+* dsp-warning-timeout             = 5000
+* dsp-error-timeout               = 120000
+  manage-interfaces               = True
+  socket-warning-timeout          = 10000
+  socket-min-throughput           = 20480
+  socket-min-throughput-ms        = 1000
+* autostart-interfaces            = True
+  service-perf-events             = False
+  workflow-perf-events            = True
+  workflow-step-perf-events       = False
+* mapper-modules                  = "EbsSingleTableInboundMapper"
+* oracle-datasource-pool          = True
+  vmap-size-threshold             = 100
+  sync-delay                      = 3600
+* systemdb                        = "pgsql:omq/omq@omq%meteor"
+* stack-size                      =
+* debug-qorus-internals           = True
+* sensitive-data-key              = "/opt/qorus/etc/sensitive_data.key"
+* sensitive-value-key             = "/opt/qorus/etc/sensitive_value.key"
+  purge-sensitive-data-complete   = False
+  purge-sensitive-data-canceled   = False
+* recovery-amount                 = 750
+* recovery-currency               = "EUR"
+* sla-max-events                  = 100
+  sla-max-sync-secs               = 30
+* network-key                     = "/opt/qorus/etc/network.key"
+* node                            = (node1="192.168.0.28", node2="192.168.0.92")
+* warning-process-memory-percent  = 50
+* max-process-memory-percent      = 99
+* allow-node-overcommit-percent   = 20
+* compat-jni-types                = False
+  compat-ignore-empty-order-key   = False
+  workflow-modules                =
+  service-modules                 =
+  job-modules                     =
+* default-datasource-coordinated  = False
+* disable-tls-13                  = False
+  dataprovider-modules            = "BB_SftpPollerData", "BB_Generic", "BB_FtpPollerData"
+* remoteconnections-file          =
+* unsupported-enable-tsdb         = False
+    @endverbatim
+
+    Option names preceded by an asterisk are locked and cannot be changed after the system has started.  These options
+    can only be set in the @ref options file or on the command-line when the Qorus server process starts.
+
+    See @ref setoptions for information on how to change system options.
+
+    @note See the @ref systemref for more information on system options, @ref commandline for information about Qorus
+    command-line programs, and the @ref qorusapi for more information on Qorus API methods.
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note Use @ref qrest "qrest" to call the @ref rest_api_GET_latest_system_options API to retrieve system options
+    using the API
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection setoptions Set System Options
+
+    To set Qorus system options, use @ref qrest "qrest" command to call the
+    @ref rest_api_PUT_latest_system_options_set API as follows:
+    @verbatim unixprompt% qrest put system/options/set <option>=<value> @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim OK @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    This will change the options in the running server.  To make the options permanent and write them back out to the
+    @ref options file, you can call the @ref rest_api_PUT_latest_system_options_flush as follows:
+
+    @verbatim unixprompt% qrest put system/options/flush @endverbatim
+
+    @note See the @ref systemref for more information on system options, @ref commandline for information about Qorus
+    command-line programs, and the @ref qorusapi for more information on Qorus API methods.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Invalid Option</i>
+
+    @par Error Message:
+    @verbatim OPTION-ERROR: one or more options given was invalid @endverbatim
+
+    @par Explanation:
+    The option name given is not a valid system option.
+
+    |!Possible Cause|!Action to Take
+    |Option name is incorrect|Check the option name (options are case-sensitive) and try the command again with the \
+        correct option name.  See @ref systemoptions for a list of system options
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection persistentredefds Persistently Redefine Datasource Connection Values
+
+    @see @ref dsconn
+
+    @subsection rotatelogfiles Rotate Log Files
+
+    To rotate log files, use @ref qrest "qrest" to call the @ref rest_api_PUT_latest_system_rotateLogFiles API as
+    follows:
+
+    @verbatim unixprompt% qrest put system/rotateLogFiles @endverbatim
+
+    Log files will be rotated (and old versions deleted as necessary) according to the configuration of the
+    @ref max-log-files system option.  The output should look as follows:
+    @verbatim OK @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection viewprops View System Properties
+
+    To view @ref sysprops "system properties", call the appropriate REST API method with optional parameters using
+    @ref oprop "oprop" as follows:
+
+    @verbatim unixprompt% oprop get [domain [key]] @endverbatim
+
+    If no key is given, all values in the domain are returned.  If no domain is given, then all
+    @ref sysprops "system properties" are returned.  Example output looks similar to the following:
+    @verbatim hash: (4 members)
+  omq : hash: (3 members)
+    schema-version : "{datamodel_version}"
+    schema-compatibility : "{compat_datamodel}"
+    schema-load-compatibility : "{load_datamodel}"
+  arch : hash: (5 members)
+    directory : "/appl/logs/omq/arch" @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection updateprops Update System Properties
+
+    To update @ref sysprops "system properties", call the appropriate REST API method using @ref oprop "oprop" with
+    the following parameters (note that to delete a key, do not send a value):
+
+    @verbatim unixprompt% oprop set <domain> <key> [value] @endverbatim
+
+    The output should look as follows:
+    @verbatim INSERT @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Missing Parameter</i>
+
+    @par Error Message:
+    @verbatim ERROR: PARAMETER-ERROR: ‘key’ is a required parameter @endverbatim
+
+    @par Explanation:
+    One or more of the parameters to the method was not given.
+
+    |!Possible Cause|!Action to Take
+    |Command-line was incomplete|Check the command line and try it again with all required parameters.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @section workingworkflows Working with Workflows
+
+   @subsection listexecinstances List Running Workflow Execution Instances
+
+   To list the workflows running in a Qorus instance, use @ref ostatus as in the following example:
+   @verbatim unixprompt% ostatus -w @endverbatim
+
+   The output should look as follows (actual output will depend on instance parameters and which workflows have been
+   started - also the output has been truncated for formatting purposes):
+   @verbatim Qorus {qorus_version} meteor-1 sessionid 2095 (up 20 hours 43 minutes 13 seconds)
+workflows:
+ +      1 CIP-TICKET-FAST-START                        1.0   NORMAL       (2020-09-17 12:22:22) <compat>
+ +      2 PIP-PASSENGER-ORDER-EMAIL                    1.0   NORMAL       (2020-09-17 12:22:22) <compat>
+ +      6 IT-00-MATERIAL_MOVEMENTS-WINCASH-TRANSFER-IN 1.0   NORMAL       (2020-09-17 12:22:24) <compat>
+@endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection startworkflows Start a Workflow Execution Instance
+
+    To start a workflow execution instance and ensure that it is started automatically whenever the system is running
+    and its dependencies are satisfied, use @ref qrest "qrest" to update the workflow's @ref wf_autostart "autostart"
+    value.
+
+    To start a workflow execution instance by setting the @ref wf_autostart "autostart" value, enter the following at
+    the command line:
+
+    @verbatim unixprompt% qrest put workflows/<workflowname>/setAutostart autostart=<value> @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim hash: (4 members)
+  updated : True
+  autostart : <value>
+  info : "<workflow>> v<ver> (<id>) was updated with autostart = <value>"
+  started : <value>
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note If there is a significant amount of data for the workflow, the Qorus server will continue to perform event
+    queue population in background after this command has returned.  Any DB errors encountered by background threads
+    will be reported in log files and will not be visible on the command line.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Workflow</i>
+
+    @par Error Message:
+    @verbatim DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found:
+    class "workflows" has no subclass <name>" for HTTP method "PUT" @endverbatim
+
+    @par Explanation:
+    Qorus could not find any definition for the workflow given.
+
+    |!Possible Cause|!Action to Take
+    |Workflow name is incorrect|Check the name and try again
+    |The workflow has not yet been loaded|Load the workflow with the @ref oload "oload" program
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection disableworkflow Disable Workflow
+
+    To stop all workflow execution instances for a particular workflow from running temporarily, disable the workflow
+    with the following command:
+
+    @verbatim unixprompt% qrest put workflows/<workflowname>/disable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  workflowid : <id>
+  info : "disabled workflow <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Workflow</i>
+
+    @par Error Message:
+    @verbatim DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found:
+    class "workflows" has no subclass <name>" for HTTP method "PUT" @endverbatim
+
+    @par Explanation:
+    Qorus could not find any definition for the workflow given.
+
+    |!Possible Cause|!Action to Take
+    |Workflow name is incorrect|Check the name and try again
+    |The workflow has not yet been loaded|Load the workflow with the @ref oload "oload" program
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection enableworkflow Enable Workflow
+
+    To enable a workflow, use the following command:
+    @verbatim unixprompt% qrest put workflows/<workflowname>/enable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  workflowid : <id>
+  info : "enabled workflow <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Workflow</i>
+
+    @par Error Message:
+    @verbatim DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found:
+    class "workflows" has no subclass <name>" for HTTP method "PUT" @endverbatim
+
+    @par Explanation:
+    Qorus could not find any definition for the workflow given.
+
+    |!Possible Cause|!Action to Take
+    |Workflow name is incorrect|Check the name and try again
+    |The workflow has not yet been loaded|Load the workflow with the @ref oload "oload" program
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection stopworkflowsname Stop Workflow Permanently
+
+    To stop all workflow execution instances for a particular workflow from running now and in the future, set its
+    @ref wf_autostart "autostart" value to \c 0:
+
+    @verbatim unixprompt% qrest put workflows/<workflowname>/setAutostart autostart=0 @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim hash: (4 members)
+  updated : True
+  autostart : 0
+  info : "<workflow>> v<ver> (<id>) was updated with autostart = 0"
+  started : -1
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Workflow</i>
+
+    @par Error Message:
+    @verbatim DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found:
+    class "workflows" has no subclass <name>" for HTTP method "PUT" @endverbatim
+
+    @par Explanation:
+    Qorus could not find any definition for the workflow given.
+
+    |!Possible Cause|!Action to Take
+    |Workflow name is incorrect|Check the name and try again
+    |The workflow has not yet been loaded|Load the workflow with the @ref oload "oload" program
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection retryorder Queue Workflow Order Data Instance for Immediate Retry
+
+    To queue a workflow order data instance for immediate retry, execute the following command line:
+
+    @verbatim unixprompt% qrest put orders/<id>/retry @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim hash: (5 members)
+  steps_updated : 0
+  segments_updated : 1
+  workflow_updated : True
+  workflow_status : "RETRY"
+  cached : False @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note For more information on Qorus programs like @ref qrest "qrest", see @ref commandline; see @ref systemoptions
+    for more information on system options, see @ref qorusapi for more information on Qorus API methods
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Invalid Workflow Order Instance ID</i>
+
+    @par Error Message:
+    @verbatim WORKFLOW-ORDER-ERROR: there is no workflow_instanceid <x> @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID is not valid.
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+
+    <hr>
+    <i>Error: Invalid Workflow Order Data Instance Status</i>
+
+    @par Error Message:
+    @verbatim STATUS-ERROR: 01: can't update status 'C' (COMPLETE): {err: "STATUS-ERROR", status: "COMPLETE"}
+    @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID has a status that cannot be updated to \c RETRY.
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+    |The status is incorrect|Only workflow order data instances with status \c "ERROR", \c "ASYNC-WAITING", or \
+        \c "EVENT-WAITING" can be set to \c "RETRY".  It is not possible to update workflow order data instances with \
+        other statuses to \c "RETRY".
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection skipstep Skip Execution For a Step
+
+    Sometimes a step in a workflow order data instance cannot reach a \c "COMPLETE" status for reasons outside of the
+    control of the workflow, but the rest of the workflow should be executed anyway on the order data instance.  In
+    these cases, the @ref rest_api_PUT_latest_orders__id__skipStep REST API method must be called
+    with the workflow instance ID, the step ID, and the step index (0 for non-array steps) as arguments.  These
+    methods will only update steps with an \c "ERROR", \c "RETRY", \c "ASYNC-WAITING", or \c "EVENT-WAITING" status.
+    For example, see the following command line:
+    @verbatim
+        unixprompt% qrest put orders/<workflow_instanceid>/skipStep stepid=<stepid>,ind=<ind>,noretry=false
+    @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim OK @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note For more information on Qorus programs like @ref qrest "qrest", see @ref commandline; see
+    @ref qorusapi for more information on Qorus API methods
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Cannot Update Subworkflow Step</i>
+
+    @par Error Message:
+    @verbatim ERROR: PARAMETER-ERROR: cannot call skipStep() on a subworkflow step @endverbatim
+
+    @par Explanation:
+    The step ID refers to a subworkflow step and subworkflow steps cannot be skipped at the top level; the child workflow must be corrected.
+
+    |!Possible Cause|!Action to Take
+    |The step ID refers to a subworkflow step|Correct the child workflow instead.
+
+    <hr>
+    <i>Error: Invalid Step ID</i>
+
+    @par Error Message:
+    @verbatim ERROR: SKIP-STEP-ERROR: stepid <id>/<id> has not been executed in workflow_instance <id> @endverbatim
+
+    @par Explanation:
+    The step ID and index combination could not be found in the \c STEP_INSTANCE table with this workflow_instanceid.
+
+    |!Possible Cause|!Action to Take
+    |One of the IDs is incorrect|Correct the ID and try the command again.
+
+    <hr>
+    <i>Error: Step Status Error</i>
+
+    @par Error Message:
+    @verbatim ERROR: STEP-STATUS-ERROR: can’t update steps with status <status> @endverbatim
+
+    @par Explanation:
+    The step does not have a status that allows it to be skipped.
+
+    |!Possible Cause|!Action to Take
+    |Step is \c "IN-PROGRESS"|Wait until the step has finished executing and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection setordererror Set a Workflow Order Data Instance’s Status to ERROR
+
+    To set workflow order data instance’s status to \c "ERROR", the @ref rest_api_PUT_latest_orders__id__setError REST
+    API method must be called.  Execute the following command-line to send this command to the server:
+
+    @verbatim unixprompt% qrest put orders/<id>/setError @endverbatim
+
+    Output similar to the following should appear:
+
+    @verbatim hash: (4 members)
+  steps_updated : 1
+  segments_updated : 1
+  workflow_status : "ERROR"
+  old_status : "RETRY"
+  priority : 500
+  parent_info : hash: (2 members)
+    parent_workflow_instanceid : 0
+    subworkflow : 0
+@endverbatim
+
+  No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note For more information on Qorus programs like @ref qrest "qrest", see @ref commandline; see @ref qorusapi for
+    more information on Qorus API methods
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Invalid Workflow Order Instance ID</i>
+
+    @par Error Message:
+    @verbatim ERROR: WORKFLOW-ERROR: workflow_instance_id <id> does not exist @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID is not valid.
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+
+    <hr>
+    <i>Error: Invalid Workflow Order Data Instance Status</i>
+
+    @par Error Message:
+    @verbatim ERROR: WORKFLOW-STATUS-ERROR: <status> @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID has a status that cannot be updated to \c "ERROR"
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+    |The status is incorrect|Only workflow order data instances with statuses: \c "RETRY", \c "CANCELED", \
+        \c "ASYNC-WAITING", or \c "EVENT-WAITING" can be set to \c "ERROR".  It is not possible to update workflow \
+        order data instances with other statuses to \c "ERROR".
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection cancelorder Set a Workflow Order Data Instance’s Status to CANCELED
+
+    To set workflow order data instance’s status to \c "CANCELED", the @ref rest_api_PUT_latest_orders__id__cancel
+    REST API method must be called.  Execute the following command line to send this command to the server:
+    @verbatim unixprompt% qrest put orders/<id>/cancel @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim hash: (1 member)
+  workflow_status : "CANCELED" @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note For more information on Qorus programs like @ref qrest "qrest", see @ref commandline; see @ref qorusapi for
+    more information on Qorus API methods
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Invalid Workflow Order Instance ID</i>
+
+    @par Error Message:
+    @verbatim ERROR: INVALID-WORKFLOW-ORDER-DATA-INSTANCE: workflow_instanceid <x> does not exist @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID is not valid.
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+
+    <hr>
+    <i>Error: Invalid Workflow Order Data Instance Status</i>
+
+    @par Error Message:
+    @verbatim ERROR: CANCEL-WORKFLOW-STATUS-ERROR: <status> @endverbatim
+
+    @par Explanation:
+    The workflow order data instance ID has a status that cannot be updated to \c "CANCELED".
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Correct the ID and try the command again.
+    |The status is incorrect|Only workflow order data instances with statuses: \c "RETRY", \c "ERROR", \
+        \c "ASYNC-WAITING", \c "WAITING", and \c "EVENT-WAITING" can be set to \c "CANCELED".  It is not possible to \
+        update workflow order data instances with other statuses to \c "CANCELED".
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection livewfupgrade Perform a Live Upgrade of a Workflow
+
+    A live upgrade of a workflow entails updating a workflow definition for a workflow that has running execution
+    instances.
+
+    To upgrade a workflow, the following steps must be taken:
+    - Load the new workflow version in the database
+    - Reset the cached workflow configuration
+
+    Workflows should be delivered with their own installation scripts and instructions; in this case follow the
+    instructions delivered with your workflow’s installation script to load the new configuration into the Qorus
+    system schema and reset the cached workflow configuration.
+
+    In case the workflow’s configuration should be updated by hand, follow the following steps.
+
+    For instance, if \c EXAMPLE-WORKFLOW \c 1.1 is being updated, the following command will load the new version of
+    the workflow into the database and reset it in the live instance with the new configuration if it's currently
+    running:
+
+    @verbatim unixprompt% oload -lvR <file(s)>... @endverbatim
+
+    Any workflows running will load the new configuration of the workflow from the database and use it when the
+    workflow is reset.  In this way workflow logic can be upgraded without causing an interruption of service.
+
+    @note A workflow can only recover workflow order data instances that have the same workflow ID (name and version),
+    for example, you cannot use \c EXAMPLE-WORKFLOW \c 1.1 to recover instances of \c EXAMPLE-WORKFLOW \c 1.0.  If a
+    bug is found in \c EXAMPLE-WORKFLOW \c 1.0 and a new version of the workflow must be released and instances of
+    \c EXAMPLE-WORKFLOW \c 1.0 should be recovered by the new version, then \c EXAMPLE-WORKFLOW \c 1.0 should be
+    loaded with a patched redefinition instead of creating \c EXAMPLE-WORKFLOW \c 1.1.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Workflow is not Cached</i>
+
+    @par Error Message:
+    @verbatim ERROR: RESET-WORKFLOW-ERROR: workflow <name>/<id> is not currently cached @endverbatim
+
+    @par Explanation:
+    The workflow configuration cannot be reset because it is not currently cached.
+
+    |!Possible Cause|!Action to Take
+    |Workflow is not running|Normally installation scripts will specify that any updated workflows have their \
+        configurations reset, however if the workflow is not currently running, then it cannot be reset.  In this \
+        case the error message can be ignored, because the workflow will run with the new configuration the next \
+        time it is run.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection getwfoverallstatus Check Workflow Order Overall Status
+
+    To check the overall status of processing of a workflow’s order data instances, there are several Qorus API
+    methods that can be used.  The @ref oview "oview" program provides a user-friendly command-line interface to these
+    methods.
+
+    For example, to see the overall status of \c EXAMPLE-WORKFLOW \c 1.1 in the last 24 hours:
+
+    @verbatim unixprompt% oview EXAMPLE-WORKFLOW:1.1 @endverbatim
+
+    Assuming the workflow has been processing data in the last 24 hours, the output should look something like the
+    following (the output has been truncated for formatting purposes):
+    @verbatim
+                                          READY INCOMPLETE ASYNC-WAIT...
+EXAMPLE-WORKFLOW        1.1                 20          2          3... @endverbatim
+
+If an error message appears, see the following section for causes.
+
+    @note The @ref oview "oview" program can be used to view overall status from one, many, or all workflows, to view
+    detailed workflow/order information, and supports flexible time periods for aggregate reporting, depending on the
+    options given on the command-line.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Workflow></i>
+
+    @par Error Message:
+    @verbatim ERROR: UNKNOWN-WORKFLOW: workflow <name>: does not exist @endverbatim
+
+    @par Explanation:
+    The named workflow does not exist.
+
+    |!Possible Cause|!Action to Take
+    |The workflow name is incorrect|Check the workflow name and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection checkorderstatus Check Workflow Order Data Instance Status
+
+    To get detailed information on a single workflow order data instance’s status, there are several Qorus API methods
+    that can be used.  The @ref oview "oview" program provides a user-friendly command-line interface to these methods.
+
+    For example, to see the detailed status of workflow order data instance ID 419649, with step and segment details:
+
+    @verbatim unixprompt% oview w419649 -ssg @endverbatim
+
+    Assuming the workflow has been processing data in the last 24 hours, the output should look something like the
+    following (the output has been truncated for formatting purposes):
+    @verbatim
+w:419619: PORTOUT_REQPORTING_OGW 1.0(1044)      (errors:  0) COMPLETE
+    + SEGMENT  0: 005/005 steps executed                     COMPLETE
+      + STEP: 716        createTransactionIdFunction 1.0     COMPLETE
+      + STEP: 899        storePortingDateRequestFunction 1.0 COMPLETE
+      + STEP: 900        checkMNPStatusFunction 1.0          COMPLETE
+      + STEP: 996        checkPortingPinAndMSISDN 1.0        COMPLETE
+      + STEP: 901     S  checkMSISDNBarredEAIFunction 1.0    COMPLETE
+    + SEGMENT  1: 007/007 steps executed                     COMPLETE
+      + STEP: 901     S  checkMSISDNBarredEAIFunction 1.0    COMPLETE
+      + STEP: 902        checkLocalCalendarFunction 1.0      COMPLETE
+      + STEP: 903        setMainMsisdnAndServicesForMsisdnsI COMPLETE
+      + STEP: 904        checkIfVoiceAndVoiceBoxIncludedFunc COMPLETE
+      + STEP: 905        copyReservationIDFromMsisdnNuevFunc COMPLETE
+      + STEP: 907        updatePortingCalendarFunction 1.0   COMPLETE
+    @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @note The @ref oview "oview" program can be used to view overall status from one, many, or all workflows, to view
+    detailed workflow/order information, and supports flexible time periods for aggregate reporting, depending on the
+    options given on the command-line.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: No Such Workflow Order Data Instance</i>
+
+    @par Error Message:
+    @verbatim workflow_instanceid <id>: no results @endverbatim
+
+    @par Explanation
+    The workflow order data instance ID does not exist.
+
+    |!Possible Cause|!Action to Take
+    |The ID is incorrect|Check the ID and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection resetworkflow Reset a Workflow’s Configuration
+
+    Workflow configurations may need to be updated, for example, if a new configuration has been loaded into the
+    database, or if a resource definition for a resource acquired during the workflow’s one-time-initialization is
+    updated.
+
+    To reset a workflow’s cached configuration, the @ref rest_api_PUT_workflows__id_or_name__reset REST API method
+    must be called as follows:
+
+    @verbatim unixprompt% qrest put workflows/<name>/reset [version] @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim workflow <name>/<version> has been deleted from the cache @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Invalid Workflow</i>
+
+    @par Error Message:
+    @verbatim ERROR: RESET-WORKFLOW-ERROR: workflow <name>/<version> is not currently cached @endverbatim
+
+    @par Explanation:
+    The workflow’s cached configuration cannot be reset because it is not cached.
+
+    |!Possible Cause|!Action to Take
+    |Workflow name or version is incorrect|Check the input and try the command again with the correct parameters.
+    |Workflow is not cached|Take no action
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection order_instance_notes Order Instance Notes
+
+    Each workflow instance (order instance) can contain unlimited notes. Operators can store additional info or
+    reference to tracking systems etc.
+
+    Relevant REST APIs:
+     - @ref rest_api_GET_latest_orders__id__notes
+     - @ref rest_api_POST_latest_orders__id__notes
+
+    Notes are displayed in the user interface.
+
+    @section workingservices Working With Services
+
+    @subsection callservice Call a Service Method
+
+    Use the @ref qrest "qrest" command to call a service method.  Using this command, parameters can also be easily
+    passed to the method as well.  If the service is not already loaded, then it is loaded and initialized before the
+    method is called.
+
+    The syntax is as follows:
+
+    @verbatim unixprompt% qrest put services/<name>/<method>/call [args=...] @endverbatim
+
+    The command’s output is dependent on the service method being called.
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: No Such Service</i>
+
+    @par Error Message:
+    @verbatim ERROR: SERVICE-ERROR: system service "<name>" does not exist @endverbatim
+
+    @par Explanation:
+    The service does not exist in the Qorus database.
+
+    |!Possible Cause|!Action to Take
+    |The service name is incorrect|Check the service name and type and try the command again.
+
+    <hr>
+    <i>Error: No Such Method</i>
+
+    @par Error Message:
+    @verbatim ERROR: SERVICE-NO-METHOD: system service <name>/<ver> has not registered method "<method>" (available
+    methods: <list>) @endverbatim
+
+    @par Explanation:
+    The method does not exist in this service.
+
+    |!Possible Cause|!Action to Take
+    |The method name is incorrect|Check the method name against the list returned in the error message, and try the
+    command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection stopsystemservice Stop or Unload a Service
+
+    To stop a service, it must be unloaded from the Qorus service cache by calling the
+    @ref rest_api_PUT_latest_services__id_or_name__unload REST API method as follows:
+    @verbatim unixprompt% qrest put services/<name>/unload @endverbatim
+
+    If the service is currently loaded, then it will be unloaded.  If it is running, it will be stopped before it’s
+    unloaded.  The output should look as follows:
+    @verbatim OK @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @note Because services are loaded and initialized automatically when a method is called, stopping or unloading a
+    service will only be effective if no more calls to that service are made either internally or externally.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: No Such Service</i>
+
+    @par Error Message:
+    @verbatim ERROR: SERVICE-ERROR: system service "<name>" does not exist @endverbatim
+
+    @par Explanation:
+    The service does not exist in the Qorus database.
+
+    |!Possible Cause|!Action to Take
+    |The service name is incorrect|Check the service name and type and try the command again
+    |The service is not currently loaded|Take no action, because the service has either already been unloaded or was \
+        never loaded
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection enableservice Enable Service
+
+    To enable a service, use the following command:
+    @verbatim unixprompt% qrest put services/<name>/enable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  serviceid : <id>
+  info : "enabled service <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Service</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "services" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The service does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The service name is incorrect|Check the service name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection disableservice Disable Service
+
+    To disable a service so that it will not be run automatically and cannot be run manually, disable it with the
+    following command:
+
+    @verbatim unixprompt% qrest put services/<name>/disable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  serviceid : <id>
+  info : "disabled service <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Service</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "services" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The service does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The service name is incorrect|Check the service name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+
+    @subsection upgradeservice Perform a Live Upgrade of a Service
+
+    Upgrading a service involves the following steps:
+    - Load the new version of the service in the database.
+    - Reset the service
+
+    Use the ostatus -sv command to verify that the correct version of the service is loaded.
+
+    For instance if user service "service" version 1.0 is being replaced with "service" version 1.1, then the
+    following commands will perform a live upgrade of the service:
+
+    @verbatim
+unixprompt% oload -lvR <file(s)>...  @endverbatim
+
+    @section workingjobs Working With Jobs
+
+    @subsection runjob Run a Job Manually
+
+    Use the @ref qrest "qrest" command to call the @ref rest_api_PUT_latest_jobs__id_or_name__run REST API method to
+    run a job as follows:
+    @verbatim unixprompt% qrest put jobs/<name>/run [args=...] @endverbatim
+
+    The output should look as follows:
+
+    @verbatim
+hash: (2 members)
+  job_instanceid : 858593
+  status : "COMPLETE"
+    @endverbatim
+
+    If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Job</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "jobs" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The job does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The job name is incorrect|Check the job name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection enablejob Enable Job
+
+    To enable a job, use the following command:
+    @verbatim unixprompt% qrest put jobs/<name>/enable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  jobid : <id>
+  info : "enabled job <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Job</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "jobs" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The job does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The job name is incorrect|Check the job name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection disablejob Disable Job
+
+    To disable a job so that it will not be run automatically and cannot be run manually, disable it with the
+    following command:
+
+    @verbatim unixprompt% qrest put jobs/<name>/disable @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  name : "<name>"
+  version : "<ver>"
+  jobid : <id>
+  info : "disabled job <name> v<ver> (<id>)"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Job</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "jobs" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The job does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The job name is incorrect|Check the job name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @subsection deactivatejob Deactivate Job
+
+    To deactive a job so that it will not be run automatically but can still be run manually on demand, deactivate it
+    with the following command:
+
+    @verbatim unixprompt% qrest put jobs/<name>/setActive active=false @endverbatim
+
+    Output similar to the following should appear:
+    @verbatim
+hash: (4 members)
+  jobid : <id>
+  name : "<name>"
+  active : False
+  info : "jobid <id> "<name>" stopped and set to inactive"
+    @endverbatim
+
+    No error messages should appear.  If an error message appears, see the following section for causes.
+
+    @note Reactivate the job by changing the \c active argument to @ref True
+
+    @par Common Errors
+
+    <hr>
+    <i>Error: Unknown Job</i>
+
+    @par Error Message:
+    @verbatim
+DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "Not Found": 404 Not Found: class "jobs" has no subclass "name" for HTTP method "PUT"
+    @endverbatim
+
+    @par Explanation:
+    The job does not exist in the Qorus metadata cache.
+
+    |!Possible Cause|!Action to Take
+    |The job name is incorrect|Check the job name and type and try the command again.
+
+    <hr>
+    <i>Error: Communication and Environment Errors</i>
+
+    See @ref commonclienterrors for more information.  These errors could affect any network client, including Qorus
+    command-line tools.
+    <hr>
+
+    @section ops_sensitive_data Working With Sensitive Data
+
+    @subsection ops_sensitive_data_https Configuring an HTTPS Listener
+
+    In order for Qorus Integration Engine to process @ref sensitive_data "sensitive data", an HTTPS listener must be configured
+    for Qorus, because sensitive data APIs are only usable from encrypted interfaces.
+
+    To configure an HTTPS listener, an X.509 certificate and private key must be generated; self-signed certificates may also be
+    used if appropriate for your organization and use case.
+
+    An example command that can be used to generate a self-signed X.509 certificate with
+    <a href="https://www.openssl.org">openssl</a> 1.1.1+ with a validity period of 365 days and without a password for
+    the private key with hostnames \c myhostname and \c myhostname.local and IP address <tt>192.168.0.151</tt> is as
+    follows:
+    @verbatim openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes -keyout key.pem \
+  -out cert.pem -subj "/CN=myhostname" \
+  -addext "subjectAltName=DNS:myhostname,DNS:myhostname.local,IP:192.168.0.151"
+    @endverbatim
+
+    The HTTPS X.509 certificate file (in this example, \c "cert.pem") and the private key file (\c "key.pem") should be
+    copied to \c $OMQ_DIR/etc and then can be configured in one of two ways:
+
+    -# add the certificate and key file names to the @ref http-secure-certificate and @ref http-secure-private-key options
+       in the @ref options, respectively for use with all HTTPS listeners, and then define at least one HTTP listener in
+       the @ref http-secure-server option (without the \c cert and \c key option parameters)
+    -# add the certificate and key file names to the @ref http-secure-server option in the @ref options
+       using the \c cert and \c key option parameters
+
+    @ref options Examples:
+    @verbatim
+# global X.509 cert and key on two HTTPS listeners
+qorus.http-secure-certificate: $OMQ_DIR/etc/cert.pem
+qorus.http-secure-private-key: $OMQ_DIR/etc/key.pem
+qorus.http-secure-server: 192.168.20.77:8085,192.168.99.124:18005
+    @endverbatim
+
+    @verbatim
+# Two HTTPS listeners with different certificates and keys
+qorus.http-secure-server: 192.168.20.77:8085{cert=$OMQ_DIR/etc/cert1.pem;key=$OMQ_DIR/etc/key1.pem},192.168.99.124:18005{cert=$OMQ_DIR/etc/cert2.pem;key=$OMQ_DIR/etc/key2.pem}
+    @endverbatim
+
+    @subsection ops_sensitive_data_purging Purging Sensitive Data
+
+    Sensitive data can be purged automatically from the system by using the following options:
+    - @ref purge-sensitive-data-complete : if @ref True "True" (the default), then sensitive data is purged
+      automatically from the system any time a workflow order with sensitive data goes to
+      @ref OMQ::StatComplete "COMPLETE"
+    - @ref purge-sensitive-data-canceled : if @ref True "True" (the default), then sensitive data is purged
+      automatically from the system any time a workflow order with sensitive data goes to
+      @ref OMQ::StatCanceled "CANCELED"
+
+    However, to keep sensitive data online for a longer period for operational reasons (for example, the
+    @ref OMQ::StatCanceled "CANCELED" status is not always used as a final status by an organization but rather in
+    some cases could be subject to uncanceling and further processing), then one or more of these options can be set
+    to @ref False "False" and the \c qorus-sensitive-data job can be activated.
+
+    To activate the \c qorus-sensitive-data job, the @ref rest_api_PUT_latest_jobs__id_or_name__setActive REST API
+    can be used as in the following
+    example:
+    @verbatim
+qrest put jobs/qorus-sensitive-data/setActive active=true
+    @endverbatim
+
+    By default, this job is scheduled to run once a day at 3 a.m. and will delete sensitive data when the workflow
+    order's modified date is at least 6 months in the past and the workflow order has a status of
+    @ref OMQ::StatComplete "COMPLETE" or @ref OMQ::StatCanceled "CANCELED".
+
+    The behavior of this job can be modified by setting the following system properties:
+    - \c qorus-sensitive-data.sensitive-data-cutoff-months: set to an integer number of months giving the minimum age
+      of the data
+    - \c qorus-sensitive-data.sensitive-data-purge-complete: set to @ref False "False" to prohibit purging of workflow
+      orders with status @ref OMQ::StatComplete "COMPLETE"
+    - \c qorus-sensitive-data.sensitive-data-purge-canceled: set to @ref False "False" to prohibit purging of workflow
+      orders with status @ref OMQ::StatCanceled "CANCELED"
+
+    @note if system options @ref purge-sensitive-data-complete and @ref purge-sensitive-data-canceled are set to
+    @ref True "True", then no new sensitive data will be left in the database after workflow orders get a final status
+    of either @ref OMQ::StatComplete "COMPLETE" or @ref OMQ::StatCanceled "CANCELED".  In this case, there is no
+    reason to active this job.
+
+    It is possible to delete sensitive data from a workflow order regardless of its status by calling the
+    @ref rest_api_DELETE_latest_orders_purgeSensitiveData API with the \c force option set to @ref True "True".  Note
+    that in this case further processing of the workflow order may not be possible due to the missing data; use this
+    option with great care.
+
+    @see
+    - @ref sensitive_data
+    - @ref order_sensitive_data
+
+    @section commonclienterrors Common Client Errors
+
+    These errors could affect any Qorus client program that communicates with the Qorus process using the HTTP
+    interface.
+
+    <hr>
+    <i>Error: Connection Error</i>
+
+    @par Error Message:
+    @verbatim ERROR: Qorus server at "http://localhost:8001" is down @endverbatim
+    @verbatim SOCKET-CONNECT-ERROR: error in connect() (target: localhost:8001): Connection refused: 111 @endverbatim
+
+    @par Explanation:
+    The client program could not connect the Qorus HTTP server.
+
+    |!Possible Cause|!Action to Take
+    |The system is not running|Check the system's status (with the \c ps command on UNIX/Linux), if it’s already \
+        been shut down, then no further action need be taken
+    |The client URL (hostname and/or port) is incorrect|Verify that the URL is correct and edit the @ref options \
+        file as needed.
+    |The system is running but has not yet fully shut down.|If the system has already stopped the HTTP server, but \
+        has not yet exited, then this error could appear.  Usually the system process will terminate within a few \
+        seconds after shutting down the HTTP server.  If it does not, it could be because a running service refuses \
+        to stop.  If the process does not terminate in a reasonable time after the HTTP server has stopped (the \
+        amount of time may vary if there are any user services loaded that take an unusually long time to stop), \
+        then the only option left is to kill the Qorus processes manually.  If the session was not closed, then the \
+        next time the Qorus process is launched; the @ref auto-recover option must be set to \c true.
+
+    <hr>
+    <i>Error: Database Connection Error</i>
+
+    @par Error Message: (error message may differ according to the database used):
+    @verbatim ERROR: DBI:PGSQL:ERROR: could not connect to server: Connection refused @endverbatim
+
+    @par Explanation:
+    The database could not be reached or (depending on the error message) the login parameters were invalid.
+
+    |!Possible Cause|!Action to Take
+    |The database connection parameters are incorrect|Check the entry in the @ref systemdb for the \c connection \
+        string and try again.  Verify connectivity with \c sqlplus (Oracle), \c psql (PostgreSQL), or \c mysql (MySQL)
+    |The database is down|Restart the database and try again
+*/

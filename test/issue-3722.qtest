@@ -1,0 +1,43 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3722Test
+
+class Issue3722Test inherits Test {
+    public {
+        const JobName = "issue-3722";
+    }
+
+    constructor() : Test(JobName, "1.0", \ARGV) {
+        addTestCase("testJob", \testJob());
+        set_return_value(main());
+    }
+
+    testJob() {
+        {
+            if (!qrest.get("jobs/" + JobName + "/remote")) {
+                qrest.put("jobs/" + JobName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("jobs/" + JobName + "/setRemote", {"remote": False});
+
+            doJobTest();
+        }
+
+        doJobTest();
+    }
+
+    doJobTest() {
+        assertEq(StatComplete, qrest.put("jobs/" + JobName + "/run").status);
+    }
+}

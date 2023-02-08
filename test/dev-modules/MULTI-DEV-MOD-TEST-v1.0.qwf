@@ -1,0 +1,27 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# workflow definition
+#
+# Qorus Integration Engine
+
+%new-style
+
+our string format_version = "2.6";
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test interfaces",
+    },
+    "regression": {
+        "desc": "regression test group",
+    }
+};
+
+# YAML workflow definition file
+our hash<auto> workflows."MULTI-DEV-MOD-TEST"."1.0" = {
+    "desc": "multi dev-modules class test workflow",
+    "author": "Qore Technologies, s.r.o.",
+    "workflow-modules": ("MultiInterface",),
+    "steps": ("class:MultiDevModulesTestStep1:1.0",),
+    "groups": ("test", "regression"),
+    "sla_threshold": 2
+};

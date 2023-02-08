@@ -1,0 +1,15 @@
+type: class
+name: Issue3485Conditional
+class-name: Issue3485Conditional
+version: "1.0"
+desc: Simple conditional class connector
+author:
+    - Qore Technologies, s.r.o.
+code: Issue3485Conditional.qclass
+class-connectors:
+    - name: condition
+      method: condition
+      type: condition
+    - name: condition2
+      method: condition2
+      type: condition

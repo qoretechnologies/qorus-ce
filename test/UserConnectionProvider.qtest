@@ -1,0 +1,123 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires Util
+%requires FsUtil
+%requires SqlUtil
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        const CONN_TYPE = "USER";
+
+        string m_api_name4;
+
+        string m_conn_name;
+        string m_path;
+        string m_qconn_file;
+
+        bool m_can_run = False;
+
+        AbstractDatasource m_ds;
+    }
+
+    constructor() : QUnit::Test("UserConnectionProvider test", "1.0") {
+        QorusClient::init2();
+
+        m_ds = omqclient.getSQLIF().omqp;
+        on_exit {
+            m_ds.rollback();
+        }
+
+        m_conn_name = "qtest-" + Util::get_random_string();
+        m_api_name4 = "remote/user/" + m_conn_name;
+
+        addTestCase("qorus4 test", \testQorus4());
+
+        set_return_value(main());
+    }
+
+    private string oloadFile(string suffix, string content) {
+        hash file = FsUtil::make_tmp_file(NOTHING, suffix);
+        on_error {
+            unlink(file.path);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("%s\n", content);
+        }
+
+        file.file.write(content);
+
+        int rc;
+        string out = backquote(sprintf("oload -lR %s 2>&1", file.path), \rc);
+        if (m_options.verbose > 2) {
+            printf("stdout: %s\n", out);
+        }
+        if (rc) {
+            throw "OLOAD-FAILED", file.path;
+        }
+
+        return file.path;
+    }
+
+    globalSetUp() {
+        qorusMustRun();
+
+        auto modules = ReadOnlyFile::readTextFile(getenv("OMQ_DIR") + "/etc/options") =~ x/^qorus\.connection-modules:.*(TestUserConnectionProvider).*$/m;
+        m_can_run = exists modules;
+        assertEq(True, m_can_run, "TestUserConnectionProvider module has to be listed in etc/options (qorus.connection-modules)");
+
+        string qconn_template = "%s = (desc = unit test connection for qorus4 style,
+        url = qtest://localhost:8001
+        )
+        ";
+        m_qconn_file = oloadFile(".qconn", sprintf(qconn_template, m_conn_name));
+    }
+
+    globalTearDown() {
+        if (m_qconn_file) {
+            unlink(m_qconn_file);
+        }
+
+        if (m_can_run) {
+            qrest.del(m_api_name4);
+        }
+    }
+
+    private testQorus4() {
+        if (!m_can_run) {
+            return;
+        }
+
+        auto res = qrest.get(m_api_name4);
+        if (m_options.verbose > 2) {
+            printf("%N\n", res);
+        }
+
+        assertEq("USER-CONNECTION", res.conntype);
+        assertEq("testuserconnection", res.type);
+        assertEq("qtest", res.url_hash.protocol);
+    }
+
+    private qorusMustRun() {
+        try {
+            qrest.get("remote");
+        } catch (hash<ExceptionInfo> ex) {
+            fail(sprintf("Qorus server must run: %s: %s", ex.err, ex.desc));
+        }
+    }
+
+} # class Main

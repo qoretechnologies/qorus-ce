@@ -1,0 +1,17 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$simple = ( "ref_test_1:1.0" );
+
+$workflows."SWF-TEST"."1.0" = 
+    ( "desc"         : "simple subworkflow test workflow",
+      "author"       : "Qore Technologies, sro",
+      "steps"	     : $simple,
+      "groups"       : "test",
+      );
+

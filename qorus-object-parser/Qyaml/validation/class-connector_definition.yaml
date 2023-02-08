@@ -1,0 +1,19 @@
+class-connector:
+  required:
+    name:
+      type: string
+    method:
+      type: string
+    type:
+      type: string
+      allowed-values:
+        - event
+        - input
+        - output
+        - input-output
+        - condition
+  optional:
+    input-provider:
+      type: hash
+    output-provider:
+      type: hash

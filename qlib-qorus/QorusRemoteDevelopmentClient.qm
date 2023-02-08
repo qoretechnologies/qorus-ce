@@ -1,0 +1,345 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusRemoteDevelopmentClient.qm Qorus Remote development client module
+
+/*
+  Qorus Integration Engine
+
+  Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+  **** NOTICE ****
+    All information contained herein is, and remains the property of Qore
+    Technologies, s.r.o. and its suppliers, if any.  The intellectual and
+    technical concepts contained herein are proprietary to Qore Technologies,
+    s.r.o. and its suppliers and may be covered by Czech, European, U.S. and
+    Foreign Patents, patents in process, and are protected by trade secret or
+    copyright law.  Dissemination of this information or reproduction of this
+    material is strictly forbidden unless prior written permission is obtained
+    from Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 1.0
+%requires(reexport) QorusClientCore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+module QorusRemoteDevelopmentClient {
+    version = "5.1";
+    desc = "Qorus remote development client module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+    init = sub () {
+        QorusClient::init2();
+    };
+}
+
+#! Main namespace for QorusRemoteDevelopmentClient module
+public namespace RemoteDevelopment {
+    #! Remote development client class
+    /** Examples of how the class can be used:
+        1) Create Remote Development Client object:
+        @code{.py}
+        RemoteDevelopment::Client client(); # use local qrest
+        # use custom URL
+        RemoteDevelopment::Client client({"url": "https://spongebob:8002"});
+        @endcode
+
+        2) Get the file list from directory:
+        @code{.py}
+        list<auto> files = RemoteDevelopment::Client::createFileListFromDirectory(systemDir);
+        # OR providing list of file names (prefix with src/ directory)
+        list<auto> files = RemoteDevelopment::Client::createFileList(("foo.qfd", "bar.qfd"), "src/");
+        # OR providing list of file names (no prefix directory)
+        list<auto> files = RemoteDevelopment::Client::createFileList(("src/foo.qfd", "src/bar.qfd"));
+        @endcode
+
+        3) Create the request:
+        @code{.py}
+        DeployRequest request = new DeployRequest(files, "admin", "ignored",
+                                                  {"reload": True, "validate": True, "verbosity-level": 1});
+        @endcode
+
+        4) Post the request asynchronously and wait:
+        @code{.py}
+        hash<auto> post_response = client.post(request); # async
+        hash<auto> status_response = client.waitUntilRequestIsFinished(request, 10s); # wait
+        # OR post the request synchronously
+        hash<auto> status_response = client.post(request, 20s); # sync
+        @endcode
+    */
+    public class Client {
+        private {
+            const MAX_FILES = 30;
+
+            code log = sub(string ignored) { remove argv; };
+
+            QorusSystemRestHelper rest;
+        }
+        public {
+            const BASE_API_URL = "/development";
+            const DEPLOY_URL = BASE_API_URL + "/deploy";
+            const DELETE_URL = BASE_API_URL + "/delete";
+            const RELEASE_URL = BASE_API_URL + "/release";
+            const TEST_URL = BASE_API_URL + "/test";
+
+            const PUBLIC_URL = "/public";
+            const PUBLIC_INFO_URL = PUBLIC_URL + "/info";
+            const PUBLIC_LOGIN_URL = PUBLIC_URL + "/login";
+        }
+
+        #! Constructs RemoteDevelopment Client object.
+        /** @param username
+            @param password
+            @param connection_options according to QorusSystemRestHelper constructor:
+            - \c api_version: the REST API version (defaults to the latest version)
+            - \c connect_timeout: the connect timeout value in milliseconds
+            - \c timeout: the socket I/O timeout value in milliseconds
+            - \c url: the target URL
+        */
+        constructor(string username, string password, *hash<auto> connection_options) {
+            rest = (exists connection_options.url) ? new QorusSystemRestHelper(connection_options) : qrest;
+        }
+
+        #! Constructs RemoteDevelopment Client object
+        /**
+            @param connection_options according to QorusSystemRestHelper constructor:
+            - \c api_version: the REST API version (defaults to the latest version)
+            - \c connect_timeout: the connect timeout value in milliseconds
+            - \c timeout: the socket I/O timeout value in milliseconds
+            - \c url: the target URL
+        */
+        constructor(*hash<auto> connection_options) {
+            rest = (exists connection_options.url) ? new QorusSystemRestHelper(connection_options) : qrest;
+        }
+
+        #! Sets log method that will be used in the RemoteDevelopment Client
+        /** @param log closure that will be called when Client produces some logs
+        */
+        setLog(code log) {
+            self.log = log;
+        }
+
+        #! Lists files from the given directory.
+        /** @param directory containing needed files.
+            @param truncate if True then truncate number of files to max_files param.
+            @param max_files maximum number of files to be returned.
+            @param regex an optional regex for matching files.
+
+            @return list of file names.
+        */
+        list<string> listFiles(string directory, bool truncate = False, int max_files = MAX_FILES, *string regex) {
+            Dir dir();
+            dir.chdir(directory);
+            list<string> files = dir.listFiles(regex);
+
+            # include code files if YAML files are also included
+            if (regex) {
+                hash<string, bool> file_map = map {basename($1): True}, files;
+                foreach string file in (files) {
+                    if (file =~ /\.yaml$/i) {
+                        try {
+                            string realname = file;
+                            if (directory && directory != ".") {
+                                realname = normalize_dir(directory + DirSep + realname);
+                            }
+                            hash<auto> file_data = parse_yaml(File::readTextFile(realname));
+                            if ((*string new_file = file_data."code") && !file_map{new_file}) {
+                                files += new_file;
+                            }
+                        } catch (hash<ExceptionInfo> ex) {
+                            #log("ignoring %s", get_exception_string(ex));
+                            # ignore exceptions
+                        }
+                    }
+                }
+            }
+
+            if (truncate) {
+                splice files, max_files;
+            }
+
+            log("Files: %y", files);
+            return files;
+        }
+
+        #! Creates file list needed for deployment/release request from the list of file names.
+        /** @param file_names list of the file names.
+            @param directory containing needed files. Fill in case file names list doesn't contain path.
+            @return list of hashes containing file names and their content.
+        */
+        list<hash<auto>> createFileList(list<string> file_names, string directory = "") {
+            list<hash<auto>> result;
+            foreach string file_name in (file_names) {
+                result += {
+                    "file_name": directory + file_name,
+                    "file_content": ReadOnlyFile::readBinaryFile(directory + file_name).toBase64(),
+                };
+            }
+            return result;
+        }
+
+        #! Creates file list needed for deploy/release requests from the given directory.
+        /** @param directory containing needed files.
+            @param truncate if True then truncate number of files to max_files param.
+            @param max_files maximum of files that should be taken from the directory (30 by default).
+            @param regex an optional regex for matching files.
+
+            @return list of hashes containing file names and their content.
+        */
+        list<hash<auto>> createFileListFromDirectory(string directory, bool truncate = False,
+                                                     int max_files = MAX_FILES, *string regex) {
+            return createFileList(listFiles(directory, truncate, max_files, regex), directory);
+        }
+
+        #! Returns API URL of the given request.
+        /** @param request object reference to one of the supported types:
+                   DeployRequest, DeleteRequest, ReleaseRequest, TestRequest.
+            @return the URL for the given request
+        */
+        string getUrlForRequest(Request request) {
+            if (request instanceof DeployRequest) {
+                return DEPLOY_URL;
+            } else if (request instanceof DeleteRequest) {
+                return DELETE_URL;
+            } else if (request instanceof ReleaseRequest) {
+                return RELEASE_URL;
+            } else if (request instanceof TestRequest) {
+                return TEST_URL;
+            }
+            throw "BAD-REQUEST",
+                  "Unkown request type, known types: DeployRequest, DeleteRequest, ReleaseRequest, TestRequest";
+        }
+
+        #! Wait until remote development request is finished. Request must contain id.
+        /** @param request object reference to one of the supported types: DeployRequest, DeleteRequest, ReleaseRequest.
+            @param time in which the request should be finished if not exception is thrown.
+            @param info an optional reference to a hash that will be used as an output variable giving a hash of
+            request headers and other information about the HTTP request; if present the hash will contain the following keys:
+            - \c headers: a hash of outgoing HTTP request headers
+            - \c request-uri: the request URI string sent (ex: \c "POST /services/async/38.0/job HTTP/1.1")
+            - \c body-content-type: the outgoing message body Mime \c Content-Type value
+            - \c response-headers: a hash of incoming HTTP headers in the response
+            - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+            - \c response-code: the HTTP response code
+            - \c response-body: the raw message body in the response (after any content decoding)
+            - \c response-serialization: the type of message serialization in the response; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            - \c request-body: the raw message body in the request (before any content encoding)
+            - \c request-serialization: the type of message serialization in the request; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            @return hash containing status of the finished request.
+            @throw TIMEOUT-ERROR in case the request is not finished within the given timeout (only if timeout > 0).
+        */
+        hash<auto> waitUntilRequestIsFinished(Request request, timeout time, *reference<hash> info) {
+            log("Wait until the request with id %y is finished", request.id);
+
+            timeout initial_timeout = time;
+            while (time >= 0s) {
+                hash<auto> response = rest.get(getUrlForRequest(request) + "/" + request.id, NOTHING, \info);
+
+                if (exists info) {
+                    response = response.body;
+                }
+                log("%y", response);
+
+                if (response.status != STATUS_QUEUED &&
+                    response.status != STATUS_UPLOADING &&
+                    response.status != STATUS_UPLOADED &&
+                    response.status != STATUS_IN_PROGRESS) {
+
+                    return response;
+                }
+                sleep(1s);
+                time -= 1s;
+            }
+
+            throw "TIMEOUT-ERROR", sprintf("Request with id %y has not been finished in the given timeout %y",
+                                           request.id, initial_timeout);
+        }
+
+        #! Post the given remote development request. WARN: the function will fill the id in the request.
+        /** @param request object reference to one of the supported types: DeployRequest, DeleteRequest, ReleaseRequest.
+            @param time timeout, = 0 by default. If time = 0 then the request is created asynchronously otherwise it
+                   will wait when request is finished or timeout expires.
+            @param info an optional reference to a hash that will be used as an output variable giving a hash of request headers and other information about the HTTP request; if present the hash will contain the following keys:
+            - \c headers: a hash of outgoing HTTP request headers
+            - \c request-uri: the request URI string sent (ex: \c "POST /services/async/38.0/job HTTP/1.1")
+            - \c body-content-type: the outgoing message body Mime \c Content-Type value
+            - \c response-headers: a hash of incoming HTTP headers in the response
+            - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+            - \c response-code: the HTTP response code
+            - \c response-body: the raw message body in the response (after any content decoding)
+            - \c response-serialization: the type of message serialization in the response; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            - \c request-body: the raw message body in the request (before any content encoding)
+            - \c request-serialization: the type of message serialization in the request; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            @return hash containing creation response from the Qorus in case time is set to 0, otherwise returns status
+                    of the finished request.
+            @throw TIMEOUT-ERROR in case the request is not finished within the given timeout (only if timeout > 0).
+        */
+        hash<auto> post(Request request, timeout time = 0s, *reference<hash> info) {
+            hash<auto> response = rest.post(getUrlForRequest(request), request.convertToHash(), \info);
+            request.id = response.id ?? response.body.id;
+
+            if (time > 0s) {
+                return waitUntilRequestIsFinished(request, time, \info);
+            }
+            return response;
+        }
+
+        #! Delete the given remote development request. Request must contain id.
+        /** @param request object reference to one of the supported types: DeployRequest, DeleteRequest, ReleaseRequest.
+            @param info an optional reference to a hash that will be used as an output variable giving a hash of request headers and other information about the HTTP request; if present the hash will contain the following keys:
+            - \c headers: a hash of outgoing HTTP request headers
+            - \c request-uri: the request URI string sent (ex: \c "POST /services/async/38.0/job HTTP/1.1")
+            - \c body-content-type: the outgoing message body Mime \c Content-Type value
+            - \c response-headers: a hash of incoming HTTP headers in the response
+            - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+            - \c response-code: the HTTP response code
+            - \c response-body: the raw message body in the response (after any content decoding)
+            - \c response-serialization: the type of message serialization in the response; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            - \c request-body: the raw message body in the request (before any content encoding)
+            - \c request-serialization: the type of message serialization in the request; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            @return hash containing cancel response.
+        */
+        hash<auto> del(Request request, *reference<hash> info) {
+            hash<auto> response = rest.del(getUrlForRequest(request) + "/" + request.id, NOTHING, \info);
+            return response;
+        }
+
+        #! Gets status of the given remote development request. Request must contain id.
+        /** @param request object reference to one of the supported types: DeployRequest, DeleteRequest, ReleaseRequest.
+            @param info an optional reference to a hash that will be used as an output variable giving a hash of request headers and other information about the HTTP request; if present the hash will contain the following keys:
+            - \c headers: a hash of outgoing HTTP request headers
+            - \c request-uri: the request URI string sent (ex: \c "POST /services/async/38.0/job HTTP/1.1")
+            - \c body-content-type: the outgoing message body Mime \c Content-Type value
+            - \c response-headers: a hash of incoming HTTP headers in the response
+            - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+            - \c response-code: the HTTP response code
+            - \c response-body: the raw message body in the response (after any content decoding)
+            - \c response-serialization: the type of message serialization in the response; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            - \c request-body: the raw message body in the request (before any content encoding)
+            - \c request-serialization: the type of message serialization in the request; see
+              @ref RestClient::RestClient::DataSerializationOptions "DataSerializationOptions" for possible values
+              when used with the null REST schema validator
+            @return hash containing the request status.
+        */
+        hash<auto> getStatus(Request request, *reference<hash> info) {
+            hash<auto> response = rest.get(getUrlForRequest(request) + "/" + request.id, NOTHING, \info);
+            return response;
+        }
+    }
+}

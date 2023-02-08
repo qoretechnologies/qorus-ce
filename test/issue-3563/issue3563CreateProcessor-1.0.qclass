@@ -1,0 +1,28 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3563CreateProcessor inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto _data) {
+        auto newData = {
+            "staticdata": {
+                "orders": {
+                    "1": {"id": 10, "currency_to_buy": "USD", "currency_to_sell": "EUR", "amount": 100},
+                    "2": {"id": 11, "currency_to_buy": "CZK", "currency_to_sell": "EUR", "amount": 600}
+                },
+                "exchange_rates": {
+                    "EUR": 1.0,
+                    "CZK": 25.0,
+                    "USD": 22.0
+                }
+            }
+        };
+        UserApi::logInfo("Creating Processor was called, %y", newData);
+        enqueue(newData);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

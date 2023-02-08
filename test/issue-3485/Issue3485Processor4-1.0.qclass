@@ -1,0 +1,29 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3485Processor4 inherits AbstractDataProcessor {
+    private {
+        list<hash<auto>> state;
+    }
+
+    private submitImpl(code enqueue, auto _data) {
+        if (_data.typeCode() != NT_HASH) {
+            throw "DATA-ERROR", sprintf("got type %y; expecting \"hash\"", _data.type());
+        }
+        state += _data;
+
+        enqueue(_data);
+    }
+
+    private flushImpl(code enqueue) {
+        # write all state dat to job
+        JobApi::logInfo("saving state data to job: %N", state);
+        JobApi::saveInfo(state);
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

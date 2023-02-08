@@ -1,0 +1,30 @@
+type: job
+name: issue3326job
+version: "1.0"
+desc: Test job written using YAML format
+author:
+  - Qore Technologies, s.r.o.
+active: true
+run-skipped: false
+single-instance: false
+schedule:
+  minutes: "5"
+  hours: "4"
+  days: "*"
+  months: "*"
+  dow: "*"
+expiry-date: 2019-12-13
+class-name: issue3326job
+lang: qore
+code: issue3326job.qjob
+config-items:
+  - name: issue-3326-test-config-item-7
+    type: list
+    default_value:
+      - test_1
+      - test_2
+    description: test config item of type list
+    config_group: Test Group
+    value:
+      - 123
+      - 545

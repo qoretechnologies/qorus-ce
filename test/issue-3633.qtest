@@ -1,0 +1,147 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+%requires WebDavHandler
+%requires FsUtil
+%requires xml
+
+%exec-class Issue3633Test
+
+class Issue3633Test inherits QUnit::Test {
+    public {
+        const GroupName = "wd-test-1";
+        const Group = {
+            "group": GroupName,
+            "desc": "test WebDAV group",
+        };
+    }
+
+    constructor() : Test("issue 3633", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+
+        addTestCase("main test", \mainTest());
+
+        set_return_value(main());
+    }
+
+    private globalSetUp() {
+        try {
+            # create group
+            qrest.post("groups", Group);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore exceptions
+        }
+    }
+
+    private globalTearDown() {
+        try {
+            qrest.del("groups/" + GroupName);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore exceptions
+        }
+    }
+
+    mainTest() {
+        TmpDir tmp(NOTHING, NOTHING, ENV.OMQ_DIR + "/user");
+        string rdir = basename(tmp.path);
+
+        string url = UserApi::qorusGetLocalUrl() + "/webdav";
+        hash<auto> opts = {
+        };
+        WebDavClient wd(url, opts);
+
+        hash<auto> req = {
+            "DAV:propfind": {
+                "^attributes^": {
+                    "xmlns:DAV": "DAV:",
+                },
+                "DAV:prop": {
+                    "DAV:creationdate": NOTHING,
+                    "DAV:getlastmodified": NOTHING,
+                    "DAV:getcontentlength": NOTHING,
+                },
+            },
+        };
+
+        date start = now();
+
+        TmpFile tmp_file(NOTHING, ".txt", tmp.path);
+        tmp_file.file.printf("test");
+        tmp_file.file.close();
+
+        #printf("tmp_file: %y\n", tmp_file.path);
+
+        string req_xml = make_xml(req);
+        string xml;
+        hash<auto> wd_data;
+        date creation_date;
+        date last_modified_date;
+        hash<auto> props;
+        hash<auto> info;
+        on_error printf("info: %N\n", info);
+        # GMT time zone
+        TimeZone gmt(0);
+        {
+            on_error printf("REQUEST XML: %s\n", req_xml);
+            xml = wd.send(req_xml, "PROPFIND", "webdav/" + rdir + "/" + basename(tmp_file.path), NOTHING, NOTHING,
+                \info).body;
+            wd_data = parse_xml(xml);
+            on_error
+                printf("response data: %N\n", wd_data);
+
+            props = wd_data."DAV:multistatus"."DAV:response"."DAV:propstat"."DAV:prop";
+            creation_date = date(props."DAV:creationdate");
+            assertGe(start, creation_date);
+            last_modified_date = gmt.date(props."DAV:getlastmodified"[5..], "DD Mon YYYY HH:mm:SS");
+            assertGe(start, last_modified_date);
+            assertEq(4, props."DAV:getcontentlength".toInt());
+        }
+
+        url = UserApi::qorusGetLocalUrl() + "/webdav";
+        printf("url: %y\n", url);
+        wd = new WebDavClient(url);
+
+        string random_str = get_random_string();
+        mkdir(ENV.OMQ_DIR + "/user/" + random_str);
+        on_exit remove_tree(ENV.OMQ_DIR + "/user/" + random_str);
+
+        string filename = get_random_string() + ".txt";
+        string content = get_random_string();
+        hash<auto> resp = wd.send(content, "POST", "webdav/" + random_str + "/" + filename, NOTHING, NOTHING, \info);
+        assertEq(201, resp.status_code);
+
+        {
+            on_error printf("REQUEST XML: %s\n", req_xml);
+            xml = wd.send(req_xml, "PROPFIND", "webdav/" + random_str + "/" + filename, NOTHING, NOTHING,
+                \info).body;
+            wd_data = parse_xml(xml);
+            on_error
+                printf("response data: %N\n", wd_data);
+
+            props = wd_data."DAV:multistatus"."DAV:response"."DAV:propstat"."DAV:prop";
+            creation_date = date(props."DAV:creationdate");
+            assertGe(start, creation_date);
+            last_modified_date = gmt.date(props."DAV:getlastmodified"[5..], "DD Mon YYYY HH:mm:SS");
+            assertGe(start, last_modified_date);
+            assertEq(content.length(), props."DAV:getcontentlength".toInt());
+        }
+
+        resp = wd.send(content, "DELETE", "webdav/" + random_str + "/" + filename, NOTHING, NOTHING, \info);
+        assertEq(204, resp.status_code);
+    }
+}
+
+class WebDavClient inherits HTTPClient {
+    constructor(string url, *hash<auto> opts)
+            : HTTPClient({
+                "url": url,
+                "additional_methods": WebDavHandler::AbstractWebDavHandler::RequestMethods,
+            } + opts) {
+    }
+}

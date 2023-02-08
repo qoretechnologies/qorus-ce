@@ -1,0 +1,103 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# desc: test function 1
+# author: Qore Technologies, sro
+sub error_test_1() {
+    if (WorkflowApi::getStepInfo().retries) {
+    	UserApi::logInfo("second iteration; returning without error");
+	    return;
+    }
+
+    my *softint $r = UserApi::getOption("normal-retry");
+    if ($r) {
+    	$r = seconds($r);
+        UserApi::logInfo("setting custom retry delay = %n", $r);
+    }
+
+    UserApi::logInfo("raising 'ERROR-1' with retry delay = %s", exists $r ? sprintf("%n", $r) : "<default>");
+    WorkflowApi::stepError("ERROR-1", NOTHING, $r);
+}
+# END
+
+# type: VALIDATION
+# version: 1.0
+# desc: errortest asynchronous validation test function
+# author: Qore Technologies, sro
+sub errortest_async_validation($arg) {
+    my *int $avc = WorkflowApi::getDynamicData("async-validation-count");
+    ++$avc;
+    WorkflowApi::updateDynamicData(("async-validation-count": $avc));
+    UserApi::logInfo("validation count is %d", $avc);
+    if ($avc % 2) {
+        WorkflowApi::stepError("ERROR-ASYNC-1", NOTHING, 3s);
+        #setRetryDelay(3s);
+        return;
+    }
+    if ($avc == 2)
+        return OMQ::StatAsyncWaiting;
+
+    UserApi::logInfo("validation indicating COMPLETE");
+    return OMQ::StatComplete;
+}
+# END
+
+# type: ASYNC-START
+# version: 1.0
+# desc: errortest async function
+# author: Qore Technologies, sro
+sub errortest_async() {
+    my $key = WorkflowApi::generateUniqueKey();
+    QorusAsyncStepBase::submitAsyncKey($key);
+
+    my $r = UserApi::getOption("async-retry");
+
+    if ($r) {
+        $r = seconds($r);
+        UserApi::logInfo("setting custom async retry delay = %n", $r);
+        #WorkflowApi::stepError("ERROR-2");
+        WorkflowApi::setRetryDelay($r);
+    } else {
+    	UserApi::logInfo("leaving async retry delay with default value");
+    }
+}
+# END
+
+# type: ASYNC-END
+# version: 1.0
+# desc: errortest async end function
+# author: Qore Technologies, sro
+sub errortest_async_end($data) {
+    UserApi::logInfo("data=%n", $data);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: definitions for errors thrown by the ERRORTEST workflow
+# author: Qore Technologies, sro
+hash sub errortest_errors() {
+    return (
+        "ERROR-1": (
+            "desc"       : "errortest error 1",
+            "status"     : OMQ::StatRetry,
+            "retry-delay": 45s,
+            "business"   : False,
+        ),
+        "ERROR-2": (
+            "desc"       : "errortest error 2 (business)",
+            "status"     : OMQ::StatRetry,
+            "retry-delay": 2s,
+            "business"   : True,
+        ),
+        "ERROR-ASYNC-1": (
+            "desc"       : "async error test",
+            "status"     : OMQ::StatRetry,
+            "retry-delay": 1s,
+            "business"   : False,
+        ),
+	);
+}
+# END

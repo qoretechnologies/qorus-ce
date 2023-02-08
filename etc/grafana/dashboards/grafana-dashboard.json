@@ -1,0 +1,1271 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 0,
+  "iteration": 1565264803364,
+  "links": [],
+  "panels": [
+    {
+      "aliasColors": {
+        "in SLA": "#7fba27",
+        "out of SLA": "#d13913"
+      },
+      "breakPoint": "100%",
+      "cacheTimeout": null,
+      "combine": {
+        "label": "Others",
+        "threshold": 0
+      },
+      "datasource": "Prometheus",
+      "fontSize": "80%",
+      "format": "short",
+      "gridPos": {
+        "h": 5,
+        "w": 11,
+        "x": 0,
+        "y": 0
+      },
+      "id": 20,
+      "interval": null,
+      "legend": {
+        "percentage": true,
+        "show": true,
+        "values": true
+      },
+      "legendType": "Under graph",
+      "links": [],
+      "maxDataPoints": 3,
+      "nullPointMode": "connected",
+      "options": {},
+      "pieType": "pie",
+      "strokeWidth": "2",
+      "targets": [
+        {
+          "expr": "qorus_order_stats_sla{band=\"$band\",in_sla=\"1\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "in SLA",
+          "refId": "B"
+        },
+        {
+          "expr": "qorus_order_stats_sla{band=\"$band\",in_sla=\"0\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "out of SLA",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": null,
+      "timeShift": null,
+      "title": "SLA Stats",
+      "type": "grafana-piechart-panel",
+      "valueName": "current"
+    },
+    {
+      "aliasColors": {
+        "Completed w/o errors": "#7fba27",
+        "Recovered Automatically": "#81358a",
+        "Recovered Manually": "#d13913"
+      },
+      "breakPoint": "100%",
+      "cacheTimeout": null,
+      "combine": {
+        "label": "Others",
+        "threshold": 0
+      },
+      "datasource": "Prometheus",
+      "decimals": 0,
+      "fontSize": "80%",
+      "format": "short",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 22,
+      "interval": null,
+      "legend": {
+        "header": "",
+        "percentage": true,
+        "percentageDecimals": 0,
+        "show": true,
+        "sideWidth": null,
+        "values": true
+      },
+      "legendType": "Under graph",
+      "links": [],
+      "maxDataPoints": 3,
+      "nullPointMode": "connected",
+      "options": {},
+      "pieType": "pie",
+      "strokeWidth": "2",
+      "targets": [
+        {
+          "expr": "qorus_order_stats_disposition{disposition=\"C\",band=\"$band\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Completed w/o errors",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_order_stats_disposition{disposition=\"A\",band=\"$band\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Recovered Automatically",
+          "refId": "C"
+        },
+        {
+          "expr": "qorus_order_stats_disposition{disposition=\"M\",band=\"$band\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Recovered Manually",
+          "refId": "B"
+        }
+      ],
+      "timeFrom": null,
+      "timeShift": null,
+      "title": "Workflow Disposition",
+      "type": "grafana-piechart-panel",
+      "valueName": "current"
+    },
+    {
+      "aliasColors": {},
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "decimals": 0,
+      "fill": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 24,
+      "legend": {
+        "alignAsTable": false,
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "rightSide": false,
+        "show": false,
+        "total": false,
+        "values": false
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pointradius": 2,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"C\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "COMPLETE",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"Y\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "READY",
+          "refId": "L"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"S\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "SCHEDULED",
+          "refId": "B"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"N\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "INCOMPLETE",
+          "refId": "C"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"V\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "EVENT-WAITING",
+          "refId": "F"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"A\"}",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "ASYNC-WAITING",
+          "refId": "D"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"W\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "WAITING",
+          "refId": "E"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"R\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "RETRY",
+          "refId": "G"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"E\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "ERROR",
+          "refId": "I"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"I\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "IN-PROGRESS",
+          "refId": "H"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"X\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "CANCELED",
+          "refId": "K"
+        },
+        {
+          "expr": "qorus_actual_workflow_instances_statuses{id=\"$id\",status=\"B\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "BLOCKED",
+          "refId": "J"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Instances",
+      "tooltip": {
+        "shared": false,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "series",
+        "name": null,
+        "show": true,
+        "values": [
+          "total"
+        ]
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "CPU load": "#394b59"
+      },
+      "bars": false,
+      "cacheTimeout": null,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "fill": 0,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 8,
+      "interval": "",
+      "legend": {
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "show": true,
+        "total": false,
+        "values": false
+      },
+      "lines": true,
+      "linewidth": 3,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pluginVersion": "5.0.0",
+      "pointradius": 2,
+      "points": true,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_cluster_info_node_load_pct{node_name=\"$node_name\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "CPU load",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Node CPU load",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "percent",
+          "label": "",
+          "logBase": 1,
+          "max": "100",
+          "min": "0",
+          "show": true
+        },
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "RAM used by Qorus": "#394b59",
+        "Total RAM used": "#8a9ba8",
+        "Total node1 RAM": "#d13913"
+      },
+      "bars": false,
+      "cacheTimeout": null,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "fill": 0,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "id": 6,
+      "legend": {
+        "alignAsTable": false,
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "rightSide": false,
+        "show": true,
+        "total": false,
+        "values": false
+      },
+      "lines": true,
+      "linewidth": 3,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pluginVersion": "5.0.0",
+      "pointradius": 2,
+      "points": true,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_cluster_info_node_ram{node_name=\"$node_name\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Total {{node_name}} RAM",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_cluster_info_node_ram_in_use{node_name=\"$node_name\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Total RAM used",
+          "refId": "B"
+        },
+        {
+          "expr": "qorus_cluster_info_node_priv{node_name=\"$node_name\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "RAM used by Qorus",
+          "refId": "C"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Node Memory Progression",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "format": "bytes",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "Alerts": "light-red",
+        "Total": "light-green",
+        "qorus_service_alerts{instance=\"localhost:8092\",job=\"qorus\"}": "red"
+      },
+      "bars": true,
+      "cacheTimeout": null,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "decimals": 0,
+      "fill": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 10,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "hideEmpty": false,
+        "hideZero": false,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pluginVersion": "5.0.0",
+      "pointradius": 2,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_service_total",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "Total",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_service_alerts",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Alerts",
+          "refId": "B"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Number of Services",
+      "tooltip": {
+        "shared": false,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "series",
+        "name": null,
+        "show": true,
+        "values": [
+          "current"
+        ]
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "node1": "#394b59"
+      },
+      "bars": false,
+      "cacheTimeout": null,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "description": "",
+      "fill": 0,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "id": 4,
+      "legend": {
+        "avg": false,
+        "current": false,
+        "max": false,
+        "min": false,
+        "show": true,
+        "total": false,
+        "values": false
+      },
+      "lines": true,
+      "linewidth": 3,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pluginVersion": "5.0.0",
+      "pointradius": 2,
+      "points": true,
+      "renderer": "flot",
+      "seriesOverrides": [
+        {
+          "alias": "node1",
+          "yaxis": 1
+        }
+      ],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_cluster_info_process_count{node_name=\"$node_name\"}",
+          "format": "time_series",
+          "hide": false,
+          "instant": false,
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "{{node_name}}",
+          "refId": "A"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Node Process Count History",
+      "tooltip": {
+        "shared": true,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "time",
+        "name": null,
+        "show": true,
+        "values": []
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "Alerts": "light-red",
+        "Total": "light-green"
+      },
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "decimals": 0,
+      "fill": 1,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 14,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pointradius": 2,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_job_total",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "Total",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_job_alerts",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Alerts",
+          "refId": "B"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Number of Jobs",
+      "tooltip": {
+        "shared": false,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "series",
+        "name": null,
+        "show": true,
+        "values": [
+          "total"
+        ]
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "Alerts": "light-red",
+        "Total": "light-green",
+        "qorus_workflow_alerts{instance=\"localhost:8092\",job=\"qorus\"}": "red"
+      },
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "decimals": 0,
+      "fill": 0,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "id": 12,
+      "legend": {
+        "alignAsTable": true,
+        "avg": true,
+        "current": true,
+        "hideEmpty": false,
+        "hideZero": false,
+        "max": false,
+        "min": false,
+        "rightSide": true,
+        "show": true,
+        "total": false,
+        "values": true
+      },
+      "lines": false,
+      "linewidth": 0,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pointradius": 2,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_workflow_total",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "Total",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_workflow_alerts",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "Alerts",
+          "refId": "B"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Number of Workflows",
+      "tooltip": {
+        "shared": false,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "series",
+        "name": null,
+        "show": true,
+        "values": [
+          "total"
+        ]
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": true
+        },
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    },
+    {
+      "aliasColors": {
+        "ASYNC-WAITING": "light-orange",
+        "BLOCKED": "light-red",
+        "CANCELED": "rgb(120, 120, 120)",
+        "COMPLETE": "light-green",
+        "ERROR": "dark-red",
+        "EVENT-WAITING": "super-light-orange",
+        "IN-PROGRESS": "dark-yellow",
+        "INCOMPLETE": "semi-dark-orange",
+        "READY": "light-blue",
+        "RETRY": "dark-blue",
+        "SCHEDULED": "super-light-blue",
+        "WAITING": "dark-orange"
+      },
+      "bars": true,
+      "dashLength": 10,
+      "dashes": false,
+      "datasource": "Prometheus",
+      "fill": 1,
+      "gridPos": {
+        "h": 5,
+        "w": 24,
+        "x": 0,
+        "y": 37
+      },
+      "id": 18,
+      "legend": {
+        "alignAsTable": false,
+        "avg": false,
+        "current": false,
+        "hideZero": false,
+        "max": false,
+        "min": false,
+        "rightSide": false,
+        "show": false,
+        "sideWidth": null,
+        "total": false,
+        "values": false
+      },
+      "lines": false,
+      "linewidth": 1,
+      "links": [],
+      "nullPointMode": "null",
+      "options": {},
+      "percentage": false,
+      "pointradius": 2,
+      "points": false,
+      "renderer": "flot",
+      "seriesOverrides": [],
+      "spaceLength": 10,
+      "stack": false,
+      "steppedLine": false,
+      "targets": [
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"C\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "COMPLETE",
+          "refId": "A"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"Y\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "READY",
+          "refId": "L"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"S\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "SCHEDULED",
+          "refId": "B"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"N\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "INCOMPLETE",
+          "refId": "C"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"V\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "EVENT-WAITING",
+          "refId": "F"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"A\"}",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 1,
+          "legendFormat": "ASYNC-WAITING",
+          "refId": "D"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"W\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "WAITING",
+          "refId": "E"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"R\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "RETRY",
+          "refId": "G"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"E\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "ERROR",
+          "refId": "I"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"I\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "IN-PROGRESS",
+          "refId": "H"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"X\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "CANCELED",
+          "refId": "K"
+        },
+        {
+          "expr": "qorus_actual_workflow_overall_statuses{status=\"B\"}",
+          "format": "time_series",
+          "intervalFactor": 1,
+          "legendFormat": "BLOCKED",
+          "refId": "J"
+        }
+      ],
+      "thresholds": [],
+      "timeFrom": null,
+      "timeRegions": [],
+      "timeShift": null,
+      "title": "Workflow Overall Statuses",
+      "tooltip": {
+        "shared": false,
+        "sort": 0,
+        "value_type": "individual"
+      },
+      "type": "graph",
+      "xaxis": {
+        "buckets": null,
+        "mode": "series",
+        "name": null,
+        "show": true,
+        "values": [
+          "total"
+        ]
+      },
+      "yaxes": [
+        {
+          "decimals": 0,
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": "0",
+          "show": true
+        },
+        {
+          "format": "short",
+          "label": null,
+          "logBase": 1,
+          "max": null,
+          "min": null,
+          "show": false
+        }
+      ],
+      "yaxis": {
+        "align": false,
+        "alignLevel": null
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 18,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": [
+      {
+        "allValue": null,
+        "current": {
+          "selected": false,
+          "text": "24_hour_band",
+          "value": "24_hour_band"
+        },
+        "datasource": "Prometheus",
+        "definition": "qorus_order_stats_sla",
+        "hide": 0,
+        "includeAll": false,
+        "label": null,
+        "multi": false,
+        "name": "band",
+        "options": [
+          {
+            "selected": false,
+            "text": "1_hour_band",
+            "value": "1_hour_band"
+          },
+          {
+            "selected": true,
+            "text": "24_hour_band",
+            "value": "24_hour_band"
+          },
+          {
+            "selected": false,
+            "text": "4_hour_band",
+            "value": "4_hour_band"
+          }
+        ],
+        "query": "qorus_order_stats_sla",
+        "refresh": 0,
+        "regex": "/.*band=\"(.*)\",in_sla.*/",
+        "skipUrlSync": false,
+        "sort": 0,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      },
+      {
+        "allValue": null,
+        "current": {
+          "selected": true,
+          "text": "node1",
+          "value": "node1"
+        },
+        "datasource": "Prometheus",
+        "definition": "qorus_cluster_info_node_load_pct",
+        "hide": 0,
+        "includeAll": false,
+        "label": null,
+        "multi": false,
+        "name": "node_name",
+        "options": [
+          {
+            "selected": true,
+            "text": "node1",
+            "value": "node1"
+          }
+        ],
+        "query": "qorus_cluster_info_node_load_pct",
+        "refresh": 0,
+        "regex": "/.*node_name=\"(.*)\".*/",
+        "skipUrlSync": false,
+        "sort": 0,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      },
+      {
+        "allValue": null,
+        "current": {
+          "isNone": true,
+          "selected": true,
+          "text": "None",
+          "value": ""
+        },
+        "datasource": "Prometheus",
+        "definition": "",
+        "hide": 0,
+        "includeAll": false,
+        "label": null,
+        "multi": false,
+        "name": "workflow_id",
+        "options": [
+          {
+            "isNone": true,
+            "selected": true,
+            "text": "None",
+            "value": ""
+          }
+        ],
+        "query": "",
+        "refresh": 0,
+        "regex": "/.*id=\"(.*)\",inst.*/",
+        "skipUrlSync": false,
+        "sort": 3,
+        "tagValuesQuery": "",
+        "tags": [],
+        "tagsQuery": "",
+        "type": "query",
+        "useTags": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-2m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "time_options": [
+      "5m",
+      "15m",
+      "1h",
+      "6h",
+      "12h",
+      "24h",
+      "2d",
+      "7d",
+      "30d"
+    ]
+  },
+  "timezone": "",
+  "title": "Test",
+  "uid": "KaYFQZvWz",
+  "version": 14
+}

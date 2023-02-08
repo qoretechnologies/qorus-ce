@@ -1,0 +1,789 @@
+#!/usr/bin/qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires Logger
+%requires QorusObjectParser
+
+%exec-class QorusObjectParserTest
+
+public namespace QorusObjectParser;
+
+class QorusObjectParserTest inherits QUnit::Test {
+    private {
+        Parser parser();
+
+        string srcDir = dirname(get_module_hash()."QorusObjectParser".filename) + Qore::DirSep + "test" + Qore::DirSep;
+        list<string> filesToParse = (srcDir + "issue3102constants.qconst",
+                                     srcDir + "issue3102function_2.qfd",
+                                     srcDir + "issue3102function.qfd",
+                                     srcDir + "issue3102mapperlib.qfd",
+                                     srcDir + "issue3102job.qjob",
+                                     srcDir + "issue3102job2.qjob",
+                                     srcDir + "issue3102javaclass.qclass.java",
+                                     srcDir + "issue3102mapper.qmapper",
+                                     srcDir + "issue3102mapper2.qmapper",
+                                     srcDir + "issue3102mapper3.qmapper",
+                                     srcDir + "issue3102service.qclass",
+                                     srcDir + "issue3102service.qsd",
+                                     srcDir + "issue3102service2.qsd",
+                                     srcDir + "issue3102regression3.qvmap");
+
+        list<hash> invalidFilesToParse = (
+            {
+                "file": srcDir + "service3.qsd",
+                "error": "QORUS-OBJECT-PARSER-ERROR",
+                "error_desc": "service methods must have a name and a body",
+            },
+            {
+                "file": srcDir + "service4.qsd",
+                "error": "QORUS-OBJECT-PARSER-ERROR",
+                "error_desc": "contained no service definitions",
+            },
+            {
+                "file": srcDir + "service5.qsd",
+                "error": "QORUS-OBJECT-PARSER-ERROR",
+                "error_desc": "specified twice in service method",
+            }
+        );
+
+        const EXPECTED = (
+            {
+                "type": "constant",
+                "tags": {
+                    "name": "issue3102ExampleTestConstants1",
+                    "version": "1.0",
+                    "desc": "example test constants 1",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "code": "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "const Example1 = 1;\n"
+                            "const Example1_1 = \"one\";\n"
+                }
+            },
+            {
+                "type": "constant",
+                "tags": {
+                    "name": "issue3102ExampleTestConstants2",
+                    "version": "1.0",
+                    "desc": "example test constants 2",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "code": "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "const Example2 = 2;\n"
+                            "const Example2_1 = \"two\";\n"
+                }
+            },
+            {
+                "type": "function",
+                "tags": {
+                    "type": "GENERIC",
+                    "version": "1.0",
+                    "desc": "test function",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "hardcoded_name": "issue3102test_function2",
+                    "name": "issue3102test_function2",
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "sub issue3102test_function2() {\n"
+                            "    UserApi::logInfo(\"issue3102test_function2 called\");\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "function",
+                "tags": {
+                    "type": "GENERIC",
+                    "version": "1.0",
+                    "desc": "test job function",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "hardcoded_name": "issue3102test_function_1",
+                    "name": "issue3102test_function_1",
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "const InfoKeys = (\"last_executed\",);\n"
+                            "const PropDomain = \"test\";\n"
+                            "const PropKey = \"test-job-error\";\n"
+                            "\n"
+                            "sub issue3102test_function_1() {\n"
+                            "    bool do_error;\n"
+                            "    if (UserApi::propGet(PropDomain, PropKey)) {\n"
+                            "        do_error = True;\n"
+                            "        UserApi::propUpdate(PropDomain, PropKey);\n"
+                            "    }\n"
+                            "\n"
+                            "    # 25% chance of an error, 50% chance that the error will be a business error\n"
+                            "    if (do_error || !(rand() % 4))\n"
+                            "	JobApi::err(\"TEST-JOB-ERROR\", \"error description\", (\"hash-a\": True), OMQ::ES_Major, rand() % 2 ? True : False);\n"
+                            "\n"
+                            "    hash jh = JobApi::getInfo();\n"
+                            "    UserApi::logInfo(\"info: %y\", jh);\n"
+                            "    JobApi::saveInfo((\"info-1\": now_us()) + jh{InfoKeys});\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "function",
+                "tags": {
+                    "type": "STEP",
+                    "version": "1.0",
+                    "desc": "test step function",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "derived_name": "issue3102test_step",
+                    "name": "issue3102test_step",
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "sub issue3102test_step() {\n"
+                            "    UserApi::logInfo(\"issue3102test_step was called\");\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "function",
+                "tags": {
+                    "type": "VALIDATION",
+                    "version": "1.0",
+                    "desc": "test step function",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "derived_name": "issue3102test_validation_step",
+                    "name": "issue3102test_validation_step",
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "string sub issue3102test_validation_step() {\n"
+                            "    UserApi::logInfo(\"issue3102test_validation_step was called\");\n"
+                            "    return OMQ::StatComplete;\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "function",
+                "tags": {
+                    "type": "GENERIC",
+                    "version": "1.0",
+                    "desc": "mapper library",
+                    "author": list("Qore Technologies"),
+                    "hardcoded_name": "issue3102mapperlib",
+                    "name": "issue3102mapperlib",
+                    "code": "\n"
+                            "%new-style\n"
+                            "\n"
+                            "string sub get_value(string value) {\n"
+                            "    return \"test\" + value;\n"
+                            "}\n"
+                            "\n"
+                            "string sub get_datasource(string datasource) {\n"
+                            "    return \"test\" + datasource;\n"
+                            "}\n"
+                            "\n"
+                }
+            },
+            {
+                "type": "job",
+                "tags": {
+                    "name": "issue3102job",
+                    "class-name": "issue3102Job",
+                    "version": "1.0",
+                    "desc": "class-based test job",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "single-instance": False,
+                    "active": True,
+                    "run-skipped": True,
+                    "remote": True,
+                    "schedule": {
+                        "minutes": "0",
+                        "hours": "3",
+                        "days": "1",
+                        "months": "1",
+                        "dow": "*"
+                    },
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces",
+                        },
+                        "regression": {
+                            "desc": "regression test group"
+                        }
+                    },
+                    "groups": ("test", "regression"),
+                    "lang": "qore",
+                    "class-based": True,
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "class issue3102Job inherits QorusJob {\n"
+                            "    run() {\n"
+                            "        logInfo(\"job is run\");\n"
+                            "    }\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "job",
+                "tags": {
+                    "name": "issue3102job2",
+                    "version": "1.0",
+                    "desc": "class-based test job",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "single-instance": False,
+                    "active": True,
+                    "run-skipped": True,
+                    "remote": True,
+                    "schedule": {
+                        "minutes": "0",
+                        "hours": "3",
+                        "days": "1",
+                        "months": "1",
+                        "dow": "*"
+                    },
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces",
+                        },
+                        "regression": {
+                            "desc": "regression test group"
+                        }
+                    },
+                    "groups": ("test", "regression"),
+                    "lang": "qore",
+                    "class-based" : False,
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "sub run() {\n"
+                            "    UserApi::logInfo(\"job is run\");\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "class",
+                "tags": {
+                    "name": "issue3102JavaTest",
+                    "version": "1.0",
+                    "desc": "Java test class",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "lang": "java",
+                    "code": "package com.qoretechnologies.qorus.test.regression;\n"
+                            "\n"
+                            "import qore.OMQ.UserApi.UserApi;\n"
+                            "\n"
+                            "public class issue3102JavaTest {\n"
+                            "    public static void assertEq(Object expects, Object actual) throws Throwable {\n"
+                            "        UserApi.logInfo(\"%s: testing assertion\", getSourceLocation());\n"
+                            "        if (!equal(expects, actual)) {\n"
+                            "            throw new Exception(String.format(\"expected %s; got %s\",\n"
+                            "                expects == null ? \"null\" : expects.toString(),\n"
+                            "                actual == null ? \"null\" : actual.toString()));\n"
+                            "        }\n"
+                            "        UserApi.logInfo(\"%s: assertion OK\", getSourceLocation());\n"
+                            "    }\n"
+                            "\n"
+                            "    public static void assertTrue(boolean b) throws Throwable {\n"
+                            "        if (!b) {\n"
+                            "            throw new Exception(\"expected true; got false\");\n"
+                            "        }\n"
+                            "        UserApi.logInfo(\"%s: assertion OK\", getSourceLocation());\n"
+                            "    }\n"
+                            "\n"
+                            "    public static void assertFalse(boolean b) throws Throwable {\n"
+                            "        if (b) {\n"
+                            "            throw new Exception(\"expected false; got true\");\n"
+                            "        }\n"
+                            "        UserApi.logInfo(\"%s: assertion OK\", getSourceLocation());\n"
+                            "    }\n"
+                            "\n"
+                            "    public static void assertNull(Object o) throws Throwable {\n"
+                            "        if (o != null) {\n"
+                            "            throw new Exception(String.format(\"expected null; got %s\", o.toString()));\n"
+                            "        }\n"
+                            "        UserApi.logInfo(\"%s: assertion OK\", getSourceLocation());\n"
+                            "    }\n"
+                            "\n"
+                            "    public static String getSourceLocation() {\n"
+                            "        return getSourceLocation(4);\n"
+                            "    }\n"
+                            "\n"
+                            "    public static String getSourceLocation(int stack_offset) {\n"
+                            "        String fullClassName = Thread.currentThread().getStackTrace()[stack_offset].getClassName();\n"
+                            "        String className = fullClassName.substring(fullClassName.lastIndexOf(\".\") + 1);\n"
+                            "        String methodName = Thread.currentThread().getStackTrace()[stack_offset].getMethodName();\n"
+                            "        int lineNumber = Thread.currentThread().getStackTrace()[stack_offset].getLineNumber();\n"
+                            "\n"
+                            "        return String.format(\"%s.%s():%d\", className, methodName, lineNumber);\n"
+                            "    }\n"
+                            "\n"
+                            "    public static boolean equal(Object expects, Object actual) {\n"
+                            "        if (expects == null) {\n"
+                            "            return actual == null;\n"
+                            "        }\n"
+                            "        if (actual == null) {\n"
+                            "            return false;\n"
+                            "        }\n"
+                            "        return expects.equals(actual);\n"
+                            "    }\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "mapper",
+                "tags": {
+                    "name": "issue3102mapper",
+                    "version": "1.0",
+                    "desc": "issue3102 mapper",
+                    "type": "Mapper",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "parse_options": "PO_NEW_STYLE,PO_REQUIRE_TYPES,PO_STRICT_ARGS",
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces"
+                        }
+                    },
+                    "groups": ("test",),
+                    "options": {
+                        "input": "(\n"
+                                 "    \"input-1\": {},\n"
+                                 ")",
+                        "output": "(\n"
+                                  "    \"config-item-1\": {},\n"
+                                  "    \"field-2\": {},\n"
+                                  ")"
+                    },
+                    "fields": {
+                        "config-item-1": "(\"code\": auto sub (auto ignored, hash<auto> rec) { return MapperApi::getGlobalConfigItemValue(\"test-item\"); } )",
+                        "field-2": "(\"name\": \"input-1\")"
+                    },
+                    "code": NOTHING
+                }
+            },
+            {
+                "type": "mapper",
+                "tags": {
+                    "name": "issue3102mapper2",
+                    "version": "1.0",
+                    "desc": "mapper old syntax test",
+                    "type": "InboundTableMapper",
+                    "author": list("Qore Technologies"),
+                    "parse_options": "PO_NEW_STYLE",
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces"
+                        }
+                    },
+                    "groups": ("test",),
+                    "options": {
+                        "datasource": "get_datasource(\"test\")",
+                        "table": "\"test_table\"",
+                        "runtime": "(\n"
+                            "    \"output-5\": now(),\n"
+                        ")",
+                        "input": "{\n"
+                            "    \"test\": {\"desc\": \"hash data\"},\n"
+                            "}",
+                        "name": "\"test mapper\"",
+                    },
+                    "functions": ("issue3102mapperlib",),
+                    "fields": {
+                        "output-1": "{"
+                            "\"sequence\": \"test_sequence\""
+                        "}",
+                        "output-2": "{"
+                            "\"constant\": get_value(\"testdata\")"
+                        "}",
+                        "output-3": "\"test.test1\"",
+                        "output-4": "{"
+                            "\"code\": string sub(any ignored, hash rec) { return rec.test1 + \"_\" + rec.test2; } }",
+
+                    },
+                    "code": NOTHING
+                }
+            },
+            {
+                "type": "mapper",
+                "tags": {
+                    "name": "issue3102mapper3",
+                    "version": "1.0",
+                    "desc": "mapper old syntax test",
+                    "type": "Mapper",
+                    "author": list("Qore Technologies"),
+                    "parse_options": "PO_NEW_STYLE",
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces"
+                        }
+                    },
+                    "groups": ("test",),
+                    "options": {
+                        "runtime": "(\n"
+                            "    \"output-5\": now(),\n"
+                        ")",
+                        "input": "{\n"
+                            "    \"test\": {\"desc\": \"hash data\"},\n"
+                            "}",
+                        "output": "{\n"
+                            "    \"output-1\": {},\n"
+                            "    \"output-2\": {},\n"
+                            "    \"output-3\": {\n"
+                                "        \"mand\": True\n"
+                            "    },\n"
+                            "    \"output-4\": {},\n}"
+                    },
+                    "functions": ("issue3102mapperlib",),
+                    "fields": {
+                        "output-1": "{"
+                            "\"sequence\": \"test_sequence_2\""
+                        "}",
+                        "output-2": "{"
+                            "\"constant\": get_value(\"testdata2\")"
+                        "}",
+                        "output-3": "\"test.test2\"",
+                        "output-4": "{"
+                            "\"code\": string sub(any ignored, hash rec) { return rec.test123 + \"_\" + rec.test2; } }",
+
+                    },
+                    "code": NOTHING
+                }
+            },
+            {
+                "type": "class",
+                "tags": {
+                    "name": "issue3102TestServiceClass",
+                    "version": "1.0",
+                    "desc": "class-based test service",
+                    "author": list("Qore Technologies, s.r.o."),
+                    "lang": "qore",
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "class issue3102TestServiceClass inherits QorusService {\n"
+                            "    # name: base\n"
+                            "    # desc: base method provided in the TestServiceClass class\n"
+                            "    string base() {\n"
+                            "        return \"base\";\n"
+                            "    }\n"
+                            "}\n"
+                }
+            },
+              # service.qsd methods
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "init",
+                    "desc": "returns a string",
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "getString",
+                    "desc": "returns a string",
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "echo",
+                    "desc": "returns the argument",
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "echoInternal",
+                    "desc": "returns the argument; internal only",
+                    "internal": True,
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "getInt",
+                    "desc": "get an int",
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "throwException",
+                    "desc": "throws an exception",
+                    "lock": "none"
+                }
+            },
+            {
+                "type": "service",
+                "tags": {
+                    "name": "issue3102ClassTest",
+                    "service": "issue3102ClassTest",
+                    "serviceversion": "1.0",
+                    "version": "1.0",
+                    "servicedesc": "class-based test service",
+                    "desc": "class-based test service",
+                    "serviceauthor": "Qore Technologies, s.r.o., Alzhan Turlybekov",
+                    "author": list("Qore Technologies, s.r.o.", "Alzhan Turlybekov"),
+                    "servicetype": "USER",
+                    "class-based": True,
+                    "lang": "qore",
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces",
+                        },
+                        "regression":{
+                            "desc": "regression test group"
+                        }
+                    },
+                    "groups": ("test", "regression"),
+                    "functions": ("issue3102test_function2",),
+                    "resource": ("resources/resource.xml",),
+                    "text-resource": ("resources/resource.txt",),
+                    "bin-resource": ("resources/resource.bin",),
+                    "parse_options": "PO_REQUIRE_TYPES,PO_REQUIRE_PROTOTYPES,PO_STRICT_ARGS",
+                    "authlabels": {
+                        "auth-lbl-def": "default"
+                    },
+                    "autostart": False,
+                    "code": "\n"
+                            "%new-style\n"
+                            "%strict-args\n"
+                            "%require-types\n"
+                            "%enable-all-warnings\n"
+                            "\n"
+                            "class issue3102ClassTest inherits QorusService {\n"
+                            "    # name: init\n"
+                            "    # desc: returns a string\n"
+                            "    init() {\n"
+                            "        logInfo(\"init() method called\");\n"
+                            "    }\n"
+                            "\n"
+                            "    # name: getString\n"
+                            "    # desc: returns a string\n"
+                            "    string getString() {\n"
+                            "        return \"string\";\n"
+                            "    }\n"
+                            "\n"
+                            "    # name: echo\n"
+                            "    # desc: returns the argument\n"
+                            "    /** @param arg\n"
+                            "\n"
+                            "        @return the argument\n"
+                            "    */\n"
+                            "    auto echo(auto arg) {\n"
+                            "        return arg;\n"
+                            "    }\n"
+                            "\n"
+                            "    # name: echoInternal\n"
+                            "    # desc: returns the argument; internal only\n"
+                            "    # internal: true\n"
+                            "    auto echoInternal(auto arg) {\n"
+                            "        return arg;\n"
+                            "    }\n"
+                            "\n"
+                            "    private myPrivMethod() {\n"
+                            "    }\n"
+                            "\n"
+                            "    # name: getInt\n"
+                            "    # desc: get an int\n"
+                            "    int getInt() {\n"
+                            "        return 1;\n"
+                            "    }\n"
+                            "\n"
+                            "    # name: throwException\n"
+                            "    # desc: throws an exception\n"
+                            "    throwException() {\n"
+                            "        throw \"ERROR\", \"test error\";\n"
+                            "    }\n"
+                            "\n"
+                            "    int echo(int i) {\n"
+                            "        return i;\n"
+                            "    }\n"
+                            "}\n"
+                            "# END\n"
+                }
+            },
+            # service2.qsd
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "init",
+                    "desc": "initializes the svc-test service",
+                    "lock": "none",
+                    "code": "sub init() {\n"
+                            "    our hash $stats = hash();\n"
+                            "    our bool $run = True;\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "start",
+                    "desc": "background service thread",
+                    "lock": "none",
+                    "code": "sub start() {\n"
+                            "    my Counter $c(1);\n"
+                            "    while ($run) {\n"
+                            "        $c.waitForZero(1s);\n"
+                            "    }\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "stop",
+                    "desc": "stops the service",
+                    "lock": "none",
+                    "code": "sub stop() {\n"
+                            "    my Counter $c(1);\n"
+                            "    $c.waitForZero(1s);\n"
+                            "    $run = False;\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "service method",
+                "tags": {
+                    "name": "info",
+                    "desc": "provides information about the service",
+                    "lock": "none",
+                    "code": "hash sub info() {\n"
+                            "    return $stats + (\n"
+                            "        \"tid\": gettid(),\n"
+                            "        );\n"
+                            "}\n"
+                }
+            },
+            {
+                "type": "service",
+                "tags": {
+                    "name": "issue3102service2",
+                    "service": "issue3102service2",
+                    "version": "1.0",
+                    "serviceversion": "1.0",
+                    "servicedesc": "start service test service",
+                    "desc": "start service test service",
+                    "serviceauthor": "Qore Technologies, sro",
+                    "author": list("Qore Technologies, sro"),
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces",
+                        },
+                        "regression": {
+                            "desc": "regression test group"
+                        }
+                    },
+                    "groups": ("test", "regression"),
+                    "functions": ("issue3102test_function2",),
+                    "resource": ("resources/resource.xml",),
+                    "text-resource": ("resources/resource.txt",),
+                    "bin-resource": ("resources/resource.bin",),
+                    "template": ("resources/resource.html",),
+                    "servicetype": "USER",
+                    "autostart": False,
+                    "lang": "qore",
+                    "class-based": False
+                    # "code": NOTHING
+                }
+            },
+            {
+                "type": "value map",
+                "tags": {
+                    "name": "issue3102regression3",
+                    "desc": "test value map",
+                    "author": list("Petr Vanek (Qore Technologies, sro)"),
+                    "throws_exception": 1,
+                    "exception": True,
+                    "valuetype": "int",
+                    "raw": False,
+                    "dateformat": "DD.MM.YYYY",
+                    "definedGroups": {
+                        "test": {
+                            "desc": "test interfaces"
+                        }
+                    },
+                    "groups": ("test",),
+                    "code": "\n"
+                            "\"key1\",1\n"
+                            "\"key2\",2\n\n"
+                }
+            },
+        );
+    }
+
+    constructor() : Test("QorusObjectParserTest", "1.0") {
+        Logger logger = new Logger("QorusObjectParserTest");
+        logger.setLevel(Logger::LoggerLevel::INFO);
+        auto std_appender = new LoggerAppenderStdOut("stdout", new LoggerLayoutPattern());
+        std_appender.open();
+        logger.addAppender(std_appender);
+
+        parser.setLogger(logger);
+
+        addTestCase("parseSomeFilesTest", \parseSomeFilesTest());
+        addTestCase("parseInvalidFiles", \parseInvalidFiles());
+        set_return_value(main());
+    }
+
+    private parseSomeFilesTest() {
+        date current_time = now_ms();
+        list<QorusObject> qorus_objects = parser.parse(filesToParse);
+        printf("Parse time: %N\n", now_ms() - current_time);
+
+        assertEq(EXPECTED.size(), qorus_objects.size());
+
+        int i = 0;
+        foreach auto qorus_object in (qorus_objects) {
+            print("------------------------------------------------------\n");
+            printf("type: %y\n", qorus_object.getType());
+            hash serialized_object = qorus_object.serializeMembers();
+            assertEq(EXPECTED[i], serialized_object - ("tagDefinitions", "userTags"));
+
+            printf("tags: %y\n", qorus_object.getTags());
+            print("------------------------------------------------------\n");
+            i++;
+        }
+    }
+
+    private parseInvalidFiles() {
+        foreach auto invalid_file in (invalidFilesToParse) {
+            assertThrows(invalid_file{"error"}, invalid_file{"error_desc"}, \parser.parse(), invalid_file{"file"});
+        }
+    }
+}

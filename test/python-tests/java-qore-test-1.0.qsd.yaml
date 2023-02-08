@@ -1,0 +1,25 @@
+# This is a generated file, don't edit!
+type: service
+name: java-qore-test
+desc: Test using a Qore connector from Java
+lang: java
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: JavaQoreTest
+classes:
+  - QoreConnectorTest
+groups:
+  - regression
+  - test
+version: '1.0'
+servicetype: USER
+code: java_qore_test_1_0_service/JavaQoreTest.java
+class-connections:
+    Connection_1:
+      - class: QoreConnectorTest
+        connector: test
+        trigger: test
+methods:
+  - name: test
+    desc: test method

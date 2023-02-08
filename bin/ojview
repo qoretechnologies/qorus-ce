@@ -1,0 +1,600 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# minimum qore version
+%requires qore >= 1.0
+
+# do not use "$" for vars, members, and methods calls, assume local var scope
+%new-style
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# require all variables to be declared (at least with scope)
+%require-our
+
+# execute the "ojview" class as the application class
+%exec-class ojview
+
+# this cryptic directive actually enables all warnings, despite its confusing name :-)
+%enable-all-warnings
+
+# do not allow argument matching to NOOP function/method variants, also warn or throw exceptions
+# if excess args are passed to code that ignores them
+%strict-args
+
+# Qorus client module
+%requires QorusClientBase
+# contains the YamlRpcHandler user module
+%requires YamlRpcHandler
+
+class ojview {
+    # maximum length of event strings without requiring an additional line
+    const MAX_EVENT_LEN = 37;
+
+    const ANSI_RESET     = 0;
+    const ANSI_BG_RED    = 41;
+    const ANSI_BG_GREEN  = 42;
+    const ANSI_BG_YELLOW = 43;
+    const ANSI_BG_BLUE   = 44;
+    const ANSI_BG_PURPLE = 45;
+    const ANSI_BG_CYAN   = 46;
+    const ANSI_BG_WHITE  = 47;
+
+    const ANSI_FG_BLACK  = 30;
+    const ANSI_FG_RED    = 31;
+    const ANSI_FG_GREEN  = 32;
+    const ANSI_FG_YELLOW = 33;
+    const ANSI_FG_BLUE   = 34;
+    const ANSI_FG_PURPLE = 35;
+    const ANSI_FG_CYAN   = 36;
+    const ANSI_FG_GREY   = 37;
+
+    const ANSI_ATTR_BOLD      = 1;
+    const ANSI_ATTR_UNDERLINE = 4;
+    const ANSI_ATTR_BLINK     = 5;
+    const ANSI_ATTR_REVERSE   = 7;
+    const ANSI_ATTR_HIDDEN    = 8;
+
+    const BFSComplete     = (1 <<  0);
+    const BFSError        = (1 <<  1);
+    const BFSInProgress   = (1 <<  2);
+    const BFSCrash        = (1 <<  3);
+
+    const MaxRows = 500;
+
+    const DateFormat = "YYYY-MM-DD HH:mm:SS";
+    const DateFormatUs = "YYYY-MM-DD HH:mm:SS.xx";
+
+    const BFSMap = (
+        "COMPLETE"     : BFSComplete,
+        "ERROR"        : BFSError,
+        "IN-PROGRESS"  : BFSInProgress,
+        "CRASH"        : BFSCrash,
+    );
+
+    # options for the getopt class
+    const oview_opts = (
+        "url"       : "u,url=s",
+        "proxy"     : "p,proxy-url=s",
+        "show"      : "W,show-url",
+        "all"       : "a,all",
+        "hour"      : "H,hour",
+        "day"       : "d,day",
+        "week"      : "w,week",
+        "month"     : "m,month",
+        "year"      : "y,year",
+        "date"      : "D,date=s",
+        "meta"      : "f,definition",
+        "alljobs"   : "A,alljobs",
+
+        "no_sqlcache" : "F,nosqlcache",
+
+        "stat"      : "S,status=s@",
+        "mono"      : "M,mono",
+
+        "to"        : "t,timeout=i",
+        "lit"       : "l,literal:i+",
+        "reformat"  : "R,reformat",
+        "verbose"   : "v,verbose:i+",
+        "remote"    : "Q,remote=s",
+        "token"     : "k,token=s",
+        "help"      : "h,help"
+    );
+
+    private {
+        # command-line options
+        hash o;
+        # reverse status map
+        hash srmap;
+
+        # to capture HTTP call info
+        hash info;
+
+        bool shown = False;
+        hash header;
+        hash options;
+    }
+
+    constructor() {
+        # initialize Qorus client library
+        QorusClient::initFast();
+
+        options = QorusClient::parseOptions("qorus-client");
+        processCommandLine();
+
+        if (o.remote)
+            qrest = omqclient.getRemoteRest(o.remote);
+
+        if (o.url)
+            qrest.setURL(o.url);
+        if (o.proxy)
+            qrest.setProxyURL(o.proxy);
+
+        if (o.to) {
+            int to = o.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+    	try {
+            if (o.alljobs) {
+                showAllJobs();
+                if (!o.meta && !elements ARGV)
+                    return;
+            }
+
+            if (ARGV.empty()) {
+                if (o.meta)
+                    showJobList();
+                else
+                    showJobOverview();
+	    	    return;
+	        }
+
+            foreach string arg in (ARGV) {
+                # if it's a jobid, then show only that job
+                if (int(arg) == arg) {
+                    if (o.meta)
+                        showJobMetadata(arg);
+                    else
+                        showJobOverview(arg);
+                } else if (arg =~ /^J[0-9]+/) {
+                    splice arg, 0, 1;
+                    if (o.meta)
+                        showJobMetadata(arg);
+                    else
+                        showJobOverview(arg);
+                } else if (arg =~ /j:[0-9]+/)
+                    showJobInstance(substr(arg, 2));
+                else if (arg =~ /j[0-9]+/) {
+                    doDeprecatedShortWarning(arg);
+                    showJobInstance(substr(arg, 1));
+                } else {
+                    if (o.meta)
+                        showJobMetadata(arg);
+                    else
+                        showJobOverview(arg);
+                }
+	        }
+        } catch (hash<ExceptionInfo> ex) {
+            qrest.outputRestErrorMessage(ex, info);
+            exit(2);
+        }
+    }
+
+    private doDeprecatedShortWarning(string arg) {
+        stderr.printf("WARNING: argument %y uses a deprecated format that will not be supported in future releases; this form is ambiguous with legal workflow names;\n", arg);
+        stderr.printf("WARNING: use \"%s:%s\" instead for future compatibility.\n", arg[0], arg.substr(1));
+    }
+
+    private processCommandLine() {
+        GetOpt g(oview_opts);
+        o = g.parse(\ARGV);
+        if (exists o."_ERRORS_") {
+            stderr.printf("%s\n", o."_ERRORS_"[0]);
+            exit(1);
+        }
+        if (o.show) {
+                if (exists options."proxy-url")
+                    printf("%s (through HTTP proxy: %s)\n", options."client-url", options."proxy-url");
+                else
+                    printf("%s\n", options."client-url");
+            exit(0);
+        }
+        if (o.help)
+            ojview::usage();
+
+        # set o.status
+        foreach string stat in (o.stat) {
+            for (int i = 0; i < strlen(stat); ++i) {
+                string c = toupper(stat[i]);
+                switch (c) {
+                    case "E":
+                        o.status |= BFSError;
+                        break;
+
+                    case "C":
+                        o.status |= BFSComplete;
+                        break;
+
+                    case "I":
+                        o.status |= BFSInProgress;
+                        break;
+
+                    case "Z":
+                        o.status |= BFSCrash;
+                        break;
+
+                    default:
+                        printf("unknown status argument %n, valid arguments: C,I,E,Z, --help for more info\n", c);
+                        exit(1);
+                }
+            }
+        }
+
+        string sqltime  = o.all ? "all" : o.year ? "year" : o.month ? "month" : o.week ? "week" : o.hour ? "hour" : o.date ? "date" : "day";
+        # set starting time
+        switch (sqltime) {
+            case "day":
+                o.stime = now() - 1D;
+                break;
+
+            case "hour":
+                o.stime = now() - 60m;
+                break;
+
+            case "week":
+                o.stime = now() - 7D;
+                break;
+
+            case "month":
+                o.stime = now() - 1M;
+                break;
+
+            case "year":
+                o.stime = now() - 1Y;
+                break;
+
+            case "all":
+                o.stime = 1970-01-01;
+                break;
+
+            case "date": {
+                # parse o.date and set o.stime
+                int date_length = strlen(o.date);
+                if (date_length == 4)
+                    o.stime = date(o.date + "0101");
+                else if (date_length == 6)
+                    o.stime = date(o.date + "01");
+                else
+                    o.stime = date(o.date);
+                break;
+            }
+        }
+
+        # make srmap if necessary
+        if (o.status)
+            foreach string stat in (BFSMap.keyIterator())
+                srmap.(BFSMap{stat}) = stat;
+
+        #printf("showorder=%d\n", o.showorder);
+        #printf("verbose=%d\n", o.verbose);
+    }
+
+    static private any fd(any d, bool us = False) {
+	    if (!exists d || d === NULL)
+	        return "NULL               ";
+
+    	return d.typeCode() == NT_DATE ? format_date(us ? DateFormatUs : DateFormat, d) : d;
+    }
+
+    static private string doJobID(softstring id) {
+    	return sprintf("%-9s", "j:" + id);
+    }
+
+    private showJobInstance(hash job) {
+        string stat = job.jobstatus;
+    	f_printf(" %s: %-40w %-11s %-19s %-19s\n",
+            ojview::doJobID(job.job_instanceid),
+            sprintf("%s %s(%d)", job.name, job.version, job.jobid),
+            stat,
+            ojview::fd(job.started), ojview::fd(job.completed));
+
+        if (job.sessionid)
+            printf("   + session ID %d\n", job.sessionid);
+
+    	if (o.verbose)
+            printf("   + info: %s\n", exists job.info ? sprintf("%y", job.info) : "<no info>");
+
+        if (o.verbose || o.showerrs) {
+            foreach hash err in (job.errors) {
+                printf("   + ERROR: %s (%s) %-20s %-35s\n", ojview::fd(err.created),
+                    err.business_error ? "B" : "T", err.severity, err.error);
+                if ((o.verbose + o.showerrs) > 1) {
+                    printf("      + desc: %n\n", err.description);
+                    printf("      + info: %y\n", err.info);
+                }
+            }
+        }
+
+        # show auditing events
+        if (o.verbose) {
+            foreach hash ae in (job.audit) {
+                string str;
+                if (exists ae.audit_user_event) str += sprintf(" user: %s", ae.audit_user_event);
+                if (exists ae.stepid) str += sprintf(" stepid: %d[%d]", ae.stepid, ae.ind);
+                if (exists ae.who) str += sprintf(" who: %y", ae.who);
+                if (exists ae.source) str += sprintf(" source: %y", ae.source);
+                if (exists ae.reason) str += sprintf(" reason: %y", ae.reason);
+                if (exists ae.info1) str += sprintf(" info1: %y", ae.info1);
+                if (exists ae.info2) str += sprintf(" info2: %y", ae.info2);
+                printf("   + AUDIT: %s %d %s:%s\n", ojview::fd(ae.created, True), ae.audit_eventid, ae.event, str);
+            }
+        }
+    }
+
+    private *list getStatuses() {
+        list list = ();
+        foreach string code in (srmap.keyIterator())
+            if (o.status & code)
+                list += srmap{code};
+        if (list)
+            return list;
+    }
+
+    private string getCount(*softint n) {
+        if (!n || o.mono)
+            return sprintf("%10d", n);
+        string str = "\033[";
+        foreach any a in (argv)
+            str += sprintf("%d;", a);
+        return substr(str, 0, -1) + sprintf("m%10d\033[00m", n);
+    }
+
+    private startHeader(string h) {
+        auto save = header.h;
+        delete header;
+        header.h = save;
+    }
+
+    private showJobOverviewInfo(list l) {
+        startHeader("job-overview");
+        if (!shown) {
+            if (o.all)
+                print("showing data with no time limits");
+            else
+                printf("status since %s", format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+            if (o.no_sqlcache)
+                print("\nsql cache is disabled by -F");
+            print("\n");
+            shown = True;
+        }
+
+        # take one "verbose" value and apply it to "status" temporarily if "status" is not set
+        bool tstatus = False;
+        if (o.verbose && !o.status) {
+            o.status = True;
+            tstatus = True;
+            --o.verbose;
+        }
+        on_exit if (tstatus) {
+            o.status = False;
+            ++o.verbose;
+        }
+
+        # get maximum job name length
+        int maxl = foldl max($1, $2), (map $1.name.size(), l);
+
+        # print headers
+        if (!header."job-overview") {
+            printf(sprintf("%%%dw", 16 + maxl), "");
+            f_printf("%10s %10s %10s %10s\n",
+                OMQ::JS_Complete, OMQ::JS_Error, OMQ::JS_InProgress, OMQ::JS_Crash);
+            header."job-overview" = True;
+        }
+
+        # sort job list
+        l = sort(l, int sub(hash lj, hash rj) { return lj.name <=> rj.name; });
+
+    	foreach hash inf in (l) {
+            string ver = inf.version;
+            f_printf("%4d %-" + maxl.toString() + "w %-10s", inf.jobid, inf.name, ver);
+            printf("%s %s %s %s\n",
+                   getCount(inf.COMPLETE, ANSI_BG_GREEN, ANSI_FG_BLACK),
+                   getCount(inf.ERROR, ANSI_BG_RED),
+                   getCount(inf."IN-PROGRESS", ANSI_BG_WHITE, ANSI_FG_BLACK),
+                   getCount(inf.CRASH, ANSI_BG_PURPLE));
+
+            if (o.status) {
+                *list statuses = getStatuses();
+
+                string url = sprintf("jobs/%d/results?date=%s", inf.jobid, o.stime);
+                if (statuses)
+                    url += ";statuses=" + statuses.join(",");
+                if (o.no_sqlcache)
+                    url += ";sqlcache=false";
+                if (o.verbose)
+                    url += ";full=true";
+                *list al = qrest.get(o, url, NOTHING, NOTHING, \info);
+
+                if (al) {
+                    printf("(displaying %d result%s)\n", al.size(), al.size() == 1 ? "" : "s");
+                    foreach hash info in (al) {
+                        #printf("info: %N\n", info);
+                        showJobInstance(info);
+                    }
+                } else
+                    printf("(no results for jobid %d, modified > %n%s)\n", inf.jobid, o.stime,
+                           statuses ? sprintf(", status %y", statuses) : "");
+            }
+    	}
+    }
+
+    private showJobOverview(*string name) {
+    	startHeader("job-overview");
+
+        string url = sprintf("jobs?date=%s", o.stime);
+        if (name)
+            url += ";jobs=" + name;
+        if (o.no_sqlcache)
+            url += ";sqlcache=false";
+
+        *list l = qrest.get(o, url, NOTHING, NOTHING, \info);
+        if (!l) {
+            if (name)
+            printf("job %s: ", name);
+            printf("no results since %s\n", format_date("YYYY-MM-DD HH:mm:SS", o.stime));
+            return;
+        }
+        showJobOverviewInfo(l);
+    }
+
+    private showJobMetadata(string name) {
+        *hash ans = qrest.get(o, "jobs/" + name + "?defonly=true", NOTHING, NOTHING, \info);
+        if (!ans) {
+            printf("job %y: does not exist\n", name);
+            return;
+        }
+        showJobIntern(ans);
+    }
+
+    private string getSched(hash job) {
+        return job.recurring ? sprintf("every %n", seconds(job.recurring)) : sprintf("min=%s hour=%s day=%s month=%s wday=%s", job.minute, job.hour, job.day, job.month, job.wday);
+    }
+
+    private showJobMetadataIntern(hash jobs) {
+        map showJobIntern($1), jobs.iterator();
+    }
+
+    private showJobIntern(hash job) {
+        printf("## created: %s modified: %s jobid: %d last executed: %s\n", fd(job.created), fd(job.modified), job.jobid, fd(job.last_executed));
+        if (job.tags.sys)
+            printf("## source: %y:%d host: %y user: %y\n", job.tags.sys.source, job.tags.sys.offset, job.tags.sys.host, job.tags.sys.user);
+
+        printf("# name: %s\n", job.name);
+        printf("# version: %s\n", job.version);
+        if (job.description)
+            printf("# desc: %s\n", job.description);
+        if (job.author)
+            printf("# author: %s\n", job.author);
+        printf("# active: %s\n", job.active ? "true" : "false");
+        printf("# run-skipped: %s\n", job.run_skipped ? "true" : "false");
+        if (job.recurring)
+            printf("# duration: %d\n", job.recurring);
+        else
+            printf("# schedule: %s %s %s %s %s\n", job.minute, job.hour, job.day, job.month, job.wday);
+
+        if (job.expiry_date)
+            printf("# expiry-date: %s\n", fd(job.expiry_date));
+
+        foreach string type in (job.lib.keyIterator()) {
+            # skip empty library type lists
+            if (!job.lib{type})
+                continue;
+            printf("# %s: %s\n", type, (foldl $1.name + ", " + $2.name, job.lib{type}));
+        }
+
+        if (job.groups)
+            printf("# groups: %s\n", (foldl $1 + ", " + $2, (map $1.name, job.groups)));
+
+        printf("%s", job.code);
+        if (job.code.substr(-1) != "\n")
+            print("\n");
+        printf("# END\n");
+    }
+
+    private showAllJobs() {
+        *list ans = qrest.get(o, "jobs?defonly=true", NOTHING, NOTHING, \info);
+        if (!ans) {
+            printf("no jobs are defined\n");
+            return;
+        }
+
+        int cmax = foldl max($1, $2), (map $1.name.size(), ans);
+        int imax = foldl max($1, $2), (map $1.jobid.toString().size(), ans);
+        string fmt = sprintf("+ %%s %%%ds %%-%dw %s last: %%s next: %%s %%s\n", imax, cmax);
+
+        printf("%d job%s:\n", elements ans, elements ans == 1 ? "" : "s");
+        foreach hash job in (ans) {
+            printf(fmt, job.jobid, job.active ? "A" : " ", job.name, job.version, fd(job.last_executed), fd(job.next), job.description);
+        }
+    }
+
+    private showJobList() {
+        *list l = qrest.get(o, "jobs?defonly=true", NOTHING, NOTHING, \info);
+        foreach hash job in (l) {
+            printf("JOB: %n v%s (jobid %d %s) last_executed: %s\n", job.name, job.version, job.jobid, job.active ? "ACTIVE" : "INACTIVE", fd(job.last_executed));
+            if (o.verbose) {
+                printf("     + schedule: %s\n", getSched(job));
+                printf("     + desc: %s\n", job.description);
+                if (job.groups) {
+                    print("     + groups: ");
+                    foreach my hash gh in (job.groups)
+                        printf("%y%s ", gh.name, (gh.enabled ? "" : " (DISABLED)"));
+                    print("\n");
+        		}
+	        }
+        }
+    }
+
+    private showJobInstance(softint id) {
+    	startHeader("job-instance");
+        string url = "jobresults/" + id;
+        if (o.no_sqlcache)
+            url += "?sqlcache=false";
+        hash ans = qrest.get(o, url, NOTHING, NOTHING, \info);
+        showJobInstance(ans);
+    }
+
+    static private usage() {
+    	printf(
+"usage: %s [options] [DATA OPTIONS]
+ JOB DATA OPTIONS:
+   name     job name
+   number   job id
+   j<id>    job instance id
+
+ TIME OPTIONS:
+  -H,--hour          show all in the last 60m
+  -d,--day           show all in the last 24h (default if no option given)
+  -w,--week          show all in the last 7 days
+  -m,--month         show all in the last month
+  -y,--year          show all from the last year
+  -a,--all           show all
+  -D,--date          show all since date, format: YYYY[MM[DD[hhmmss]]]
+
+ OUTPUT OPTIONS:
+  -S,--status=ARG    show only jobs with status=arg
+                       (c=complete, e=error, i=in-progress, z=crash)
+  -M,--mono          do not use ANSI colors in output
+  -f,--definition    show job definition/metadata
+  -A,--all-jobs      show definition information for all jobs
+  -F,--nosqlcache    do not use SQL cache (exact values, slow on big systems)
+
+ MISC OPTIONS:
+  -u,--url=ARG       sets Qorus URL (ex: http://user:pass@host:port)
+  -p,--proxy-url=ARG set the proxy URL (ex: http://user:pass@host:port)
+  -W,--show-url      show default Qorus system URL
+  -h,--help          this help text
+  -l,--literal       shows literal request and response (2x = show headers)
+  -Q,--remote=ARG    use the given remote Qorus connection
+  -R,--reformat      reformat data with -l+ for better readability
+  -t,--timeout=ARG   set HTTP timeout in seconds
+  -v,--verbose       set verbosity level (more v's = more info)
+  -k,--token=ARG     use the given token with HTTP requests to the Qorus server
+", get_script_name());
+        exit(1);
+    }
+}

@@ -1,0 +1,190 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusConnectionProvider.qm Qorus connection provider
+
+/*  QorusConnectionProvider.qm Copyright 2016 - 2023 Qore Technologies, s.r.o.
+
+    Permission is hereby granted, free of charge, to any person obtaining a
+    copy of this software and associated documentation files (the "Software"),
+    to deal in the Software without restriction, including without limitation
+    the rights to use, copy, modify, merge, publish, distribute, sublicense,
+    and/or sell copies of the Software, and to permit persons to whom the
+    Software is furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in
+    all copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+# minimum Qore version
+%requires qore >= 1.0
+
+%require-types
+%enable-all-warnings
+%new-style
+%strict-args
+
+%requires QorusClientCore
+%requires ConnectionProvider
+
+module QorusConnectionProvider {
+    version = "1.0.3";
+    desc    = "API for providing Qorus connections to Qore";
+    author  = "David Nichols <david.nichols@qoretechnologies.com>";
+    url     = "https://qoretechnologies.com";
+    license = "MIT";
+    init    = \QorusClient::init2();
+}
+
+/** @page qorusconnectionprovider_module QorusConnectionProvider Module
+
+    @tableofcontents
+
+    @section qorusconnectionproviderintro QorusConnectionProvider Module Introduction
+
+    The %QorusConnectionProvider module provides an API for providing URL connection strings from
+    @ref userconn "user connection" and @ref remoteconn "remote connection" identifiers.
+
+    To use this module, set the \c QORE_CONNECTION_PROVIDERS environment variable to
+    \c "QorusConnectionProvider".
+
+    All the public symbols in the module are defined in the QorusConnectionProvider namespace
+
+    Functions:
+    - @ref QorusConnectionProvider::get_mod_connections() "get_mod_connection()"
+
+    @section qorusconnectionproviderrelnotes Release Notes
+
+    @subsection qorusconnectionprovider_1_0_3 QorusConnectionProvider v1.0.3
+    - implemented support for a data provider scheme cache and rich option information for connections
+      (<a href="https://github.com/qorelanguage/qore/issues/4025">issue 4025</a>)
+
+    @subsection qorusconnectionprovider_1_0_2 QorusConnectionProvider v1.0.2
+    - fixed bugs with @ref ConnectionProvider::get_connections() "get_connections()" and
+      @ref ConnectionProvider::get_connection_hash() "get_connection_hash()" (<a href="https://bugs.qoretechnologies.com/issues/2262">2262</a>)
+
+    @subsection qorusconnectionprovider_1_0_1 QorusConnectionProvider v1.0.1
+    - fixed a bug where a configuration exception was not caught resulting in spurious configuration exceptions being incorrectly
+      propagated to clients (<a href="https://bugs.qoretechnologies.com/issues/2216">2216</a>)
+    - added support for the default \c "qorus" connnection providing a connection to the local Qorus instance
+      (<a href="https://bugs.qoretechnologies.com/issues/2214">2214</a>)
+
+    @subsection qorusconnectionprovider_1_0 QorusConnectionProvider v1.0
+    - the initial version of the QorusConnectionProvider module
+*/
+
+#! the QorusConnectionProvider namespace contains all the objects in the QorusConnectionProvider module
+public namespace QorusConnectionProvider {
+    #! returns a hash the given @ref userconn "user connection" or @ref remoteconn "remote connection"
+    /** @par Example:
+        @code{.py}
+hash h = get_mod_url_info(conn);
+        @endcode
+
+        @param conn the @ref userconn "user connection" or @ref remoteconn "remote connection" identifier or the special \c "qorus" connnection, providing a connection to the local Qorus instance
+
+        @return an @ref ConnectionProvider::AbstractConnection "AbstractConnection" object for the given @ref userconn "user connection" or @ref remoteconn "remote connection" if the connection is valid and defined, otherwise an exception is thrown; an @ref ConnectionProvider::HttpConnection "HttpConnection" to the local instance (with non API path) is returned if the argument is \c "qorus"
+
+        @throw CONNECTION-ERROR cannot match identifier to a known connection
+
+        @note
+        - @ref userconn "user connections" take precedence over Qorus @ref remoteconn "remote connections"; in case of a name conflict, info for the user connection is returned
+        - if a @ref userconn "user" or @ref remoteconn "remote" connection is defined with the name \c "qorus", then that connection will be returned instead of the local connection object; it's recommended not to use \c "qorus" for a @ref userconn "user" or @ref remoteconn "remote" connection name
+     */
+    public ConnectionProvider::AbstractConnection sub get_mod_connection(string conn) {
+        try {
+            return omqclient.getUserConnectionObject(conn);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore unknown connection objects, rethrow all others
+            if (ex.err != "CONNECTION-ERROR")
+                rethrow;
+        }
+        try {
+            return omqclient.getRemoteConnectionObject(conn);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore unknown connection objects, rethrow all others
+            switch (ex.err) {
+                case "REMOTE-ERROR":
+                case "REMOTE-LOAD-ERROR":
+                case "GET-REMOTE-ERROR":
+                case "MISSING-FILE":
+                    break;
+                default:
+                    rethrow;
+            }
+        }
+        # issue #2214: add support for default "qorus" connnection to the local instance
+        if (conn == "qorus") {
+            return priv_get_qorus_connection();
+        }
+        hash ch = priv_get_connections();
+        throw "CONNECTION-ERROR", sprintf("connection %y is not a known connection; available user connections: %y, remote connections: %y", conn, ch.uh.keys(), ch.rh.keys());
+    }
+
+    #! returns a hash for all available @ref userconn "user connections" and @ref remoteconn "remote connections" keyed by identifier or @ref nothing if no connections are available
+    /** @par Example:
+        @code{.py}
+*hash h = get_mod_connections();
+        @endcode
+
+        @return a hash for all available @ref userconn "user connections" and @ref remoteconn "remote connections" keyed by identifier; values are @ref ConnectionProvider::AbstractConnection "AbstractConnection" objects.  The default \c "qorus" @ref ConnectionProvider::HttpConnection "HttpConnection" object (with no API path) to the local instance is always returned if there are no connections.
+
+        @note
+        - @ref userconn "user connections" take precedence over Qorus @ref remoteconn "remote connections"; in case of a name conflict, the connection for the user connection is returned
+        - if a @ref userconn "user" or @ref remoteconn "remote" connection is defined with the name \c "qorus", then that connection will be returned instead of the local connection object; it's recommended not to use \c "qorus" for a @ref userconn "user" or @ref remoteconn "remote" connection name
+     */
+    public *hash<string, AbstractConnection> sub get_mod_connections() {
+        *hash<string, AbstractConnection> h;
+
+        try {
+            h = omqclient.getUserConnections();
+        } catch (hash<ExceptionInfo> ex) {
+        }
+        try {
+            # in case of a name collision, do not overwrite the user connection
+            h += map {$1.key: omqclient.getRemoteConnectionObject($1.key)}, omqclient.getRemoteInfo().pairIterator(), !exists h.($1.key);
+        } catch (hash<ExceptionInfo> ex) {
+        }
+        # issue #2214: add support for default "qorus" connnection to the local instance
+        if (!h.qorus) {
+            h.qorus = priv_get_qorus_connection();
+        }
+        return h;
+    }
+}
+
+namespace Priv {
+    *hash sub priv_get_connections() {
+        hash ch;
+        try { map ch.uh.$1 = True, keys omqclient.getUserConnectionInfo();} catch () {}
+        try { map ch.rh.$1 = True, keys omqclient.getRemoteInfo(), !exists ch.uh.$1;} catch () {}
+        return ch;
+    }
+
+    QorusHttpConnection sub priv_get_qorus_connection() {
+        string url = qrest.getURL();
+        hash opts = {
+            "connect_timeout": qrest.getConnectTimeout(),
+            "timeout": qrest.getTimeout(),
+        };
+        # remove path to provide a generic HTTP(S) connection to the instance
+        hash urlh = parse_url(url);
+        if (urlh.path) {
+            remove urlh.path;
+            url = sprintf("%s://", urlh.protocol);
+            if (urlh.username && urlh.password)
+                url += urlh.username + ":" + urlh.password + "@";
+            url += urlh.host;
+            if (urlh.port)
+                url += ":" + urlh.port;
+        }
+
+        return new QorusHttpConnection("qorus", omqclient.getOptions("qorus")."instance-key", url, {}, opts);
+    }
+}

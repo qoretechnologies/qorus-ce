@@ -1,0 +1,35 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+
+    const SERVICE_NAME = "bug-3020";
+
+    constructor(): Test("QorusBug3020_service_handler", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("start service", \startServiceTest());
+
+        set_return_value(main());
+    }
+
+    private startServiceTest() {
+        try {
+            auto result = qrest.put("services/" + SERVICE_NAME +"/start");
+            assertEq("OK", result);
+        } catch(auto ex) {
+            fail(sprintf("Test failed throwing unexpected exception: %n", ex));
+        }
+    }
+} # class Main
+

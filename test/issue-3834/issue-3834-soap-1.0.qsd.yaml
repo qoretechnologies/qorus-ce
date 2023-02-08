@@ -1,0 +1,40 @@
+# This is a generated file, don't edit!
+type: service
+name: issue-3834-soap
+desc: 'issue #3834 SOAP test'
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3834Soap
+api-manager:
+    factory: soap
+    provider-options:
+        schema:
+            type: file-as-string
+            value: simple.wsdl
+        root-uri:
+            type: string
+            value: issue-3834-soap
+        auth-name:
+            type: select-string
+            value: permissive
+    endpoints:
+        -
+            endpoint: /getCompanyInfo
+            type: method
+            value: getCompanyInfo
+        -
+            endpoint: /setCompanyLogo
+            type: fsm
+            value: issue-3834-set-company-logo
+groups:
+  - regression
+  - test
+remote: false
+version: '1.0'
+servicetype: USER
+code: issue-3834-soap-1.0.qsd
+methods:
+  - name: getCompanyInfo
+    desc: method

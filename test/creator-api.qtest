@@ -1,0 +1,1589 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+%requires uuid
+%requires WebSocketClient
+
+%exec-class CreatorApiTest
+
+class CreatorApiTest inherits QUnit::Test {
+    public {
+        const MyOpts = Opts + {
+            "keep": "k,keep-objects",
+        };
+
+        # option column
+        const OptionColumn = 27;
+
+        const GroupName = "creator-test-group1-" + UUID::get();
+        const Group = {
+            "group": GroupName,
+            "desc": "creator test group",
+        };
+    }
+
+    private {
+        int job_classid;
+    }
+
+    constructor() : Test("CreatorApiTest", "1.0", \ARGV, MyOpts) {
+        QorusClient::initFast();
+
+        addTestCase("connection test", \connectionTest());
+        addTestCase("class test", \classTest());
+        addTestCase("job test", \jobTest());
+
+        set_return_value(main());
+    }
+
+    connectionTest() {
+        try {
+            qrest.restDo("GET", "creator/job");
+        } catch (hash<ExceptionInfo> ex) {
+            testSkip("creator API is not present");
+        }
+
+        # create a connection
+        hash<auto> h = qrest.put("creator/connection/new");
+        assertEq(Type::Int, h.id.type());
+
+        string name = sprintf("test-connection-%s", UUID::get());
+
+        hash<auto> connection = {
+            "id": h.id,
+            "metadata": {
+                "description": get_random_string(),
+                "name": name,
+                "url": "db://error:name/pass@db"
+            },
+            "type": "connection",
+        };
+
+        h = qrest.post("creator/connection", connection);
+        on_exit {
+            if (!m_options.keep) {
+                h = qrest.del("creator/connection/" + connection.id);
+                assertEq(h.id, connection.id);
+            }
+        }
+        printf("created connection: %y\n", name);
+        assertEq(h.id, connection.id);
+
+        # test REST API
+        list<auto> l = qrest.get("connections");
+        assertEq(Type::String, l[0].description.type());
+        h = qrest.get("connections/" + connection.id + "?with_password");
+        hash<auto> test_metadata = connection.metadata + {
+            "enabled": True,
+        };
+        assertEq(test_metadata, h{keys test_metadata});
+
+        h = qrest.get("creator/connection/" + connection.id);
+        checkOptions(h);
+
+        CreatorWsClient wsc();
+        on_exit delete wsc;
+
+        int cid = wsc.getCid();
+        #printf("got CID %y\n", cid);
+
+        h = qrest.put("creator/connection/new");
+        assertEq(Type::Int, h.id.type());
+
+        hash<auto> h0 = qrest.put("creator/connection/" + h.id + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h0.locked);
+
+        # update a field
+        string tmp_name = sprintf("test-connection-%s", UUID::get());
+        hash<auto> resp = wsc.fieldUpdated("connection", h.id, "name", tmp_name);
+
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        # change the URL (and connection type)
+        string new_url = "rests://localhost:1";
+        resp = wsc.fieldUpdated("connection", h.id, "url", new_url);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        {
+            on_error printf("resp: %N\n", resp);
+            assertTrue(resp.info.metadata.isValid);
+            assertEq((), resp.info.metadata.messages);
+        }
+
+        resp = wsc.waitForMsg("SERVER-FIELD-UPDATED", {"info": {"field": "options"}});
+        {
+            on_error printf("resp: %N\n", resp);
+            assertTrue(resp.info.metadata.isValid);
+            assertEq((), resp.info.metadata.messages);
+            assertEq(Type::List, resp.info.metadata.fields.type());
+            assertEq(Type::Hash, resp.info.metadata.value.type());
+        }
+
+        # update to an invalid URL
+        resp = wsc.fieldUpdated("connection", h.id, "url", "");
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        {
+            on_error printf("resp: %N\n", resp);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("empty-value", resp.info.metadata.messages[0].contentMeta);
+        }
+
+        resp = wsc.waitForMsg("SERVER-FIELD-UPDATED", {"info": {"field": "options"}});
+        {
+            on_error printf("resp: %N\n", resp);
+            assertTrue(resp.info.metadata.isDisabled);
+            assertEq((), resp.info.metadata.messages);
+        }
+
+        resp = wsc.fieldUpdated("connection", h.id, "url", "xxxx://invalid");
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        {
+            on_error printf("resp: %N\n", resp);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("unknown-scheme", resp.info.metadata.messages[0].contentMeta);
+        }
+
+        wsc.closeInterface("connection", h.id, True);
+
+        # rename the connection
+        string new_name = sprintf("test-connection-%s", UUID::get());
+        h = qrest.put("creator/connection/" + name, {"metadata": {"name": new_name}});
+        assertEq(connection.id, h.id);
+        assertEq(new_name, h.name);
+        {
+            on_error printf("rename %y -> %y failed\n", name, new_name);
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404.*Not Found", \qrest.get(), "connections/" + name);
+        }
+
+        h = qrest.get("connections/" + connection.id + "?with_password");
+        test_metadata += {
+            "name": new_name,
+        };
+        assertEq(test_metadata, h{keys test_metadata});
+        h = qrest.get("creator/connection/" + connection.id);
+        assertTrue(h.hasKey("id"));
+        assertTrue(h.hasKey("type"));
+        assertTrue(h.hasKey("fields"));
+
+        # test edit lock
+        h = qrest.put("creator/connection/" + connection.id + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        {
+            hash<auto> ch = qrest.get("connections/" + connection.id);
+            on_error printf("ch: %N\n", ch);
+            assertEq(Type::Int, ch.edit_lock.type());
+        }
+
+        # negative test
+        h = qrest.put("creator/connection/" + connection.id + "/editLock", {
+            "cid": cid,
+            "tab_token": get_random_string(),
+        });
+        #printf("h: %y\n", h);
+        assertFalse(h.locked);
+        assertEq("warning", h.info.intent);
+        assertEq(Type::String, h.info.content.type());
+
+        # release the lock
+        qrest.put("creator/connection/" + connection.id + "/releaseEditLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+
+        # test editing a new connection
+        h = qrest.put("creator/connection/new");
+        assertEq("connection", h.type);
+        int connectionid = h.id;
+
+        h = qrest.put("creator/connection/" + connectionid + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        # update a field with no value
+        resp = wsc.fieldUpdated("connection", connectionid, "options", NOTHING, {"isAdvanced": True});
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        # negative test
+        {
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+            resp = wsc.fieldUpdated("connection", connectionid, "description", "other");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+        }
+
+        # close and reopen the WS connection
+        delete wsc;
+        wsc = new CreatorWsClient();
+        cid = wsc.getCid();
+
+        {
+            date start = now_us();
+            do {
+                # make sure we can lock it again
+                h = qrest.put("creator/connection/" + connectionid + "/editLock", {
+                    "cid": cid,
+                    "tab_token": wsc.getTabToken(),
+                });
+                if (!h.locked) {
+                    usleep(250ms);
+                }
+            } while (!h.locked && ((now_us() - start) < 10s));
+            on_error printf("h: %N\n", h);
+            assertTrue(h.locked);
+        }
+
+        # change the name
+        tmp_name = get_random_string(20, 2);
+        resp = wsc.fieldUpdated("connection", connectionid, "name", tmp_name);
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+
+        # check reservation errors
+        {
+            h0 = qrest.put("creator/connection/new");
+            assertEq("connection", h0.type);
+            int connectionid0 = h0.id;
+
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+
+            # try to edit without grabbing the lock first
+            resp = wsc.fieldUpdated("connection", connectionid0, "name", tmp_name);
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("edit-error", resp.info.metadata.messages[0].content);
+
+            wsc.clearMsg();
+            h = qrest.put("creator/connection/" + connectionid0 + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            assertTrue(h.locked);
+
+            resp = wsc.waitForMsg();
+            assertEq("INTERFACE-OPENED", resp.event);
+            assertEq("connection", resp.info.type);
+            assertEq(connectionid0, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+
+            # try to change to a reserved name
+            #printf("tmp_name: %y\n", tmp_name);
+            resp = wsc.fieldUpdated("connection", connectionid0, "name", tmp_name);
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("name-reserved", resp.info.metadata.messages[0].content);
+
+            # try to change to an empty name
+            resp = wsc.fieldUpdated("connection", connectionid0, "name", "");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("empty-value", resp.info.metadata.messages[0].contentMeta);
+
+            # try to change to an invalid name
+            resp = wsc.fieldUpdated("connection", connectionid0, "name", "$%^%#$%:!");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("invalid-characters-in-value", resp.info.metadata.messages[0].contentMeta);
+
+            # invalid-type test
+            resp = wsc.fieldUpdated("connection", connectionid0, "description", 1);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-type", resp.info.metadata.messages[0].content);
+            assertEq(Type::String, resp.info.metadata.messages[0].contentMeta);
+        }
+
+        {
+            h = qrest.put("creator/connection/" + connection.id + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            assertTrue(h.locked);
+
+            resp = wsc.closeInterface("connection", connection.id);
+            on_error printf("resp: %N\n", resp);
+            assertEq("INTERFACE-RELEASED", resp.event);
+            assertEq("connection", resp.info.type);
+            assertEq(connection.id, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+            assertEq(new_name, resp.info.name);
+            assertEq(Type::List, resp.info.fields.type());
+            assertEq(connection."code", resp.info."code");
+        }
+    }
+
+    classTest() {
+        try {
+            qrest.restDo("GET", "creator/job");
+        } catch (hash<ExceptionInfo> ex) {
+            testSkip("creator API is not present");
+        }
+
+        # create a class
+        hash<auto> h = qrest.put("creator/class/new");
+        assertEq(Type::Int, h.id.type());
+
+        string name = sprintf("test-class-%s", UUID::get());
+
+        hash<auto> cls = {
+            "code": "%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class TestClass {
+    run() {
+        logInfo('test');
+    }
+}",
+            "id": h.id,
+            "metadata": {
+                "description": get_random_string(),
+                "language": "qore",
+                "name": name,
+                "tags": {},
+                "version": "1.0",
+            },
+            "type": "class",
+        };
+
+        # negative test: try to create a duplicate class
+        {
+            hash<auto> cls0 = cls;
+            cls0.metadata += {
+                "name": "LowCodeGetData",
+                "version": "1.0",
+            };
+            hash<ExceptionInfo> ex;
+            try {
+                qrest.post("creator/class", cls0);
+                assertTrue(False);
+            } catch (hash<ExceptionInfo> ex0) {
+                ex = ex0;
+            }
+            assertEq(400, ex.arg.status_code);
+            assertTrue(ex.arg.body =~ /^CLASS-CREATION-ERROR:/);
+        }
+
+        # create an delete a new version of a class
+        {
+            hash<auto> cls0 = cls;
+            cls0.metadata += {
+                "name": "LowCodeGetData",
+                "version": "1.1",
+            };
+            h = qrest.post("creator/class", cls0);
+            on_exit {
+                h = qrest.del("creator/class/" + cls0.id);
+                assertEq(h.id, cls0.id);
+            }
+            assertEq(h.id, cls.id);
+        }
+
+        h = qrest.post("creator/class", cls);
+        on_exit {
+            if (!m_options.keep) {
+                h = qrest.del("creator/class/" + cls.id);
+                assertEq(h.id, cls.id);
+            }
+        }
+        printf("created class: %y\n", name);
+        assertEq(h.id, cls.id);
+
+        # test REST API
+        h = qrest.get("creator/class/" + cls.id);
+        checkLanguage(h);
+
+        h = qrest.get("classes/" + cls.id);
+        hash<auto> test_metadata = cls.metadata;
+        assertEq(test_metadata, h{keys test_metadata});
+
+        CreatorWsClient wsc();
+        on_exit delete wsc;
+
+        int cid = wsc.getCid();
+        #printf("got CID %y\n", cid);
+
+        wsc.clearMsg();
+        h = qrest.put("creator/class/" + name, {
+            "metadata": {
+                "description": "test",
+            },
+        });
+        assertEq(cls.id, h.id);
+        assertEq(2, h.size());
+        assertEq("test", h.description);
+
+        hash<auto> resp = wsc.waitForMsg();
+        assertEq("INTERFACE-UPDATED", resp.event);
+        assertEq("class", resp.info.type);
+        assertEq(cls.id, resp.info.id);
+        assertEq(cls.metadata.name, resp.info.name);
+        assertEq(Type::List, resp.info.fields.type());
+        assertEq(cls."code", resp.info."code");
+
+        h = qrest.get("classes/" + name);
+        assertEq("test", h.description);
+
+        # rename the class
+        string new_name = sprintf("test-class-%s", UUID::get());
+        qrest.put("creator/class/" + name, {"metadata": {"name": new_name}});
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404.*Not Found", \qrest.get(), "classes/" + name);
+
+        h = qrest.get("classes/" + cls.id);
+        test_metadata += {
+            "name": new_name,
+            "description": "test",
+        };
+        assertEq(test_metadata, h{keys test_metadata});
+        h = qrest.get("creator/class/" + cls.id);
+        assertTrue(h.hasKey("id"));
+        assertTrue(h.hasKey("type"));
+        assertTrue(h.hasKey("code"));
+        assertTrue(h.hasKey("fields"));
+
+        # test edit lock
+        h = qrest.put("creator/class/" + cls.id + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        {
+            hash<auto> ch = qrest.get("classes/" + cls.id);
+            on_error printf("ch: %N\nmap: %N\n", ch, qrest.get("system/metadata/classmap/" + cls.id));
+            assertEq(Type::Int, ch.edit_lock.type());
+        }
+
+        # negative test
+        h = qrest.put("creator/class/" + cls.id + "/editLock", {
+            "cid": cid,
+            "tab_token": get_random_string(),
+        });
+        #printf("h: %y\n", h);
+        assertFalse(h.locked);
+        assertEq("warning", h.info.intent);
+        assertEq(Type::String, h.info.content.type());
+
+        # release the lock
+        qrest.put("creator/class/" + cls.id + "/releaseEditLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+
+        # test editing a new class
+        h = qrest.put("creator/class/new");
+        assertEq("class", h.type);
+        int classid = h.id;
+
+        h = qrest.put("creator/class/" + classid + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        # update a field
+        resp = wsc.fieldUpdated("class", classid, "description", cls.metadata.description);
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        # negative test
+        {
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+            resp = wsc.fieldUpdated("class", classid, "description", "changed");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+        }
+
+        # close and reopen the WS connection
+        delete wsc;
+        wsc = new CreatorWsClient();
+        cid = wsc.getCid();
+
+        {
+            date start = now_us();
+            do {
+                # make sure we can lock it again
+                h = qrest.put("creator/class/" + classid + "/editLock", {
+                    "cid": cid,
+                    "tab_token": wsc.getTabToken(),
+                });
+                if (!h.locked) {
+                    usleep(250ms);
+                }
+            } while (!h.locked && ((now_us() - start) < 10s));
+            on_error printf("h: %N\n", h);
+            assertTrue(h.locked);
+        }
+
+        # change the name to an invalid name and check the error
+        string tmp_name = "Invalid Name With Spaces";
+        resp = wsc.fieldUpdated("class", classid, "name", tmp_name);
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertFalse(resp.info.metadata.isValid);
+
+        # change the name and version to an existing class
+        tmp_name = "LowCodeGetData";
+        resp = wsc.fieldUpdated("class", classid, "name", tmp_name);
+        {
+            on_error printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertTrue(resp.info.metadata.isValid);
+        }
+
+        hash<auto> lh = qrest.get("creator/locks");
+        assertEq(0, lh.complex_reservations."class"{tmp_name}.size());
+
+        resp = wsc.fieldUpdated("class", classid, "version", "1.0");
+        {
+            on_error printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+        }
+
+        lh = qrest.get("creator/locks");
+        assertEq(0, lh.complex_reservations."class"{tmp_name}.size());
+
+        resp = wsc.fieldUpdated("class", classid, "version", "0.1");
+        {
+            on_error printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+        }
+
+        lh = qrest.get("creator/locks");
+        assertEq(0, lh.complex_reservations."class"{tmp_name}.size());
+
+        resp = wsc.fieldUpdated("class", classid, "version", "1.1");
+        {
+            on_error printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertTrue(resp.info.metadata.isValid);
+        }
+
+        lh = qrest.get("creator/locks");
+        {
+            on_error printf("lh: %N\n", lh);
+            assertEq(1, lh.complex_reservations."class"{tmp_name}.size());
+            assertEq({
+                "type": "class",
+                "name": tmp_name,
+                "version": "1.1",
+            }, lh.reservation_map{wsc.getTabToken()});
+        }
+
+        # change the name and version
+        tmp_name = get_random_string(20, 2);
+        resp = wsc.fieldUpdated("class", classid, "name", tmp_name);
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+
+        lh = qrest.get("creator/locks");
+        {
+            on_error printf("tt: %y lh: %N\n", wsc.getTabToken(), lh);
+            assertEq(1, lh.complex_reservations."class"{tmp_name}.size());
+        }
+
+        resp = wsc.fieldUpdated("class", classid, "version", "1.0");
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+
+        lh = qrest.get("creator/locks");
+        {
+            on_error printf("tt: %y lh: %N\n", wsc.getTabToken(), lh);
+            assertEq(1, lh.complex_reservations."class"{tmp_name}.size());
+            assertEq({
+                "type": "class",
+                "name": tmp_name,
+                "version": "1.0",
+            }, lh.reservation_map{wsc.getTabToken()});
+        }
+
+        # check reservation errors
+        {
+            hash<auto> h0 = qrest.put("creator/class/new");
+            assertEq("class", h0.type);
+            int classid0 = h0.id;
+
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+
+            # try to edit without grabbing the lock first
+            resp = wsc.fieldUpdated("class", classid0, "name", tmp_name);
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("edit-error", resp.info.metadata.messages[0].content);
+
+            wsc.clearMsg();
+            h = qrest.put("creator/class/" + classid0 + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            assertTrue(h.locked);
+
+            resp = wsc.waitForMsg();
+            assertEq("INTERFACE-OPENED", resp.event);
+            assertEq("class", resp.info.type);
+            assertEq(classid0, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+
+            # try to change to a reserved name
+            #printf("tmp_name: %y\n", tmp_name);
+            resp = wsc.fieldUpdated("class", classid0, "name", tmp_name);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            {
+                on_error printf("resp: %N\n", resp);
+                assertTrue(resp.info.metadata.isValid);
+            }
+            resp = wsc.fieldUpdated("class", classid0, "version", "1.0");
+            #printf("resp: %N\n", resp);
+            {
+                on_error printf("old tt: %y tmp_name: %y resp: %N\nlocks: %N\n", tt_save, tmp_name, resp, qrest.get("creator/locks"));
+                assertEq("SERVER-FIELD-UPDATED", resp.event);
+                assertFalse(resp.info.metadata.isValid);
+                assertEq("danger", resp.info.metadata.messages[0].intent);
+                assertEq("name-version-reserved", resp.info.metadata.messages[0].content);
+            }
+
+            # change to a new version
+            wsc.clearMsg();
+            resp = wsc.fieldUpdated("class", classid0, "version", "1.2");
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            {
+                on_error printf("old tt: %y tmp_name: %y resp: %N\nlocks: %N\n", tt_save, tmp_name, resp, qrest.get("creator/locks"));
+                assertTrue(resp.info.metadata.isValid);
+            }
+            {
+                lh = qrest.get("creator/locks");
+                on_error printf("tt: %y lh: %N\n", wsc.getTabToken(), lh);
+                assertEq(2, lh.complex_reservations."class"{tmp_name}.size());
+                assertEq({
+                    "type": "class",
+                    "name": tmp_name,
+                    "version": "1.2",
+                }, lh.reservation_map{wsc.getTabToken()});
+            }
+
+            # change to a new version again
+            resp = wsc.fieldUpdated("class", classid0, "version", "1.1");
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            {
+                on_error printf("old tt: %y tmp_name: %y resp: %N\nlocks: %N\n", tt_save, tmp_name, resp, qrest.get("creator/locks"));
+                assertTrue(resp.info.metadata.isValid);
+            }
+            {
+                lh = qrest.get("creator/locks");
+                on_error printf("tt: %y lh: %N\n", wsc.getTabToken(), lh);
+                assertEq(2, lh.complex_reservations."class"{tmp_name}.size());
+                assertEq({
+                    "type": "class",
+                    "name": tmp_name,
+                    "version": "1.1",
+                }, lh.reservation_map{wsc.getTabToken()});
+            }
+
+            # version reservation test
+            {
+                hash<auto> h1 = qrest.put("creator/class/new");
+                assertEq("class", h1.type);
+                int classid1 = h1.id;
+
+                string tt_save0 = wsc.swapTabToken(get_random_string());
+                on_exit wsc.swapTabToken(tt_save0);
+
+                wsc.clearMsg();
+                h = qrest.put("creator/class/" + classid1 + "/editLock", {
+                    "cid": cid,
+                    "tab_token": wsc.getTabToken(),
+                });
+                assertTrue(h.locked);
+
+                resp = wsc.waitForMsg();
+                assertEq("INTERFACE-OPENED", resp.event);
+                assertEq("class", resp.info.type);
+                assertEq(classid1, resp.info.id);
+                assertEq(Type::Int, resp.info.cid.type());
+
+                resp = wsc.fieldUpdated("class", classid1, "name", tmp_name);
+                {
+                    on_error printf("resp: %N\n", resp);
+                    assertEq("SERVER-FIELD-UPDATED", resp.event);
+                    assertTrue(resp.info.metadata.isValid);
+                }
+
+                resp = wsc.fieldUpdated("class", classid1, "version", "1.2");
+                #printf("resp: %N\n", resp);
+                assertEq("SERVER-FIELD-UPDATED", resp.event);
+                assertTrue(resp.info.metadata.isValid);
+            }
+
+            # try to change to an empty name
+            resp = wsc.fieldUpdated("class", classid0, "name", "");
+            {
+                on_error printf("resp: %N\n", resp);
+                assertEq("SERVER-FIELD-UPDATED", resp.event);
+                assertFalse(resp.info.metadata.isValid);
+                assertEq("danger", resp.info.metadata.messages[0].intent);
+                assertEq("invalid-value", resp.info.metadata.messages[0].content);
+                assertEq("empty-value", resp.info.metadata.messages[0].contentMeta);
+            }
+
+            # try to change to an invalid name
+            resp = wsc.fieldUpdated("class", classid0, "name", "$%^%#$%:!");
+            {
+                on_error printf("resp: %N\n", resp);
+                assertEq("SERVER-FIELD-UPDATED", resp.event);
+                assertFalse(resp.info.metadata.isValid);
+                assertEq("danger", resp.info.metadata.messages[0].intent);
+                assertEq("invalid-value", resp.info.metadata.messages[0].content);
+                assertEq("invalid-characters-in-value", resp.info.metadata.messages[0].contentMeta);
+            }
+
+            # ensure there is no reservation for the invalid name
+            assertNothing(qrest.get("creator/locks").reservation_map{wsc.getTabToken()});
+        }
+
+        {
+            h = qrest.put("creator/class/" + cls.id + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            {
+                on_error printf("tt: %y classid: %y h: %N\nlocks: %N\n", wsc.getTabToken(), cls.id, h,
+                    qrest.get("creator/locks"));
+                assertTrue(h.locked);
+            }
+
+            resp = wsc.closeInterface("class", cls.id);
+            on_error printf("resp: %N\n", resp);
+            assertEq("INTERFACE-RELEASED", resp.event);
+            assertEq("class", resp.info.type);
+            assertEq(cls.id, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+            assertEq(new_name, resp.info.name);
+            assertEq(Type::List, resp.info.fields.type());
+            assertEq(cls."code", resp.info."code");
+        }
+    }
+
+    jobTest() {
+        try {
+            qrest.restDo("GET", "creator/job");
+        } catch (hash<ExceptionInfo> ex) {
+            testSkip("creator API is not present");
+        }
+
+        # create a job
+        hash<auto> h = qrest.put("creator/job/new");
+        assertEq(Type::Int, h.id.type());
+
+        string name = sprintf("test-job-%s", UUID::get());
+
+        hash<auto> job = {
+            "code": "%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class TestJob inherits QorusJob {
+    run() {
+        logInfo('test');
+    }
+}",
+            "id": h.id,
+            "metadata": {
+                "active": False,
+                "base_class_name": "QorusJob",
+                "class_name": "TestJob",
+                "description": get_random_string(),
+                "groups": ("test",),
+                "language": "qore",
+                "mappers": ("mapper-api-test:1.0",),
+                "name": name,
+                "remote": True,
+                "schedule": "0 0 * * *",
+                "tags": {},
+                "version": "1.0",
+                "vmaps": ("regression1",),
+            },
+            "type": "job",
+        };
+
+        # invalid base class name
+        {
+            hash<auto> job2 = job;
+            job2.metadata.base_class_name = "Oops$$$";
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "Bad Request", \qrest.post(), ("creator/job", job2));
+        }
+
+        # cannot create with invalid group
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "Bad Request", \qrest.post(), ("creator/job", job + {
+            "metadata": job.metadata + {
+                "groups": ("xxx-invalid-" + get_random_string(),),
+            }
+        }));
+
+        h = qrest.post("creator/job", job);
+        on_exit {
+            if (!m_options.keep) {
+                h = qrest.del("creator/job/" + job.id);
+                assertEq(h.id, job.id);
+            }
+        }
+        printf("created job: %y\n", name);
+        assertEq(h.id, job.id);
+
+        # test REST API
+        h = qrest.get("creator/job/" + job.id);
+        checkLanguage(h);
+
+        h = qrest.get("jobs/" + job.id);
+        hash<auto> test_metadata = job.metadata - ("base_class_name", "schedule") + {
+            "enabled": True,
+            "base_class_name": job.metadata.base_class_name,
+            "minute": "0",
+            "hour": "0",
+            "day": "*",
+            "month": "*",
+            "wday": "*",
+            "run_skipped": False,
+        };
+        assertEq(test_metadata, h{keys test_metadata} + {
+            "groups": (map $1.name, h.groups),
+            "mappers": (map sprintf("%s:%s", $1.name, $1.version), h.mappers),
+            "vmaps": (map $1.name, h.vmaps),
+        });
+
+        h = qrest.get("groups/test/jobs/" + name);
+        assertEq(job.id, h.jobid);
+        assertEq(job.metadata.version, h.version);
+
+        CreatorWsClient wsc();
+        on_exit delete wsc;
+
+        int cid = wsc.getCid();
+        #printf("got CID %y\n", cid);
+
+        wsc.clearMsg();
+        h = qrest.put("creator/job/" + name, {
+            "metadata": {
+                "groups": ("regression",),
+            },
+        });
+        assertEq(job.id, h.id);
+        assertEq(2, h.size());
+        assertEq(1, h.groups.lsize());
+        assertEq("regression", h.groups[0]);
+
+        hash<auto> resp = wsc.waitForMsg();
+        assertEq("INTERFACE-UPDATED", resp.event);
+        assertEq("job", resp.info.type);
+        assertEq(job.id, resp.info.id);
+        assertEq(job.metadata.name, resp.info.name);
+        assertEq(Type::List, resp.info.fields.type());
+        assertEq(job."code", resp.info."code");
+
+        h = qrest.get("jobs/" + name);
+        assertEq(1, h.groups.lsize());
+        assertEq("regression", h.groups[0].name);
+
+        # run the job
+        h = qrest.put("jobs/" + name + "/run");
+        assertEq(OMQ::StatComplete, h.status);
+
+        h = qrest.put("creator/job/new");
+        assertEq(Type::Int, h.id.type());
+
+        hash<auto> h0 = qrest.put("creator/job/" + h.id + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h0.locked);
+
+        # update a field
+        string tmp_name = sprintf("test-job-%s", UUID::get());
+        resp = wsc.fieldUpdated("job", h.id, "name", tmp_name);
+
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        wsc.clearMsg();
+        string class_name;
+        string class_name_label;
+        # create a class as a base class for a job
+        {
+            h0 = qrest.put("creator/class/new");
+            assertEq(Type::Int, h0.id.type());
+            class_name = sprintf("JobClassTest%s", get_random_string(20, 2));
+
+            hash<auto> cls = {
+                "code": sprintf("%%new-style
+%%strict-args
+%require-types
+%enable-all-warnings
+
+class %s inherits QorusJob {
+    run() {
+        logInfo('test');
+    }
+}", class_name),
+                "id": h0.id,
+                "metadata": {
+                    "description": get_random_string(),
+                    "language": "qore",
+                    "name": class_name,
+                    "tags": {},
+                    "version": "1.0",
+                    "base_class_name": "QorusJob",
+                },
+                "type": "class",
+            };
+            class_name_label = class_name + " v" + cls.metadata.version;
+
+            h0 = qrest.post("creator/class", cls);
+            assertEq(cls.id, h0.id);
+            job_classid = cls.id;
+
+            resp = wsc.waitForMsg("SERVER-FIELD-UPDATED", {"info": {"field": "base_class_name"}});
+        }
+        #printf("tt: %y class: %N\nresp: %N\n", wsc.getTabToken(), qrest.get("classes/" + job_classid), resp);
+        {
+            on_error printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+        }
+
+        # make a hash of base classes
+        *hash<string, bool> bc = map {$1.label: True}, resp.info.metadata.items;
+        assertTrue(bc{class_name_label});
+
+        # job was never saved; do not wait for close msg
+        wsc.closeInterface("job", h.id, True);
+
+        # rename the job
+        string new_name = sprintf("test-job-%s", UUID::get());
+        qrest.put("creator/job/" + name, {"metadata": {"name": new_name}});
+        assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "404.*Not Found", \qrest.get(), "jobs/" + name);
+
+        h = qrest.get("jobs/" + job.id);
+        test_metadata += {
+            "name": new_name,
+            "groups": ("regression",),
+        };
+        assertEq(test_metadata, h{keys test_metadata} + {
+            "groups": (map $1.name, h.groups),
+            "mappers": (map sprintf("%s:%s", $1.name, $1.version), h.mappers),
+            "vmaps": (map $1.name, h.vmaps),
+        });
+        h = qrest.get("creator/job/" + job.id);
+        assertTrue(h.hasKey("id"));
+        assertTrue(h.hasKey("type"));
+        assertTrue(h.hasKey("code"));
+        assertTrue(h.hasKey("fields"));
+
+        h = qrest.get("groups/regression/jobs/" + new_name);
+        assertEq(job.id, h.jobid);
+        assertEq(job.metadata.version, h.version);
+
+        # run under the new name
+        h = qrest.put("jobs/" + new_name + "/run");
+        assertEq(OMQ::StatComplete, h.status);
+
+        # test edit lock
+        h = qrest.put("creator/job/" + job.id + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        {
+            hash<auto> jh = qrest.get("jobs/" + job.id);
+            on_error printf("jh: %N\nmap: %N\n", jh, qrest.get("system/metadata/jmap/" + job.id));
+            assertEq(Type::Int, jh.edit_lock.type());
+        }
+
+        # negative test
+        h = qrest.put("creator/job/" + job.id + "/editLock", {
+            "cid": cid,
+            "tab_token": get_random_string(),
+        });
+        #printf("h: %y\n", h);
+        assertFalse(h.locked);
+        assertEq("warning", h.info.intent);
+        assertEq(Type::String, h.info.content.type());
+
+        # release the lock
+        qrest.put("creator/job/" + job.id + "/releaseEditLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+
+        # test editing a new job
+        h = qrest.put("creator/job/new");
+        assertEq("job", h.type);
+        int jobid = h.id;
+
+        h = qrest.put("creator/job/" + jobid + "/editLock", {
+            "cid": cid,
+            "tab_token": wsc.getTabToken(),
+        });
+        assertTrue(h.locked);
+
+        # update a field
+        resp = wsc.fieldUpdated("job", jobid, "schedule", "0 0 * * *");
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        # update a field with no value
+        resp = wsc.fieldUpdated("job", jobid, "modules", NOTHING, {"isAdvanced": True});
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+        assertEq((), resp.info.metadata.messages);
+
+        # negative test
+        {
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+            resp = wsc.fieldUpdated("job", jobid, "schedule", "1 1 * * *");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+        }
+
+        # close and reopen the WS connection
+        delete wsc;
+        wsc = new CreatorWsClient();
+        cid = wsc.getCid();
+
+        {
+            date start = now_us();
+            do {
+                # make sure we can lock it again
+                h = qrest.put("creator/job/" + jobid + "/editLock", {
+                    "cid": cid,
+                    "tab_token": wsc.getTabToken(),
+                });
+                if (!h.locked) {
+                    usleep(250ms);
+                }
+            } while (!h.locked && ((now_us() - start) < 10s));
+            on_error printf("h: %N\n", h);
+            assertTrue(h.locked);
+        }
+
+        # change the name
+        tmp_name = get_random_string(20, 2);
+        resp = wsc.fieldUpdated("job", jobid, "name", tmp_name);
+        #printf("resp: %N\n", resp);
+        assertEq("SERVER-FIELD-UPDATED", resp.event);
+        assertTrue(resp.info.metadata.isValid);
+
+        # check reservation errors
+        {
+            h0 = qrest.put("creator/job/new");
+            assertEq("job", h0.type);
+            int jobid0 = h0.id;
+
+            string tt_save = wsc.swapTabToken(get_random_string());
+            on_exit wsc.swapTabToken(tt_save);
+
+            # try to edit without grabbing the lock first
+            resp = wsc.fieldUpdated("job", jobid0, "name", tmp_name);
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("edit-error", resp.info.metadata.messages[0].content);
+
+            wsc.clearMsg();
+            h = qrest.put("creator/job/" + jobid0 + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            assertTrue(h.locked);
+
+            resp = wsc.waitForMsg();
+            assertEq("INTERFACE-OPENED", resp.event);
+            assertEq("job", resp.info.type);
+            assertEq(jobid0, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+
+            # try to change to a reserved name
+            #printf("tmp_name: %y\n", tmp_name);
+            resp = wsc.fieldUpdated("job", jobid0, "name", tmp_name);
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("name-reserved", resp.info.metadata.messages[0].content);
+
+            # try to change to an empty name
+            resp = wsc.fieldUpdated("job", jobid0, "name", "");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("empty-value", resp.info.metadata.messages[0].contentMeta);
+
+            # try to change to an invalid name
+            resp = wsc.fieldUpdated("job", jobid0, "name", "$%^%#$%:!");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("invalid-characters-in-value", resp.info.metadata.messages[0].contentMeta);
+
+            # try to change to an invalid base class name
+            resp = wsc.fieldUpdated("job", jobid0, "base_class_name", "QorusJob$$$");
+            #printf("resp: %N\n", resp);
+            assertEq("SERVER-FIELD-UPDATED", resp.event);
+            assertFalse(resp.info.metadata.isValid);
+            assertEq("danger", resp.info.metadata.messages[0].intent);
+            assertEq("invalid-value", resp.info.metadata.messages[0].content);
+            assertEq("invalid-identifier", resp.info.metadata.messages[0].contentMeta);
+        }
+
+        {
+            h = qrest.put("creator/job/" + job.id + "/editLock", {
+                "cid": cid,
+                "tab_token": wsc.getTabToken(),
+            });
+            assertTrue(h.locked);
+
+            resp = wsc.closeInterface("job", job.id);
+            on_error printf("resp: %N\n", resp);
+            assertEq("INTERFACE-RELEASED", resp.event);
+            assertEq("job", resp.info.type);
+            assertEq(job.id, resp.info.id);
+            assertEq(Type::Int, resp.info.cid.type());
+            assertEq(new_name, resp.info.name);
+            assertEq(Type::List, resp.info.fields.type());
+            assertEq(job."code", resp.info."code");
+        }
+    }
+
+    private checkOptions(hash<auto> h) {
+        list<auto> fields;
+        foreach hash<auto> fgh in (h.fields) {
+            if (fgh.title == "connection-detail-options") {
+                fields = fgh.fields;
+                break;
+            }
+        }
+        assertEq(Type::List, fields.type());
+        hash<auto> field;
+        foreach hash<auto> fh in (fields) {
+            if (fh.name == "options") {
+                field = fh;
+                break;
+            }
+        }
+        assertEq(Type::Hash, field.type());
+        on_error printf("field: %N\n", field);
+        assertFalse(field.isDisabled ?? False);
+    }
+
+    private checkLanguage(hash<auto> h) {
+        list<auto> fields;
+        foreach hash<auto> fgh in (h.fields) {
+            if (fgh.title == "interface-code-options") {
+                fields = fgh.fields;
+                break;
+            }
+        }
+        assertEq(Type::List, fields.type());
+        hash<auto> lang_field;
+        foreach hash<auto> fh in (fields) {
+            if (fh.name == "language") {
+                lang_field = fh;
+                break;
+            }
+        }
+        assertEq(Type::Hash, lang_field.type());
+        foreach hash<auto> item in (lang_field.items) {
+            assertEq(Type::String, item.logo.type());
+            binary logo = parse_base64_string(item.logo);
+            assertEq(Type::Binary, logo.type());
+        }
+    }
+
+    private usageIntern() {
+        TestReporter::usageIntern(OptionColumn);
+        printOption("-k,--keep-objects", "keep objects created instead of deleting", OptionColumn);
+    }
+
+    private globalSetUp() {
+        try {
+            # create group
+            qrest.post("groups", Group);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore exceptions
+        }
+    }
+
+    private globalTearDown() {
+        if (job_classid) {
+            try {
+                qrest.del("classes/" + job_classid);
+            } catch (hash<ExceptionInfo> ex) {
+                # ignore exceptions
+            }
+        }
+        try {
+            qrest.del("groups/" + GroupName);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore exceptions
+        }
+    }
+}
+
+class CreatorWsClient inherits WebSocketClient {
+    public {
+    }
+
+    private {
+        int creator_cid;
+
+        string tab_token = get_random_string();
+
+        Mutex lock();
+        Condition cidcond();
+
+        int cid_waiting;
+
+        int msg_waiting;
+        Condition msgcond();
+
+        list<hash<auto>> msg_list;
+
+        static int mid = 1;
+    }
+
+    constructor() : WebSocketClient(\self.gotMessage(), {
+            "url": CreatorWsClient::getUrl(),
+            "log": \CreatorWsClient::log(),
+            "debuglog": \CreatorWsClient::debuglog(),
+            "errlog": \CreatorWsClient::errlog(),
+        }) {
+        connect();
+    }
+
+    int getCid() {
+        if (!creator_cid) {
+            lock.lock();
+            on_exit lock.unlock();
+
+            while (!creator_cid) {
+                ++cid_waiting;
+                cidcond.wait(lock);
+                --cid_waiting;
+            }
+        }
+
+        return creator_cid;
+    }
+
+    string getTabToken() {
+        return tab_token;
+    }
+
+    string swapTabToken(string new_tab_token) {
+        string rv = tab_token;
+        tab_token = new_tab_token;
+        return rv;
+    }
+
+    clearMsg() {
+        Mutex lock();
+        remove msg_list;
+    }
+
+    hash<auto> waitForMsg(*string event, *hash<auto> match) {
+        hash<auto> msg;
+
+        while (True) {
+            msg = waitForMsgIntern();
+
+            if (event && msg.event != event) {
+                remove msg;
+                continue;
+            }
+            if (match) {
+                code do_match = bool sub (hash<auto> m, auto msg) {
+                    #printf("do_match() m: %y msg: %y\n", m, msg);
+                    foreach hash<auto> i in (m.pairIterator()) {
+                        if (i.value.typeCode() == NT_HASH) {
+                            if (!do_match(i.value, msg{i.key})) {
+                                return False;
+                            }
+                        } else {
+                            if (i.value != msg{i.key}) {
+                                return False;
+                            }
+                        }
+                    }
+                    return True;
+                };
+                if (!do_match(match, msg)) {
+                    remove msg;
+                    continue;
+                }
+            }
+            break;
+        }
+        return msg;
+    }
+
+    private hash<auto> waitForMsgIntern() {
+        lock.lock();
+        on_exit lock.unlock();
+
+        if (!msg_list) {
+            ++msg_waiting;
+            if (!msg_list) {
+                msgcond.wait(lock, 5s);
+            }
+            --msg_waiting;
+            if (!msg_list) {
+                throw "ERROR", "no WS msg received";
+            }
+        }
+        return shift msg_list;
+    }
+
+    *hash<auto> closeInterface(string type, int id, *bool no_msg) {
+        if (!no_msg) {
+            lock.lock();
+            on_exit lock.unlock();
+
+            # zero out history before sending message
+            remove msg_list;
+            ++msg_waiting;
+        }
+        on_exit if (!no_msg) {
+            lock.lock();
+            on_exit lock.unlock();
+
+            --msg_waiting;
+        }
+
+        send("CLOSE-INTERFACE", {
+            "type": type,
+            "id": id,
+        });
+
+        if (no_msg) {
+            return;
+        }
+
+        lock.lock();
+        on_exit lock.unlock();
+
+        hash<auto> msg;
+        while (True) {
+            if (!msg_list) {
+                msgcond.wait(lock, 5s);
+                if (!msg_list) {
+                    throw "ERROR", "no WS msg received";
+                }
+            }
+            while (msg_list) {
+                msg = shift msg_list;
+                if (msg.event != "INTERFACE-RELEASED") {
+                    #printf("discarding %y\n", msg.event);
+                    remove msg;
+                    continue;
+                }
+                break;
+            }
+            if (msg) {
+                break;
+            }
+        }
+        return msg;
+    }
+
+    hash<auto> fieldUpdated(string type, int id, string field, auto val, *hash<auto> args) {
+        {
+            lock.lock();
+            on_exit lock.unlock();
+
+            # zero out history before sending message
+            remove msg_list;
+            ++msg_waiting;
+        }
+
+        hash<auto> rv;
+        {
+            on_exit {
+                lock.lock();
+                on_exit lock.unlock();
+
+                --msg_waiting;
+            }
+
+            int msg_id;
+            {
+                hash<auto> msg = {
+                    "type": type,
+                    "id": id,
+                    "field": field,
+                };
+                if (exists val) {
+                    msg.value = val;
+                }
+                msg_id = send("FIELD-UPDATED", msg + args);
+            }
+
+            date start = now_us();
+            lock.lock();
+            on_exit lock.unlock();
+
+            while (True) {
+                while (msg_list) {
+                    hash<auto> test_msg = shift msg_list;
+                    if (compareMsg(test_msg, msg_id, field)) {
+                        rv = test_msg;
+                        break;
+                    }
+                }
+                if (rv) {
+                    break;
+                }
+                date delta = now_us() - start;
+                if (delta > 10s) {
+                    throw "TIMEOUT-ERROR", sprintf("timed out (after %y) waiting for id: %y field: %y tab_token: %y "
+                                                   "msgs: %N", delta, msg_id, field, tab_token, msg_list);
+                }
+                msgcond.wait(lock, 5s);
+            }
+        }
+        if (!rv) {
+            throw "ERROR", "no matching WS msg received";
+        }
+        return rv;
+    }
+
+    private bool compareMsg(hash<auto> msg, int msg_id, string field) {
+        return msg.id == msg_id && msg.info.field == field && msg.tab_token == tab_token;
+    }
+
+    private int send(string event, hash<auto> msg) {
+        int msg_id = ++mid;
+        hash<auto> payload = {
+            "id": msg_id,
+            "tab_token": tab_token,
+            "event": event,
+            "args": msg,
+        };
+        send(make_json(payload));
+        return msg_id;
+    }
+
+    private gotMessage(*data d) {
+        if (d.typeCode() == NT_BINARY) {
+            printf("binary msg received: %y\n", d);
+        } else if (d) {
+            hash<auto> msg = parse_json(d);
+            *bool dont_save;
+            switch (msg.event) {
+                case "CONNECTION-ID":
+                    setCid(msg.info.cid);
+                    dont_save = True;
+                    break;
+            }
+
+            lock.lock();
+            on_exit lock.unlock();
+
+            if (!dont_save) {
+                msg_list += msg;
+                if (msg_waiting) {
+                    msgcond.signal();
+                }
+            }
+            #printf("waiting: %y msg: %y\n", msg_waiting, msg);
+        }
+    }
+
+    private *bool setCid(int cid) {
+        lock.lock();
+        on_exit lock.unlock();
+
+        if (!creator_cid) {
+            creator_cid = cid;
+        }
+        if (cid_waiting) {
+            cidcond.broadcast();
+        }
+    }
+
+    private static log(string fmt) {
+        #vprintf("%s: WS INFO: " + fmt + "\n", (now_us().format("YYYY-MM-DD HH:mm:SS.xx"), ) + argv);
+    }
+
+    private static debuglog(string fmt) {
+        #vprintf("%s: WS DEBUG: " + fmt + "\n", (now_us().format("YYYY-MM-DD HH:mm:SS.xx"), ) + argv);
+    }
+
+    private static errlog(string fmt) {
+        #vprintf("%s: WS ERROR: " + fmt + "\n", (now_us().format("YYYY-MM-DD HH:mm:SS.xx"), ) + argv);
+    }
+
+    static string getUrl() {
+        string ws_url = UserApi::qorusGetLocalUrl() + "/creator";
+        ws_url =~ s/^http/ws/;
+        return ws_url;
+    }
+}

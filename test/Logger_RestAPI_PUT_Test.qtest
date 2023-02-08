@@ -1,0 +1,101 @@
+#!/usr/bin/env qore
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+%include Logger/AbstractLoggerRestApiTest.qc
+
+%exec-class LoggerRestApiPostTest
+
+class LoggerRestApiPostTest inherits AbstractLoggerRestApiTest {
+    constructor() : AbstractLoggerRestApiTest("LoggerRestApiPostTest") {
+
+        addTestCase("setLoggerNegativeTest", \setLoggerNegativeTest());
+        addTestCase("setLoggerTest", \setLoggerTest());
+
+        addTestCase("setDefaultSystemLoggerTest", \setDefaultSystemLoggerTest());
+
+        set_return_value(main());
+    }
+
+    setLoggerNegativeTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            # no params
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "HTTP status code 400 received", \qrest.put(), interfaceUrl);
+            # logger level in bad format
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "HTTP status code 400 received", \qrest.put(), interfaceUrl + "/?lvl=20000");
+            # try to edit default logger through bad url
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "HTTP status code 404 received", \qrest.put(), (interfaceUrl, {"level": 20000}));
+            # bad parameter
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "HTTP status code 400 received", \qrest.put(), (interfaceUrl, {"lvl": 20000}));
+            # bad additivity
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", "HTTP status code 400 received", \qrest.put(), (interfaceUrl, {"additivity": 0}));
+        }
+    }
+
+    setLoggerTest() {
+        foreach string interfaceUrl in (INTERFACE_URLS) {
+            defParams{interfaceUrl}{"level"} = defParams{interfaceUrl}{"level"}{"INFO"};
+            hash<auto> newLoggerParams = defParams{interfaceUrl};
+            newLoggerParams{"level"} = Logger::LoggerLevel::FATAL;
+            newLoggerParams{"additivity"} = False;
+            newLoggerParams{"name"} = "AVE";
+
+            # create logger
+            int loggerId = qrest.post(interfaceUrl, defParams{interfaceUrl});
+            assertNeq(0, loggerId);
+
+            # change level
+            auto response = qrest.put(interfaceUrl, newLoggerParams);
+            assertEq("OK", response);
+
+            # get created logger
+            newLoggerParams{"level"} = {"FATAL": Logger::LoggerLevel::FATAL};
+            *hash<auto> loggerInfo = qrest.get(interfaceUrl);
+            assertEq(newLoggerParams, loggerInfo{"params"});
+
+            # delete created logger
+            response = qrest.del(interfaceUrl);
+            assertEq("OK", response);
+
+            loggerInfo = qrest.get(interfaceUrl);
+            defParams{interfaceUrl}{"level"} = {"INFO": Logger::LoggerLevel::INFO};
+            assertEq(defParams{interfaceUrl}, loggerInfo{"params"});
+        }
+    }
+
+    setDefaultSystemLoggerTest() {
+        string url = SYSTEM_URL + "?action=defaultLogger";
+        hash<auto> newLoggerParams = defParams{SYSTEM_URL};
+        newLoggerParams{"level"} = Logger::LoggerLevel::FATAL;
+        newLoggerParams{"additivity"} = False;
+        newLoggerParams{"name"} = "AVE";
+
+        # create data for API
+        hash<auto> api_hash = getLoggerApiHash(newLoggerParams);
+
+        # change level
+        auto response = qrest.put(url, api_hash);
+        assertEq("OK", response);
+
+        # get created logger
+        newLoggerParams{"level"} = {"FATAL": Logger::LoggerLevel::FATAL};
+        *hash<auto> loggerInfo = qrest.get(url);
+        assertEq(newLoggerParams, loggerInfo{"params"});
+
+        defParams{SYSTEM_URL}{"level"} = Logger::LoggerLevel::ALL;
+        response = qrest.put(url, getLoggerApiHash(defParams{SYSTEM_URL}));
+        assertEq("OK", response);
+
+        loggerInfo = qrest.get(url);
+        defParams{SYSTEM_URL}{"level"} = {"ALL": Logger::LoggerLevel::ALL};
+        assertEq(defParams{SYSTEM_URL}, loggerInfo{"params"});
+    }
+
+    private static hash<auto> getLoggerApiHash(hash<auto> newLoggerParams) {
+        hash<auto> api_hash = newLoggerParams;
+        api_hash.appenders = map $1.params, newLoggerParams.appenders;
+        return api_hash;
+    }
+}

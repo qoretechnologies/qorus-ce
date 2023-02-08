@@ -1,0 +1,111 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue1704
+
+class QorusIssue1704 inherits Test {
+    public {
+        const PollInterval = 250ms;
+    }
+
+    constructor() : Test("Issue1704Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # set config values
+        qrest.put("system/config/global-string-test", {"value": "test-value-y"});
+        qrest.put("system/config/global-float-test", {"value": 22.0});
+        qrest.put("system/config/global-date-test", {"value": now_us()});
+        qrest.put("system/config/global-int-test", {"value": 11});
+
+        qrest.put("system/config/test-item", {"value": "test-value"});
+
+        {
+            # start workflow
+            UserApi::callRestApi("PUT", "workflows/CLASS-WORKFLOW-TEST/start");
+            on_exit UserApi::callRestApi("PUT", "workflows/CLASS-WORKFLOW-TEST/stop");
+
+            hash<auto> oh = {
+                "staticdata": {"a" : 1},
+            };
+            softint wfiid = UserApi::createOrder("CLASS-WORKFLOW-TEST", NOTHING, oh);
+            if (m_options.verbose > 2) {
+                printf("created CLASS-WORKFLOW-TEST wfiid %d", wfiid);
+            }
+
+            waitForStatus("issue-1704-2", wfiid, OMQ::StatComplete, OMQ::StatError);
+        }
+    }
+
+    waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors,
+            *string stepname) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (exists errors && inlist(h.workflowstatus, errors))
+                break;
+
+            #if (m_options.verbose > 2) {
+            #    printf("%y wfiid %y status == %y (err: %y) h: %y\n", testname, wfiid, status, errors, h);
+            #}
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        if (stepname) {
+            bool done;
+            while (!done) {
+                bool found;
+                foreach hash sh in (h.step_instance.iterator()) {
+                    if (sh.name == stepname) {
+                        if (sh.stepstatus == status) {
+                            if (m_options.verbose > 2) {
+                                printf("wfiid %d step %y has status %y\n", wfiid, stepname, status);
+                            }
+                            done = True;
+                            break;
+                        }
+                        if (sh.stepstatus != OMQ::StatInProgress)
+                            throw "STEP-STATUS-ERROR", sprintf("wfiid %d step %y expecting status %y; got %y", wfiid,
+                                stepname, status, sh.stepstatus);
+                        found = True;
+                    }
+                }
+
+                if (m_options.verbose > 2) {
+                    printf("wfiid %d step %y %sfound; sleeping %d us\n", wfiid, stepname, found ? "" : "not ",
+                        PollInterval);
+                }
+
+                # wait for status to change
+                usleep(PollInterval);
+                h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            }
+        }
+
+        assertEq(h.workflowstatus, status, testname);
+    }
+}

@@ -1,0 +1,33 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires Swagger
+
+class Issue3546HelloRestClass inherits AbstractRestClass {
+    string name() {
+        return "hello";
+    }
+
+    hash get(hash cx, *hash ah) {
+        UserApi::logDebug("Got GET request, cx: %y, ah: %y", cx, ah);
+        return RestHandler::makeResponse(200, "Hello " + cx.hdr.name + "!");
+    }
+}
+
+class Issue3546AdvExampleRestTestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("issue3546", False, NOTHING,
+                                               SwaggerLoader::fromString(
+                                               ServiceApi::getResourceData("issue3546-example.yaml").toString(), False)) {
+
+        UserApi::logDebug("Issue3546AdvExampleRestHandler constructor");
+        addClass(new Issue3546HelloRestClass());
+    }
+}
+
+class Issue3546AdvExampleRestServerTest inherits QorusService {
+    init() {
+        bindHttp(new Issue3546AdvExampleRestTestHandler());
+    }
+}

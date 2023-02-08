@@ -1,0 +1,20 @@
+type: job
+active: false
+name: qorus-sensitive-data
+desc: deletes sensitive data older than a certain date
+version: "6.0"
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: QorusSensitiveData
+code: qorus-sensitive-data-v6.0.qjob
+schedule:
+    minutes: "0"
+    hours: "*/3"
+    days: "*"
+    months: "*"
+    dow: "*"
+groups:
+  - qorus-admin
+

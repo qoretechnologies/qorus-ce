@@ -1,0 +1,15 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3537Test inherits QorusJob {
+    run() {
+        int num = rand() % 1000;
+        hash<Issue3537> h = omqservice.user."issue-3537-test".get(num);
+        if (h."code" != num) {
+            throw "ERROR", sprintf("expected %y; got %y", num, h."code");
+        }
+        logInfo("code %y received correctly (%s)", h."code", h.fullType());
+    }
+}

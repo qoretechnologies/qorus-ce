@@ -1,0 +1,66 @@
+# This is a generated file, don't edit!
+type: mapper
+name: issue-3816-update-output-args
+desc: test issue#3816
+author:
+  - Qore Technologies, s.r.o.
+options:
+    mapper-input:
+        type: type
+        name: qore
+        path: /hash
+        can_manage_fields: true
+        custom-fields: {}
+    mapper-output:
+        type: type
+        name: qore
+        can_manage_fields: true
+        path: /hash
+        custom-fields:
+            '$local:input':
+                name: '$local:input'
+                desc: test
+                type:
+                    typename: string
+                    name: softstring
+                    supported_options:
+                        qore.no_null:
+                            type: bool
+                            desc: >-
+                                if True then NULL is not supported on input if
+                                NOTHING is also not accepted
+                        string.encoding:
+                            type: string
+                            desc: the output encoding when writing to the type
+                        string.max_size_chars:
+                            type: integer
+                            desc: the maximum length of the string in characters
+                    options:
+                        qore.no_null: true
+                    base_type: string
+                    mandatory: true
+                    types_accepted:
+                        - string
+                        - bool
+                        - float
+                        - int
+                        - integer
+                        - date
+                        - number
+                    types_returned:
+                        - string
+                    fields: {}
+                    can_manage_fields: false
+                    tags: null
+                isCustom: true
+                canBeNull: false
+                firstCustomInHierarchy: true
+                isChild: false
+                level: 0
+                path: '$local:input'
+                parentPath: false
+mappertype: Mapper
+version: '1.0'
+fields:
+    '$local:input':
+        constant: '$jinfo:output'

@@ -1,0 +1,71 @@
+# FS descriptors for Mac OS
+.DS_Store
+
+version.txt
+*.o
+*.a
+*.la
+.depend
+.lib
+.deps
+*~
+*.swp
+
+# Eclipse
+.project
+.cproject
+
+# Visual Studio Code
+.vscode
+
+# Docs
+examples/user/qorus-examples.qrf
+doxygen/*.doxygen
+doxygen/doxyfile-qorus
+doxygen/tmp_src/
+doxygen/qorus/
+doxygen/qore
+doxygen/*.qm
+
+# Generated sources
+intern/
+exec/ql_*.cpp
+exec/qc_*.cpp
+exec/QC_*.cpp
+exec/x_*.cpp
+exec/*.dox.h
+exec/*-single-compilation-unit.cpp
+exec/*.jar
+exec/com
+exec/org
+exec/*qtest
+*.dSYM/
+
+# Binaries
+exec/qorus-single-compilation-unit.cpp
+exec/qore
+exec/qorus
+exec/qorus-core
+exec/qdsp
+exec/qctl
+exec/qwf
+exec/qsvc
+exec/qjob
+exec/qore.exe
+exec/qorus.exe
+exec/qorus-core.exe
+exec/qdsp.exe
+exec/qctl.exe
+exec/qwf.exe
+exec/qsvc.exe
+exec/qjob.exe
+
+# Webapp
+webapp/node_modules
+webapp/dist/
+webapp/src/components
+webapp/src/css/components.min.css
+webapp/src/js/main.build.js
+
+# cmake builds
+build/

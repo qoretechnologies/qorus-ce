@@ -1,0 +1,39 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups."TEST".desc = "Test group";
+
+$steps = (
+    (
+        "name": "test_debug_step1:1.0",
+        "funcname": "test_debug_step1:1.0",
+        "valname": "test_debug_step1_val:1.0",
+    ),
+);
+
+$workflows."TEST-DEBUG_WORKFLOW"."1.0" = (
+    "desc"         : "Test debug workflow",
+    "steps"        : $steps,
+    "keylist"      : (
+        "id",
+    ),
+    "groups"       : (
+        "TEST",
+    ),
+    "errorfunction": "test_debug_errorfunction:1.0",
+    "constants"    : (
+        "test-debug_const"
+    ),
+    "functions"    : (
+        "test-debug_func",
+    ),
+    "classes"      : (
+        "test-debug_class",
+    ),
+    "autostart"    : 0,
+    "onetimeinit"  : "test_debug_init:1.0",
+);

@@ -1,0 +1,91 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3052
+# serviceversion: 1.0
+# servicedesc: issue 3052 test service
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# serviceauthor: Qore Technologies, s.r.o.
+# autostart: false
+# remote: false
+# ENDSERVICE
+
+# desc: init
+# name: init
+%requires HttpServerUtil
+
+public class Issue3052Authenticator inherits public HttpServer::AbstractAuthenticator {
+    bool requiresAuthentication() {
+        return True;
+    }
+
+    string getRealm() {
+        return "issue3022";
+    }
+
+    *hash<HttpResponseInfo> authenticateRequest(HttpListenerInterface listener, hash hdr, reference<hash> cx) {
+        if (hdr."x-api-key" != "abc12345")
+            return cast<hash<HttpResponseInfo>>(RestHandler::makeResponse(401, "unauthorized invalidkey"));
+        return NOTHING;
+    }
+}
+
+public class Issue3052AuthenticatorV2 inherits public HttpServer::AbstractAuthenticator {
+    bool requiresAuthentication() {
+        return True;
+    }
+
+    string getRealm() {
+        return "issue3022";
+    }
+
+    *hash<HttpResponseInfo> authenticateRequest(HttpListenerInterface listener, hash hdr, reference<hash> cx) {
+        if (hdr."x-api-key" != "abc12345")
+            return cast<hash<HttpResponseInfo>>(RestHandler::makeResponse(401, "unauthorized invalidkey v2"));
+        return NOTHING;
+    }
+}
+
+class ARestClass inherits AbstractRestClass {
+    constructor() : AbstractRestClass() {}
+
+    string name() {
+        return "a";
+    }
+
+    hash get(hash cx, *hash ah) {
+        UserApi::logInfo("A:  cx: %N\nah: %N", cx, ah);
+        return RestHandler::makeResponse(200, cx.raw_path);
+    }
+}
+
+class Issue3052RestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("/issue3052", False, new Issue3052Authenticator())
+    {
+        addClass(new ARestClass());
+        addListener(30520);
+    }
+
+    removeRootPath(reference<string> path) {
+        path =~ s/^\/*issue3052//;
+    }
+}
+
+class Issue3052RestHandlerV2 inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("/issue3052/v2", False, new Issue3052AuthenticatorV2())
+    {
+        addClass(new ARestClass());
+        addListener(30520);
+    }
+
+    removeRootPath(reference<string> path) {
+        path =~ s/^\/*issue3052\/v2//;
+    }
+}
+
+sub init() {
+    Issue3052RestHandler rh();
+    Issue3052RestHandlerV2 rh2();
+    ServiceApi::bindHttp(rh);
+    ServiceApi::bindHttp(rh2);
+}
+# END

@@ -1,0 +1,25 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class RecurringJob
+
+class RecurringJob inherits Test {
+    constructor() : Test("RecurringJob", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        hash<auto> h = qrest.put("jobs/recurring-test/run");
+        assertEq(StatComplete, h.status);
+    }
+}

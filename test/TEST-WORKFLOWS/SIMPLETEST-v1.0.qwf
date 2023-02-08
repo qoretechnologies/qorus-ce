@@ -1,0 +1,39 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$simple = (
+    "test_function_1:1.0",
+    "test_function_2:1.0",
+    "test_function_3:1.0"
+);
+
+$options = (
+    "no-errors"     : "disable error generation",
+    "fast-exec"     : "enable simple and fast workflow execution",
+    "no-init-error" : "disable random onetimeinit error generation",
+    "throw-error"   : "raise an error immediately regardless of other options",
+ );
+
+$workflows."SIMPLETEST"."1.0" = (
+    "desc"          : "simple test workflow with 3 linear steps",
+    "author"        : "Qore Technologies, sro",
+    "patch"         : "p1",
+    "steps"	        : $simple,
+    "constants"     : ( "TestConstants1", "TestConstants2" ),
+    "classes"       : ( "TestClass1", "TestClass2" ),
+    "functions"     : ( "TestFunction1", "TestFunction2", "doTest" ),
+    "attach"        : "attach_test:1.0",
+    "detach"        : "detach_test:1.0",
+    "error_handler" : "error_handler_test:1.0",
+    "errorfunction" : "test_errors:2.0",
+    "onetimeinit"   : "test_onetimeinitialization:1.0",
+    "options"       : $options,
+    "keylist"       : ("key1", "key2", "key3", "key4", "key5", "key6", "key7", "key8", "key9"),
+    "groups"        : "test",
+);

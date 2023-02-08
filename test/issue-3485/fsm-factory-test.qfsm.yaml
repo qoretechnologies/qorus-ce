@@ -1,0 +1,20 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-factory-test
+desc: test for FSMs with a pipeline using a data provider factory for inputt
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 128
+            'y': 82
+        initial: false
+        name: CSV Pipeline
+        desc: ''
+        type: state
+        id: uIfl75LQc
+        action:
+            type: pipeline
+            value: factory-test

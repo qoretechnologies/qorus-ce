@@ -1,0 +1,6 @@
+processor:
+  optional:
+    processor-input-type:
+      type: hash
+    processor-output-type:
+      type: hash

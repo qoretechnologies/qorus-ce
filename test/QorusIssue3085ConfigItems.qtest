@@ -1,0 +1,121 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientCore
+
+%include OloadTestHelper.qc
+
+%exec-class Main
+
+class Main inherits QUnit::Test {
+    private {
+        string srcDir = get_script_dir() + Qore::DirSep + "issue-3085" + Qore::DirSep;
+        string originalInterfacesDir = srcDir + Qore::DirSep + "original_interfaces";
+        string changedInterfacesDir = srcDir + Qore::DirSep + "changed_interfaces";
+
+        const INTERFACES_TO_DELETE = (
+            "workflow:ISSUE-3085-WORKFLOW:1.0",
+            "class:Issue3085Step:1.0",
+            "service:issue-3085-service:1.0",
+            "job:issue-3085-job:1.0",
+        );
+    }
+
+    constructor(): Test("QorusIssue3085ConfigItems", OMQ::version) {
+        QorusClient::init2();
+
+        addTestCase("oloadTest", \oloadTest());
+        set_return_value(main());
+    }
+
+    private setValueThenDeleteInterface(auto set_value, string interface_type, string interface_name, string item_name) {
+        hash<auto> value = {"value": set_value};
+        auto rest_response = qrest.put(interface_type + "s/" + interface_name + "/config/" + item_name, value).value;
+        assertEq(value.value, rest_response);
+
+        string interface = interface_type + ":" + interface_name + ":1.0";
+
+        if (m_options.verbose > 2) {
+            printf("---------START delete " + interface + "-----------\n");
+        }
+        # it should delete the interface even eithout -A
+        hash<auto> deletion_result = OloadTestHelper::deleteInterfaces((interface,), True, m_options.verbose > 2);
+        on_error printf("%N\n", deletion_result);
+        assertEq(0, deletion_result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("----------END delete " + interface + "------------\n");
+        }
+    }
+
+    private setValueThenDeleteWorkflow() {
+        hash<auto> config_item = {"value": {"test2": 123}, "name": "issue-3085-step-config-1"};
+        auto rest_response = qrest.post("workflows/ISSUE-3085-WORKFLOW/config", config_item).value;
+        assertEq(config_item.value, rest_response);
+
+        if (m_options.verbose > 2) {
+            printf("---------START delete workflow:ISSUE-3085-WORKFLOW:1.0----------\n");
+        }
+        # Should delete the workflow because we don't delete any config items (will be deleted only if step is deleted)
+        hash<auto> deletion_result = OloadTestHelper::deleteInterfaces(("workflow:ISSUE-3085-WORKFLOW:1.0",), False, m_options.verbose > 2);
+        on_error printf("%N\n", deletion_result);
+        assertEq(0, deletion_result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("----------END delete workflow:ISSUE-3085-WORKFLOW:1.0------------\n");
+        }
+    }
+
+    private oloadTest() {
+        if (m_options.verbose > 2) {
+            printf("------START oload original interfaces------\n");
+        }
+        hash<auto> result = OloadTestHelper::oloadFiles(originalInterfacesDir, NOTHING, NOTHING, m_options.verbose > 2);
+        on_error printf("%N\n", result);
+        assertEq(0, result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("-------END oload original interfaces-------\n");
+        }
+
+        if (m_options.verbose > 2) {
+            printf("------START oload changed interfaces-------\n");
+        }
+        result = OloadTestHelper::oloadFiles(changedInterfacesDir, True, NOTHING, m_options.verbose > 2);
+        assertEq(0, result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("-------END oload changed interfaces--------\n");
+        }
+
+        if (m_options.verbose > 2) {
+            printf("---------START delete interfaces-----------\n");
+        }
+        result = OloadTestHelper::deleteInterfaces(INTERFACES_TO_DELETE, NOTHING, m_options.verbose > 2);
+        assertEq(0, result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("----------END delete interfaces------------\n");
+        }
+
+        if (m_options.verbose > 2) {
+            printf("------START oload original interfaces------\n");
+        }
+        result = OloadTestHelper::oloadFiles(originalInterfacesDir, True, NOTHING, m_options.verbose > 2);
+        assertEq(0, result.exit_code);
+        if (m_options.verbose > 2) {
+            printf("-------END oload original interfaces-------\n");
+        }
+
+        # Set values and delete interface (first without -A option and then with)
+        setValueThenDeleteInterface({"test": "test", "test2": "test2"}, "job", "issue-3085-job", "issue-3085-job-config-1");
+        setValueThenDeleteInterface({"test1": 123}, "service", "issue-3085-service", "issue-3085-service-config-1");
+
+        # Set value on workflow level and delete workflow
+        setValueThenDeleteWorkflow();
+
+        # Set value on step level and delete step
+        setValueThenDeleteInterface({"test2": "step_test_1"}, "step", "Issue3085Step", "issue-3085-step-config-1");
+    }
+}

@@ -1,0 +1,72 @@
+type: service
+name: sqlutil
+desc: provides access to SqlUtil functionality from system datasources
+version: "6.0"
+servicetype: SYSTEM
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusSystemService
+class-name: QorusSystemSqlutilService
+code: sqlutil-v6.0.qsd
+methods:
+  - name: init
+    desc: "initalizes the system sqlutil service"
+  - name: select
+    desc: "executes the select method on the given datasource and table and returns the result"
+  - name: select_rows
+    desc: "executes the selectRows method on the given datasource and table and returns the result"
+  - name: select_row
+    desc: "executes the selectRow method on the given datasource and table and returns the result"
+  - name: insert
+    desc: "executes the insert method on the given datasource and table with the given data and returns the number of rows inserted in a single transaction"
+  - name: insert_from_select
+    desc: "executes the insertFromSelect method on the given datasource and table and returns the result"
+  - name: update
+    desc: "executes the update method on the given datasource and table with the given data and returns the number of rows updated in a single transaction"
+  - name: upsert_row
+    desc: "executes the upsert() method on the given datasource and table with the given input data and returns the result of the upsert operation"
+  - name: upsert
+    desc: "executes the upsertFromIterator() method on the given datasource and table with the given input data and returns a hash giving the result of the upsert operation"
+  - name: del
+    desc: "executes the delete method on the given datasource and table with the given data and returns the number of rows deleted in a single transaction"
+  - name: truncate_table
+    desc: "executes the truncate method on the given datasource and table"
+  - name: align_schema
+    desc: "aligns a schema with the given template and returns a hash with two keys: \\c \"info\": a list of informational strings about the result of processing, and \\c \"sql\": a list of the SQL executed"
+  - name: drop_schema
+    desc: "drops the given schema and returns a hash with two keys: \\c \"info\": a list of informational strings about the result of processing, and \\c \"sql\": a list of the SQL executed"
+  - name: align_table
+    desc: "aligns a schema with the given template and returns a hash with two keys: \\c \"info\": a list of informational strings about the result of processing, and \\c \"sql\": a list of the SQL executed"
+  - name: drop_table
+    desc: "drops the listed table and returns information about the operation executed"
+  - name: list_functions
+    desc: "returns a list of strings giving the names of all functions in the given datasource"
+  - name: list_procedures
+    desc: "returns a list of strings giving the names of all procedures in the given datasource"
+  - name: list_sequences
+    desc: "returns a list of strings giving the names of all sequences in the given datasource"
+  - name: list_tables
+    desc: "returns a list of strings giving the names of all tables in the given datasource"
+  - name: exists_table
+    desc: "returns True if the given table exists in the given datasource"
+  - name: list_views
+    desc: "returns a list of strings giving the names of all views in the given datasource"
+  - name: get_table_ddl
+    desc: "returns the DDL for a table or @ref nothing if the object does not exist or is not accessible"
+  - name: get_sequence_ddl
+    desc: "returns the DDL for a sequence or @ref nothing if the object does not exist or is not accessible"
+  - name: get_function_ddl
+    desc: "returns the DDL for a function or @ref nothing if the object does not exist or is not accessible"
+  - name: get_procedure_ddl
+    desc: "returns the DDL for a stored procedure or @ref nothing if the object does not exist or is not accessible"
+  - name: get_view_ddl
+    desc: "returns the DDL for a view or @ref nothing if the object does not exist or is not accessible"
+  - name: exec_sql
+    desc: "executes SQL in the given datasource with option arguments and returns a hash of the results"
+  - name: exec_raw_sql
+    desc: "executes raw SQL in the given datasource and returns a hash of the results"
+  - name: describe_table
+    desc: "returns a hash describing the given table"
+  - name: describe_query
+    desc: "returns a hash describing the results of an SQL query"

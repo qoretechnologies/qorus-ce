@@ -1,0 +1,37 @@
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class LogMessageTest {
+    public {
+        const LogMessageLevelItem = "test-log-message-level";
+
+        const LogMessageLevelString = "test-log-message-string";
+
+        const LogMessageLevelArgs = "test-log-message-args";
+    }
+
+    #! Connector for executing the log action
+    /** @param input available in the \a input key of local context data when looking up config item values
+
+        @return a hash with a \a msg key holding the log message
+    */
+    hash<auto> logMessage(auto input) {
+        return logMessageIntern({"input": input});
+    }
+
+    #! Internal method for executing the log action
+    /** @param local_data local context data when looking up config item values
+
+        @return a hash with a \a msg key holding the log message
+    */
+    private hash<auto> logMessageIntern(hash<auto> local_data) {
+        int lvl = LoggerLevel::getLevel(UserApi::getConfigItemValue(LogMessageLevelItem, local_data)).getValue();
+        string str = UserApi::getConfigItemValue(LogMessageLevelString, local_data);
+        auto args = UserApi::getConfigItemValue(LogMessageLevelArgs, local_data);
+        string msg = vsprintf(str, args);
+        UserApi::logWithLevelArgs(lvl, "%s", msg);
+        return {"msg": msg};
+    }
+}

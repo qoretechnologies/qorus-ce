@@ -1,0 +1,7 @@
+type: config-item-values
+config-item-values:
+  - name: "issue-3303-test-config-item-2"
+    interface-type: "step"
+    interface-name: "issue3303teststep"
+    interface-version: "1.0"
+    value: "test_value"

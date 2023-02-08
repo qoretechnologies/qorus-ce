@@ -1,0 +1,42 @@
+# name: Issue3166Step
+# version: 1.0
+# desc: Simple worklfow step example
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3166Step inherits QorusNormalStep {
+    primary() {
+        UserApi::logInfo("Issue3166Step was called");
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3166-step-config-1": <ConfigItemInfo>{
+                "type": "float",
+                "default_value": 0.5,
+                "description": "This is an example configuration item of type float",
+                "strictly_local": True,
+                "allowed_values": (0.5, 0.7, 0.8, 0.9)
+            },
+            "issue-3166-config-1": <ConfigItemInfo>{
+                "type": "*string",
+                "default_value": "st",
+                "description": "This is an example configuration item of type *string",
+                "strictly_local": False,
+                "allowed_values": ("st", "ASD", NOTHING, "test")
+            },
+            "issue-3166-step-config-2": <ConfigItemInfo>{
+                "type": "int",
+                "default_value": 14,
+                "description": "This is an example configuration item of type int",
+                "strictly_local": True,
+                "allowed_values": (14, 5, 213, 21, 0)
+            },
+        };
+    }
+}
+# END

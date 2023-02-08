@@ -1,0 +1,74 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups.test.desc = "test interfaces";
+
+our hash<auto> queues."qore-class-test" = {
+    "desc" : "Class workflow asynchronous test queue",
+};
+
+our hash<auto> events."qore-class-event-test" = {
+    "desc": "Class workflow test event type",
+ };
+
+our list<auto> simple = (
+    "class:QoreSimpleTestStep1:1.0",
+    {
+        "name": "qore-step-4:1.0",
+        "classname": "QoreSimpleTestStep4:1.0",
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-step-2:1.0",
+        "classname": "QoreSimpleTestStep2:1.0",
+        "subworkflow": True,
+    },
+    {
+        "name": "qore-step-5:1.0",
+        "classname": "QoreSimpleTestStep5:1.0",
+        "subworkflow": True,
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-step-3:1.0",
+        "classname": "QoreSimpleTestStep3",
+        "classversion": "1.0",
+        "queue": "qore-class-test",
+    },
+    {
+        "name": "qore-step-6:1.0",
+        "classname": "QoreSimpleTestStep6",
+        "classversion": "1.0",
+        "queue": "qore-class-test",
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-step-7:1.0",
+        "classname": "QoreSimpleTestStep7:1.0",
+        "eventtype": "qore-class-event-test",
+    },
+    {
+        "name": "qore-step-8:1.0",
+        "classname": "QoreSimpleTestStep8:1.0",
+        "eventtype": "qore-class-event-test",
+        "arraytype": "SERIES",
+    },
+);
+
+our hash<auto> workflows."CLASS-WORKFLOW-TEST"."1.0" = (
+    "desc"          : "simple class test workflow",
+    "author"        : "Qore Technologies, s.r.o.",
+    "steps"	        : simple,
+    "keylist"       : ("test-key1",),
+    "groups"        : "test",
+    "sla_threshold" : 2,
+    );

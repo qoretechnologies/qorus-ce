@@ -1,0 +1,17 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class LowcodeTest2 inherits QorusJob, QoreTest {
+    run() {
+        hash<auto> h = {
+            "a": 1,
+            "b": 2,
+            "c": 3,
+        };
+        auto rv = executeFsm("lowcode-test-2", h);
+        logInfo("map output: %y", rv);
+        assertEq({"d": "1", "e": "2", "f": "3"}, rv);
+    }
+}

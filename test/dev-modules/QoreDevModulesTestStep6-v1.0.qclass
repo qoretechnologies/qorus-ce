@@ -1,0 +1,21 @@
+# name: QoreDevModulesTestStep6
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreDevModulesTestStep6 inherits TestAsyncArrayStep, QoreTest {
+    softlist<auto> array() {
+        return 1;
+    }
+
+    primaryImpl(auto array_arg) {
+        logInfo("skipping async step; array value: %y", array_arg);
+        skipAsyncStep();
+    }
+}
+# END

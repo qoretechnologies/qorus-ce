@@ -1,0 +1,19 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: service-system-call
+# serviceversion: 1.0
+# servicedesc: service calling sysinfo
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# TAG: qorus-example: true
+# ENDSERVICE
+
+# desc: retrieves service state data
+*hash sub callSysInfo(softstring wfiid) {
+    return sysinfo.getOrderInfo(wfiid);
+}
+# END
+

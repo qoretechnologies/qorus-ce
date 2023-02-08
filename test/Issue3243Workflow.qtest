@@ -1,0 +1,42 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3243WorkflowTest
+
+class Issue3243WorkflowTest inherits QorusPassiveWorkflowTest {
+    private {
+        # workflow instanceid of the synchronous workflow order
+        softint wfiid;
+    }
+
+    constructor() : QorusPassiveWorkflowTest("ISSUE-3243-WORKFLOW", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        hash<auto> oh;
+        oh += {
+            "staticdata": {"now": now_us()},
+        };
+
+        WorkflowLogHelper wlh(m_rest_pfx, m_options.verbose > 1);
+        on_exit wlh.stop();
+        # set a 30 minute timeout
+        qrest.setTimeout(30m);
+        wfiid = execSynchronous(oh).workflow_instanceid;
+        hash<auto> dd = qrest.get("orders/" + wfiid + "/dynamicdata");
+        assertEq(wfiid, dd.val);
+    }
+}

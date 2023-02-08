@@ -1,0 +1,36 @@
+type: job
+name: issue3102job
+version: "1.0"
+desc: Test job written using YAML format
+author:
+  - Alzhan Turlybekov
+# modules:
+#   - JobModule1
+#   - JobModule2
+# remote: true
+active: true
+run-skipped: false
+single-instance: false
+schedule:
+  minutes: "5"
+  hours: "4"
+  days: "*"
+  months: "*"
+  dow: "*"
+expiry-date: 2019-12-13
+class-name: issue3102job
+lang: qore
+classes:
+  - issue3102class
+constants:
+  - issue3102constant
+functions:
+   - issue3102function
+# mappers:
+#   - mapper1:1.0
+#   - mapper2:1.0
+vmaps:
+  - issue3102vmap
+groups:
+  - issue3102group
+code: job.qjob

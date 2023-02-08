@@ -1,0 +1,1029 @@
+/** @page serviceapi Service API Reference
+
+    @tableofcontents
+
+    @section svcintro Introduction to the Qorus Service API
+
+    Each service's @ref Qore::Program "Program" container is set up with the following imported objects:
+    - @ref svcapifuncs
+    - @ref svcapiclasses
+    - @ref svcapimodules
+
+    In addition to the above, all public constants in the OMQ namespace are available.
+
+    @see
+    - @ref implementingservices
+    - @ref python_development_services
+    - @ref javadevelopment_services
+
+    @subsection serviceclassapi Service Class API
+
+    The service class APIs are documented here:
+    - \b %Python: @ref OMQ::UserApi::Service::ServiceApi "svcapi"
+    - \b Java: @ref OMQ::UserApi::Service::ServiceApi "qore.OMQ.UserApi.Service.ServiceApi"
+    - \b %Qore: @ref OMQ::UserApi::Service::ServiceApi "ServiceApi"
+
+    For @ref service_source "class-based services", the service's implementation class must inherit
+    @ref OMQ::UserApi::Service::QorusService "Service::QorusService" (%Qore) or
+    @ref OMQ::UserApi::Service::QorusService "qore.OMQ.UserApi.Service.QorusService" (%Java) directly.
+    This means that %Qore code can call the static methods defined in the base class directly.
+
+    For library classes and other service code, calls must be prefixed with the class name (also for all Java code
+    as well).
+
+    @section svcprograms Service Program Container
+
+    Each Qorus service has a single %Qore @ref Qore::Program "Program" object containing all its code for service
+    methods, as well as any library objects imported into the @ref Qore::Program "Program" object
+    (@ref qore_classes "classes", @ref constants "constants", and @ref qore_functions "functions" listed as attributes
+    of the service when the service is defined).  Service @ref Qore::Program "Program" objects are restricted from
+    using elements of the %Qore Language related to process and thread control; the use of these functions is either
+    dangerous or could violate the integrity of the Qorus server process and therefore is restricted.
+
+    To enforce these restrictions, service @ref Qore::Program "Program" objects are created with the following
+    sandbox flags:
+    |!Directive|!Constant|!Description
+    |@ref allow-weak-references "%allow-weak-references"|@ref Qore::PO_ALLOW_WEAK_REFERENCES|the \
+        @ref weak_assignment_operator ":= operator" may be used
+    |@ref no-process-control "%no-process-control"|@ref Qore::PO_NO_PROCESS_CONTROL|Functionality that affects the \
+        entire process is unavailable
+    |@ref no-thread-control "%no-thread-control"|@ref Qore::PO_NO_THREAD_CONTROL|Thread management functionality is \
+        unavailable
+    |@ref no-top-level "%no-top-level"|@ref Qore::PO_NO_TOP_LEVEL_STATEMENTS|No code is allowed in the top-level \
+        statement (outside a function or class)
+    |@ref require-our "%require-our"|@ref Qore::PO_REQUIRE_OUR|All variables must be declared before use
+
+    Please note that despite these restrictions, service program objects have most of the %Qore language API and class
+    library available for use.
+
+    Furthermore, the following @ref conditional_parsing "parse defines" are defined:
+    |!Define|!Availability|!Description
+    |\c Qorus|\c W, \c S, \c J|Identifies code in Qorus
+    |\c QorusCE|\c W, \c S, \c J|Identifies the Community Edition of Qorus (\c QorusEE is defined in the Enterprise \
+        Edition)
+    |\c QorusHasAlerts|\c W, \c S, \c J|Marks the availability of the @ref systemalertapi "alert API" (Qorus 3.0+)
+    |\c QorusHasHttpUserIndex|\c S|Marks the availability of @ref OMQ::AbstractServiceHttpHandler::setUserIndexInfo()\
+        (Qorus 3.0+)
+    |\c QorusHasTableCache|\c W, \c S, \c J|Marks the availability of the @ref systemsqlcacheapi "table cache API" \
+        (Qorus 3.1+)
+    |\c QorusHasUserConnections|\c W, \c S, \c J|Marks the availability of the @ref systemconnapi "connection API" \
+        (Qorus 3.0+)
+    |\c QorusServer|\c W, \c S, \c J|Identifies code used in Qorus server interfaces
+    |\c QorusService|\c S|Identifies code used in a service @ref Qore::Program "Program" container
+
+    @note All defines set in @ref defines (common to workflows, services, and jobs) are also set in service
+    @ref Qore::Program "Program" containers
+
+    @subsection svcglobalvars Global Variables
+
+    Services may declare global variables, but because the @ref no-top-level "%no-top-level" parse restriction is set
+    for the @ref Qore::Program "Program" object; they may not be initialized at the top level of the program.
+
+    Initialize them in the @ref serviceinit "init() method" instead; global variables may also be declared here if
+    desired.  Global variables may be declared anywhere in the @ref Qore::Program "Program" object; they do not have
+    to be declared at the top level of the service program.
+
+    @section svcapifuncs Service API
+
+    The following APIs are imported into @ref svcprograms "service program logic containers" (see also
+    @ref OMQ::UserApi::Service):
+
+    |!API Method|!Domain|!Availability|!Description
+    |@ref OMQ::UserApi::UserApi::auditCheckEventString() "UserApi::auditCheckEventString()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as a string) is enabled
+    |@ref OMQ::UserApi::UserApi::auditCheckEvent() "UserApi::auditCheckEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|checks if the given audit event (given as an integer code) is enabled
+    |@ref OMQ::UserApi::UserApi::auditGetMask() "UserApi::auditGetMask()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|returns the audit event mask
+    |@ref OMQ::UserApi::UserApi::auditUserEvent() "UserApi::auditUserEvent()"|@ref systemauditapi "Audit"|\c W, \c S, \c J|creates a user audit event (with audit event code @ref OMQ::AE_USER_EVENT) against the workflow, service, or job instance
+    |@ref OMQ::UserApi::UserApi::callNetworkApi() "UserApi::callNetworkApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgs() "UserApi::callNetworkApiArgs()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with system permissions with an explicit argument list argument
+    |@ref OMQ::UserApi::UserApi::callNetworkApiArgsWithAuthentication() "UserApi::callNetworkApiArgsWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref rpcapi "RPC API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::callRestApi() "UserApi::callRestApi()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with system permissions
+    |@ref OMQ::UserApi::UserApi::callRestApiWithAuthentication() "UserApi::callRestApiWithAuthentication()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|calls a system @ref restapi "REST API" with authentication information (username and password)
+    |@ref OMQ::UserApi::UserApi::clearSqlTableCache() "UserApi::clearSqlTableCache()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|clears a cached table from the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::createOrder() "UserApi::createOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in the database and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::createRemoteOrder() "UserApi::createRemoteOrder()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|creates a workflow order data instance in a @ref remoteconn "remote Qorus instance" and returns the workflow_instanceid of the order created
+    |@ref OMQ::UserApi::UserApi::deserializeQorusData() "UserApi::deserializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|deserializes strings to %Qore data structures
+    |@ref OMQ::UserApi::UserApi::execSynchronousWorkflow() "UserApi::execSynchronousWorkflow()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|executes a workflow order synchronously and returns the result of execution
+    |@ref OMQ::UserApi::UserApi::flushSlaEvents() "UserApi::flushSlaEvents()"|@ref sla_api "SLA"|\c W, \c S, \c J|flushes all pending SLA events to the DB
+    |@ref OMQ::UserApi::UserApi::getActiveJobs() "UserApi::getActiveJobs()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about active jobs
+    |@ref OMQ::UserApi::Service::ServiceApi::getConfigItemHash() "ServiceApi::getConfigItemHash()"|n/a|\c S|retrieves a hash of all service configuration items
+    |@ref OMQ::UserApi::Service::ServiceApi::getConfigItemValue() "ServiceApi::getConfigItemValue()"|n/a|\c S|retrieves the value of a service configuration item
+    |@ref OMQ::UserApi::UserApi::getDatasourceDedicated() "UserApi::getDatasourceDedicated()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a dedicated @ref Qore::SQL::Datasource object
+    |@ref OMQ::UserApi::UserApi::getDatasourcePool() "UserApi::getDatasourcePool()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a shared @ref Qore::SQL::DatasourcePool object
+    |@ref OMQ::UserApi::UserApi::getGlobalConfigItemValue() "UserApi::getGlobalConfigItemValue()"|@ref systeminfoapi|\c W, \c S, \c J|returns the value of the global configuration item on global level
+    |@ref OMQ::UserApi::Service::ServiceApi::getOption() "ServiceApi::getOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of one or more system or interface options
+    |@ref OMQ::UserApi::UserApi::getQorusOptions() "UserApi::getQorusOptions()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionsArgs() "UserApi::getQorusOptionsArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns the value of system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfo() "UserApi::getQorusOptionInfo()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getQorusOptionInfoArgs() "UserApi::getQorusOptionInfoArgs()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|returns information about system options
+    |@ref OMQ::UserApi::UserApi::getRemoteRestConnection() "UserApi::getRemoteRestConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemRestHelperBase "QorusSystemRestHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRemoteRpcConnection() "UserApi::getRemoteRpcConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns a @ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper" to a remote Qorus instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowInfo() "UserApi::getRunningWorkflowInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a running workflow execution instance
+    |@ref OMQ::UserApi::UserApi::getRunningWorkflowList() "UserApi::getRunningWorkflowList()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about running workflow execution instances
+    |@ref OMQ::UserApi::UserApi::getServiceInfo() "UserApi::getServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a service
+    |@ref OMQ::UserApi::UserApi::getSessionId() "UserApi::getSessionId()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns the current @ref appsessionmodel "application session ID"
+    |@ref OMQ::UserApi::UserApi::getSqlTable() "UserApi::getSqlTable()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|retrieves an @ref SqlUtil::AbstractTable "AbstractTable" object from the @ref sql-cache "SQL cache" for DML operations
+    |@ref OMQ::UserApi::UserApi::getSqlCacheInfo() "UserApi::getSqlCacheInfo()"|@ref systemsqlcacheapi "SQL Cache"|\c W, \c S, \c J|returns information about the @ref sql-cache "SQL cache"
+    |@ref OMQ::UserApi::UserApi::getSystemInfo() "UserApi::getSystemInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about the system
+    |@ref OMQ::UserApi::UserApi::getSystemServiceInfo() "UserApi::getSystemServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a system service
+    |@ref OMQ::UserApi::UserApi::getUserConnection() "UserApi::getUserConnection()"|@ref systemconnapi "Connections"|\c W, \c S, \c J|returns the given @ref userconn "user connection" object
+    |@ref OMQ::UserApi::UserApi::getUserServiceInfo() "UserApi::getUserServiceInfo()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about a user service
+    |@ref OMQ::UserApi::UserApi::getValueMap() "UserApi::getValueMap()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a value mapping from a value map
+    |@ref OMQ::UserApi::UserApi::getValueMaps() "UserApi::getValueMaps()"|@ref systemvmapapi "Value Maps"|\c W, \c S, \c J|retrieves a list of all known value sets
+    |@ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"|@ref systemloggingapi "logging"|\c W, \c S, \c J|outputs a log message in the workflow's log file
+    |@ref OMQ::UserApi::UserApi::getNextSequenceValue() "UserApi::getNextSequenceValue()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|returns the next value from the given datasource and database sequence
+    |@ref OMQ::UserApi::UserApi::postSlaEventError() "UserApi::postSlaEventError()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts an unsuccessful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSlaEventSuccess() "UserApi::postSlaEventSuccess()"|@ref sla_api "SLA"|\c W, \c S, \c J|posts a successful event for SLA and performance tracking
+    |@ref OMQ::UserApi::UserApi::postSyncEvent() "UserApi::postSyncEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts a workflow synchronization event given the event type name and event key
+    |@ref OMQ::UserApi::UserApi::postUserEvent() "UserApi::postUserEvent()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|posts an application event of class @ref OMQ::QE_CLASS_USER
+    |@ref OMQ::UserApi::UserApi::propGet() "UserApi::propGet()"|@ref systempropapi "System Props"|\c W, \c S, \c J|returns the value of the given @ref sysprops "system property key" in the given domain or @ref nothing if the system property does not exist
+    |@ref OMQ::UserApi::UserApi::propUpdate() "UserApi::propUpdate()"|@ref systempropapi "System Props"|\c W, \c S, \c J|changes (inserts, updates, or deletes) the value of one or more @ref sysprops "system properties"
+    |@ref OMQ::UserApi::UserApi::qorusGetLocalUrl() "UserApi::qorusGetLocalUrl()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns a URL for the current system
+    |@ref OMQ::UserApi::UserApi::raiseTransientAlert() "UserApi::raiseTransientAlert()"|@ref systemalertapi "Alerts"|\c W, \c S, \c J|raises a transient alert
+    |@ref OMQ::UserApi::UserApi::restartTransaction() "UserApi::restartTransaction()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|enables recovery from restartable DB communication errors
+    |@ref OMQ::UserApi::UserApi::runtimeProperties() "UserApi::runtimeProperties()"|@ref systeminfoapi "System Info"|\c W, \c S, \c J|returns information about runtime @ref defines "system defines" defined
+    |@ref OMQ::UserApi::UserApi::serializeQorusData() "UserApi::serializeQorusData()"|@ref systemutilityapi "Utility"|\c W, \c S, \c J|serializes %Qore data structures to strings
+    |@ref OMQ::UserApi::Service::ServiceApi::setOption() "ServiceApi::setOption()"|@ref systemoptionapi "Options"|\c W, \c S, \c J|sets option values on a workflow, service, or job
+    |@ref OMQ::UserApi::Service::ServiceApi::bindFtp() "ServiceApi::bindFtp()"|@ref service_ftp_functions "Service FTP"|\c S|Binds an FTP handler to the service and starts FTP listeners
+    |@ref OMQ::UserApi::Service::ServiceApi::bindHandler() "ServiceApi::bindHandler()"|@ref service_http_functions "Service HTTP"|\c S|Binds a new HTTP handler to a dedicated HTTP service listener
+    |@ref OMQ::UserApi::Service::ServiceApi::bindHttp() "ServiceApi::bindHttp()"|@ref service_http_functions "Service HTTP"|\c S|Binds an HTTP handler to the service
+    |@ref OMQ::UserApi::Service::ServiceApi::callApiAsCurrentUser() "ServiceApi::callApiAsCurrentUser()"|@ref service_system_functions "Service System"|\c S|Calls a system RPC API as the current external user (if any) and returns the result
+    |@ref OMQ::UserApi::Service::ServiceApi::checkAuthorization() "ServiceApi::checkAuthorization()"|@ref service_rbac_functions "Service RBAC"|\c S|checks the current user for all given @ref RBACPermissions "permissions" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkAuthorizationOr() "ServiceApi::checkAuthorizationOr()"|@ref service_rbac_functions "Service RBAC"|\c S|checks the current user for any of the given @ref RBACPermissions "permissions" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkJobAccess() "ServiceApi::checkJobAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given @ref jobs "jobs" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkJobInstanceAccess() "ServiceApi::checkJobInstanceAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access the given job instance and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkMapperAccess() "ServiceApi::checkMapperAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given @ref mappers "mappers" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkQueueAccess() "ServiceApi::checkQueueAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given asynchronous queues and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkServiceAccess() "ServiceApi::checkServiceAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given @ref services "services" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkVmapAccess() "ServiceApi::checkVmapAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given @ref value-maps "value maps" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkWorkflowAccess() "ServiceApi::checkWorkflowAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access all the given @ref workflowmodel "workflows" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkWorkflowInstanceAccess() "ServiceApi::checkWorkflowInstanceAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Checks if the current user can access the given @ref workflowmodel "workflow order instance" and throws an exception if not
+    |@ref OMQ::UserApi::UserApi::executeFsm() "UserApi::executeFsm()"|@ref systemutilityapi "Utility"\
+        |\c W, \c S, \c J|executes a @ref finite_state_machines "finite state machine" registered with the interface \
+        and returns the result
+    |@ref OMQ::UserApi::Service::ServiceApi::getActiveJobsAsCurrentUser() "ServiceApi::getActiveJobsAsCurrentUser()"|@ref service_info_functions "Service Info"|\c S|Returns a hash of all active jobs visible to the current external user (if any)
+    |@ref OMQ::UserApi::Service::ServiceApi::getCallContext() "ServiceApi::getCallContext()"|@ref service_info_functions "Service Info"|\c S|Returns a hash of contextual information about the current service call
+    |@ref OMQ::UserApi::Service::ServiceApi::getCallContextString() "ServiceApi::getCallContextString()"|@ref service_info_functions "Service Info"|\c S|Returns a string describing the context of the current call
+    |@ref OMQ::UserApi::Service::ServiceApi::getHttpCallContext() "ServiceApi::getHttpCallContext()"|@ref service_http_functions "Service HTTP"|\c S|Returns a hash with info about the external HTTP call, if any
+    |@ref OMQ::UserApi::Service::ServiceApi::getJobAccessHash() "ServiceApi::getJobAccessHash()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a hash of all @ref jobs "job IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::getJobAccessList() "ServiceApi::getJobAccessList()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a list of all @ref jobs "job IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEvents() "ServiceApi::getLastEvents()"|@ref service_event_functions "Service Events"|\c S|Returns the last @ref systemevents "system events" corresponding to the arguments
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEventsAnd() "ServiceApi::getLastEventsAnd()"|@ref service_event_functions "Service Events"|\c S|Returns the last @ref systemevents "system events" that meet all the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEventsOr() "ServiceApi::getLastEventsOr()"|@ref service_event_functions "Service Events"|\c S|Returns the last @ref systemevents "system events" that meet any of the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::getMapperAccessHash() "ServiceApi::getMapperAccessHash()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a hash of all @ref mappers "mapper IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::getMapperAccessList() "ServiceApi::getMapperAccessList()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a list of all @ref mappers "mapper IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::getResource() "ServiceApi::getResource()"|@ref service_resource_functions "Service Resources"|\c S|returns the requested @ref service_file_resources "resource" as a hash with HTTP headers and an HTTP response code to be used as the response for an HTTP request handler
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceData() "ServiceApi::getResourceData()"|@ref service_resource_functions "Service Resources"|\c S|returns the requested @ref service_file_resources "resource" as its native type
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceHash() "ServiceApi::getResourceHash()"|@ref service_resource_functions "Service Resources"|\c S|returns a hash describing all @ref service_file_resources "resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceList() "ServiceApi::getResourceList()"|@ref service_resource_functions "Service Resources"|\c S|returns a list of all @ref service_file_resources "resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceWsdl() "ServiceApi::getResourceWsdl()"|@ref service_resource_functions "Service Resources"|\c S|returns the given @ref service_file_resources "resource" as a @ref WSDL::WebService "WebService" object
+    |@ref OMQ::UserApi::Service::ServiceApi::getRunningWorkflowListAsCurrentUser() "ServiceApi::getRunningWorkflowListAsCurrentUser()"|@ref service_info_functions "Service Info"|\c S|Returns a list of running workflows visible to the current external user, if any
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceAccessHash() "ServiceApi::getServiceAccessHash()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a hash of all @ref services "services IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceAccessList() "ServiceApi::getServiceAccessList()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a list of all @ref services "services IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceInfo() "ServiceApi::getServiceInfo()"|@ref service_info_functions "Service Info"|\c S|Returns a hash of information about the current service
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceInfoAsCurrentUser() "ServiceApi::getServiceInfoAsCurrentUser()"|@ref service_info_functions "Service Info"|\c S|Returns information about the given service if the current external user, if any, can access it
+    |@ref OMQ::UserApi::Service::ServiceApi::getTemplateHash() "ServiceApi::getTemplateHash()"|@ref service_resource_functions "Service Resources"|\c S|returns a hash describing all @ref service_file_resources "template resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getTemplateList() "ServiceApi::getTemplateList()"|@ref service_resource_functions "Service Resources"|\c S|returns a list of all @ref service_file_resources "template resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getVmapAccessHash() "ServiceApi::getVmapAccessHash()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a hash of all @ref value-maps "value map IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::getVmapAccessList() "ServiceApi::getVmapAccessList()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a list of all @ref value-maps "value map IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::getWorkflowAccessHash() "ServiceApi::getWorkflowAccessHash()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a hash of all @ref workflowmodel "workflow IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref workflowmodel "workflows"
+    |@ref OMQ::UserApi::Service::ServiceApi::getWorkflowAccessList() "ServiceApi::getWorkflowAccessList()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns a list of all @ref workflowmodel "workflow IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref workflowmodel "workflows"
+    |@ref OMQ::UserApi::Service::ServiceApi::hasResource() "ServiceApi::hasResource()"|@ref service_resource_functions "Service Resources"|\c S|returns @ref True if the given @ref service_file_resources "resource" exists
+    |@ref OMQ::UserApi::Service::ServiceApi::hasTemplate() "ServiceApi::hasTemplate()"|@ref service_resource_functions "Service Resources"|\c S|returns @ref True if the given @ref service_file_resources "resource" is a template
+    |@ref OMQ::UserApi::UserApi::registerFsmAsObserver() "UserApi::registerFsmAsObserver()"\
+        |@ref systemutilityapi "Utility"|\c W, \c S, \c J|registers a \
+        @ref finite_state_machines "finite state machine" as an event observer
+    |@ref OMQ::UserApi::Service::ServiceApi::registerSoapHandler() "ServiceApi::registerSoapHandler()"|@ref service_soap_functions "Service SOAP"|\c S|Registers the current service as a SOAP server
+    |@ref OMQ::UserApi::Service::ServiceApi::renderTemplate() "ServiceApi::renderTemplate()"|@ref service_resource_functions "Service Resources"|\c S|explcitly renders the given @ref service_file_resources "template resource" and returns the rendered data
+    |@ref OMQ::UserApi::Service::ServiceApi::startThread() "ServiceApi::startThread()"|@ref service_threading_functions "Service Threads"|\c S|Starts a service thread
+    |@ref OMQ::UserApi::Service::ServiceApi::startThreadArgs() "ServiceApi::startThreadArgs()"|@ref service_threading_functions "Service Threads"|\c S|Starts a service thread with the given arguments as a list argument
+    |@ref OMQ::UserApi::Service::ServiceApi::testAuthorization() "ServiceApi::testAuthorization()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user has all given @ref RBACPermissions "permissions"
+    |@ref OMQ::UserApi::Service::ServiceApi::testAuthorizationOr() "ServiceApi::testAuthorizationOr()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user has any of the given @ref RBACPermissions "permissions"
+    |@ref OMQ::UserApi::Service::ServiceApi::testJobAccess() "ServiceApi::testJobAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user can access all the given @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::testMapperAccess() "ServiceApi::testMapperAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user can access all the given @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::testServiceAccess() "ServiceApi::testServiceAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user can access all the given @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::testVmapAccess() "ServiceApi::testVmapAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user can access all the given @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::testWorkflowAccess() "ServiceApi::testWorkflowAccess()"|@ref service_rbac_functions "Service RBAC"|\c S|Returns @ref True if the current user can access all the given @ref workflowmodel "workflows"
+    |@ref OMQ::UserApi::Service::ServiceApi::tryRenderTemplate() "ServiceApi::tryRenderTemplate()"|@ref service_resource_functions "Service Resources"|\c S|if the given @ref service_file_resources "template resource" exists then it is rendered and the rendered data is returned
+    |@ref OMQ::UserApi::Service::ServiceApi::tryGetResource() "ServiceApi::tryGetResource()"|@ref service_resource_functions "Service Resources"|\c S|returns the given @ref service_file_resources "resource" if it exists as a hash with HTTP headers and an HTTP response code to be used as the response for an HTTP request handler
+    |@ref OMQ::UserApi::Service::ServiceApi::tryGetResourceData() "ServiceApi::tryGetResourceData()"|@ref service_resource_functions "Service Resources"|\c S|returns the given @ref service_file_resources "resource" if it exists as its native type
+    |@ref OMQ::UserApi::Service::ServiceApi::uiExtensionRegister() "ServiceApi::uiExtensionRegister()"|@ref service_http_functions "Service HTTP"|\c S|Registers the current service as a UI extension handler
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEvents() "ServiceApi::waitForEvents()"|@ref service_event_functions "Service Events"|\c S|Waits for system events corresponding to the arguments
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEventsAnd() "ServiceApi::waitForEventsAnd()"|@ref service_event_functions "Service Events"|\c S|Waits for @ref systemevents "system events" that meet all the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEventsOr() "ServiceApi::waitForEventsOr()"|@ref service_event_functions "Service Events"|\c S|Waits for @ref systemevents "system events" that meet any of the criteria given
+
+    @subsection svcapiclasses Service API Classes
+
+    The following classes are imported into @ref svcprograms "service program logic containers":
+
+    |!Class|!Availability|!Description
+    |@ref HttpServer::AbstractAuthenticator "AbstractAuthenticator"|\c S|Allows the service to define custom authentication handlers for external HTTP and FTP requests
+    |@ref OMQ::AbstractFsRemoteReceive "AbstractFsRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote filesystem through a remote Qorus instance
+    |@ref OMQ::AbstractFtpHandler "AbstractFtpHandler"|\c S|Allows the service to implement an FTP server and handle FTP requests from clients
+    |@ref HttpServer::AbstractHttpRequestHandler "AbstractHttpRequestHandler"|\c S|Allows the service to refer to @ref HttpServer::AbstractHttpRequestHandler "AbstractHttpRequestHandler" methods directly
+    |@ref OMQ::AbstractParallelStream "AbstractParallelStream"|\c W, \c S, \c J|provides an abstract base class for streaming data to or from a remote database through a remote Qorus instance and also provides static helper methods
+    |@ref OMQ::AbstractPersistentDataHelper "AbstractPersistentDataHelper"|\c S|Used when defining persistent HTTP connection support in services
+    |@ref OMQ::AbstractServiceStream "AbstractServiceStream"|\c S|Used when defining custom stream handlers in a service
+    |@ref OMQ::AbstractServiceDataStreamResponseHandler "AbstractServiceDataStreamResponseHandler"|\c S|Used when defining custom stream handlers in a service
+    |@ref OMQ::AbstractServiceHttpHandler "AbstractServiceHttpHandler"|\c S|Allows the Qorus HTTP server to redirect HTTP requests to a service
+    |@ref OMQ::AbstractServiceRestHandler "AbstractServiceRestHandler"|\c S|Allows the service to implement a REST handler and serve external REST requests
+    |@ref OMQ::AbstractServiceWebSocketHandler "AbstractServiceWebSocketHandler"|\c S|Allows the service to implement a Web Socket service handler
+    |@ref OMQ::DbRemote "DbRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_sqlutil "system.sqlutil" service methods
+    |@ref OMQ::DbRemoteReceive "DbRemoteReceive"|\c W, \c S, \c J|provides an API for streaming data from a remote database through a remote Qorus instance
+    |@ref OMQ::DbRemoteSend "DbRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote database through a remote Qorus instance
+    |@ref OMQ::DefaultQorusRBACAuthenticator "DefaultQorusRBACAuthenticator"|\c S|the standard Qorus @ref RBAC "RBAC" authentication class
+    |@ref OMQ::DefaultQorusRBACBasicAuthenticator "DefaultQorusRBACBasicAuthenticator"|\c S|the standard Qorus @ref RBAC "RBAC" authentication class that requests basic authentication with <tt>401 Unauthorized</tt> responses
+    |@ref OMQ::FsRemote "FsRemote"|\c W, \c S, \c J|provides an API wrapper for all @ref system_fs "system.fs" service methods
+    |@ref OMQ::FsRemoteSend "FsRemoteSend"|\c W, \c S, \c J|provides an API for streaming data to a remote filesystem through a remote Qorus instance
+    |@ref OMQ::PermissiveAuthenticator "PermissiveAuthenticator"|\c S|Used to indiscriminately authenticate all requests in HTTP and FTP request handlers
+    |@ref OMQ::QorusExtensionHandler "QorusExtensionHandler"|\c S|Allows the service to extend the Qorus web UI
+    |@ref OMQ::QorusInboundTableMapper "QorusInboundTableMapper"|\c W, \c S, \c J|provides an API for mapping data to a DB table
+    |@ref OMQ::QorusInboundTableMapperIterator "QorusInboundTableMapperIterator"|\c W, \c S, \c J|provides an iterator-based API for mapping data to a DB table
+    |@ref OMQ::QorusRawSqlStatementOutboundMapper "QorusRawSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using direct SQL statements passed in
+    |@ref OMQ::QorusRemoteServiceHelper "QorusRemoteServiceHelper"|\c W, \c S, \c J|provides an API for calling service methods in remote Qorus instances
+    |@ref OMQ::QorusSqlStatementOutboundMapper "QorusSqlStatementOutboundMapper"|\c W, \c S, \c J|provides an API for mapping from SQL statement using SqlUtil
+    |@ref OMQ::QorusSystemAPIHelper "QorusSystemAPIHelper"|\c W, \c S, \c J|provides an API for calling RPC API methods in remote Qorus instances
+    |@ref OMQ::QorusSystemRestHelperBase "OMQ::QorusSystemRestHelper"|\c W, \c S, \c J|provides an API for using the REST API in remote Qorus instances
+    |@ref OMQ::QorusWebSocketConnection "QorusWebSocketConnection"|\c S|Used when defining web socket service handlers
+    |@ref OMQ::UserApi::Service::ServiceApi "ServiceApi"|\c S|the primary service Qorus API class
+    |@ref OMQ::ServiceFileHandler "ServiceFileHandler"|\c S|Allows services to implement HTTP file-based request handlers
+    |@ref OMQ::UserApi::UserApi "UserApi"|\c W, \c S, \c J|the primary shared Qorus API class
+
+    @subsection svcapimodules Service API Modules
+
+    The following modules are imported by default into @ref svcprograms "service program logic containers":
+
+    !Name|!Availability|!Description
+    |@ref jsonintro "json"|\c W, \c S, \c J|provides APIs for JSON data serialization and deserialization support
+    |@ref httpserverutilintro "HttpServerUtil"|\c S|provides definitions for HTTP services
+    |@ref mimeintro "Mime"|\c W, \c S, \c J|provides MIME definitions and functionality
+    |@ref mapperintro "Mapper"|\c W, \c S, \c J|provides a data-mapping API
+    |@ref resthandlerintro "RestHandler"|\c S|provides definitions for REST server services
+    |@ref soapclientintro "SoapClient"|\c W, \c S, \c J|provides a SOAP client API
+    |@ref sqlutilintro "SqlUtil"|\c W, \c S, \c J|provides high-level APIs for programmatic DML (SQL data manipulation), DDL (creating, querying, manipulating database definitions), and DBA operations
+    |@ref tablemapperintro "TableMapper"|\c W, \c S, \c J|provides high-level APIs for mapping data to and from database tables
+    |@ref utilintro "Util"|\c W, \c S, \c J|provides utility APIs
+    |@ref uuidintro "uuid"|\c W, \c S, \c J|provides an API for generating UUIDs
+    |@ref xmlintro "xml"|\c W, \c S, \c J|provides APIs for parsing, validating, and generating XML documents
+    |@ref yamlintro "yaml"|\c W, \c S, \c J|provides APIs for %Qore's YAML-based data serialization and deserialization support
+
+    @note other modules can be imported using the @ref requires "%requires" directive, and it's always safe to @ref requires "%require" a module that's already imported into the current @ref Qore::Program "Program" container
+
+    @section svcapioverview Service API Overview
+
+    This section lists all of the API methods specific to services; the main service API classes are:
+    - \b %Python: @ref OMQ::UserApi::Service::ServiceApi "svcapi"
+    - \b Java: @ref OMQ::UserApi::Service::ServiceApi "qore.OMQ.UserApi.Service.ServiceApi"
+    - \b %Qore: @ref OMQ::UserApi::Service::ServiceApi "ServiceApi"
+
+    @note
+    - Service-specific API functions have been superceded by the API classes listed above; the old service api
+      functions can be found in the @ref OMQ::UserApi::Service namespace and are prefixed by \c "svc_" and are
+      deprecated.
+    - Qorus @ref service_source "class-based services" should inherit one of the following two classes:
+      - \b %Python: @ref OMQ::UserApi::Service::QorusService "svc.QorusService"
+      - \b Java: @ref OMQ::UserApi::Service::QorusService "qore.OMQ.UserApi.Service.QorusService"
+      - \b %Qore: @ref OMQ::UserApi::Service::QorusService "QorusService"
+
+    @see
+    - @ref commonserverapi for APIs and API concepts common to all Qorus server code (workflows, services, and jobs).
+    - @ref commonintro "Qorus Common API" for a definition of API definitions common to all Qorus user code
+      (workflows, services, and jobs) as well as the client library.
+
+    Logging APIs:
+    - \b %Python: @ref OMQ::UserApi::UserApi::logInfo() "UserApi.logInfo()"
+    - \b Java: @ref OMQ::UserApi::UserApi::logInfo() "qore.OMQ.UserApi.UserApi.logInfo()"
+    - \b %Qore: @ref OMQ::UserApi::UserApi::logInfo() "UserApi::logInfo()"
+
+    @subsection service_resource_functions Service Resource APIs
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Service::ServiceApi::getResource() "ServiceApi::getResource()"|returns the requested @ref service_file_resources "resource" as a hash with HTTP headers and an HTTP response code to be used as the response for an HTTP request handler
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceData() "ServiceApi::getResourceData()"|returns the requested @ref service_file_resources "resource" as its native type
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceHash() "ServiceApi::getResourceHash()"|returns a hash describing all @ref service_file_resources "resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceList() "ServiceApi::getResourceList()"|returns a list of all @ref service_file_resources "resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getResourceWsdl() "ServiceApi::getResourceWsdl()"|returns the given @ref service_file_resources "resource" as a @ref WSDL::WebService "WebService" object
+    |@ref OMQ::UserApi::Service::ServiceApi::getTemplateHash() "ServiceApi::getTemplateHash()"|returns a hash describing all @ref service_file_resources "template resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::getTemplateList() "ServiceApi::getTemplateList()"|returns a list of all @ref service_file_resources "template resources" for the service
+    |@ref OMQ::UserApi::Service::ServiceApi::hasResource() "ServiceApi::hasResource()"|returns @ref True if the given @ref service_file_resources "resource" exists
+    |@ref OMQ::UserApi::Service::ServiceApi::hasTemplate() "ServiceApi::hasTemplate()"|returns @ref True if the given @ref service_file_resources "resource" is a template
+    |@ref OMQ::UserApi::Service::ServiceApi::renderTemplate() "ServiceApi::renderTemplate()"|explcitly renders the given @ref service_file_resources "template resource" and returns the rendered data
+    |@ref OMQ::UserApi::Service::ServiceApi::tryRenderTemplate() "ServiceApi::tryRenderTemplate()"|if the given @ref service_file_resources "template resource" exists then it is rendered and the rendered data is returned
+    |@ref OMQ::UserApi::Service::ServiceApi::tryGetResource() "ServiceApi::tryGetResource()"|returns the given @ref service_file_resources "resource" if it exists as a hash with HTTP headers and an HTTP response code to be used as the response for an HTTP request handler
+    |@ref OMQ::UserApi::Service::ServiceApi::tryGetResourceData() "ServiceApi::tryGetResourceData()"|returns the given @ref service_file_resources "resource" if it exists as its native type
+
+    @subsection service_rbac_functions Service RBAC Functions
+    |!API Method|!Desc
+    |@ref OMQ::UserApi::Service::ServiceApi::checkAuthorization() "ServiceApi::checkAuthorization()"|checks the current user for all given @ref RBACPermissions "permissions" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkAuthorizationOr() "ServiceApi::checkAuthorizationOr()"|checks the current user for any of the given @ref RBACPermissions "permissions" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkJobAccess() "ServiceApi::checkJobAccess()"|Checks if the current user can access all the given @ref jobs "jobs" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkJobInstanceAccess() "ServiceApi::checkJobInstanceAccess()"|Checks if the current user can access the given job instance and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkMapperAccess() "ServiceApi::checkMapperAccess()"|Checks if the current user can access all the given @ref mappers "mappers" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkQueueAccess() "ServiceApi::checkQueueAccess()"|Checks if the current user can access all the given asynchronous queues and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkServiceAccess() "ServiceApi::checkServiceAccess()"|Checks if the current user can access all the given @ref services "services" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkVmapAccess() "ServiceApi::checkVmapAccess()"|Checks if the current user can access all the given @ref value-maps "value maps" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkWorkflowAccess() "ServiceApi::checkWorkflowAccess()"|Checks if the current user can access all the given @ref workflowmodel "workflows" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::checkWorkflowInstanceAccess() "ServiceApi::checkWorkflowInstanceAccess()"|Checks if the current user can access the given @ref workflowmodel "workflow order instance" and throws an exception if not
+    |@ref OMQ::UserApi::Service::ServiceApi::getJobAccessHash() "ServiceApi::getJobAccessHash()"|Returns a hash of all @ref jobs "job IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::getJobAccessList() "ServiceApi::getJobAccessList()"|Returns a list of all @ref jobs "job IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::getMapperAccessHash() "ServiceApi::getMapperAccessHash()"|Returns a hash of all @ref mappers "mapper IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::getMapperAccessList() "ServiceApi::getMapperAccessList()"|Returns a list of all @ref mappers "mapper IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceAccessHash() "ServiceApi::getServiceAccessHash()"|Returns a hash of all @ref services "services IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceAccessList() "ServiceApi::getServiceAccessList()"|Returns a list of all @ref services "services IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::getVmapAccessHash() "ServiceApi::getVmapAccessHash()"|Returns a hash of all @ref value-maps "value map IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::getVmapAccessList() "ServiceApi::getVmapAccessList()"|Returns a list of all @ref value-maps "value map IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::getWorkflowAccessHash() "ServiceApi::getWorkflowAccessHash()"|Returns a hash of all @ref workflowmodel "workflow IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty hash if the user can access no @ref workflowmodel "workflows"
+    |@ref OMQ::UserApi::Service::ServiceApi::getWorkflowAccessList() "ServiceApi::getWorkflowAccessList()"|Returns a list of all @ref workflowmodel "workflow IDs" accessible by the user, @ref nothing if there are no restrictions, or an empty list if the user can access no @ref workflowmodel "workflows"
+    |@ref OMQ::UserApi::Service::ServiceApi::testAuthorization() "ServiceApi::testAuthorization()"|Returns @ref True if the current user has all given @ref RBACPermissions "permissions"
+    |@ref OMQ::UserApi::Service::ServiceApi::testAuthorizationOr() "ServiceApi::testAuthorizationOr()"|Returns @ref True if the current user has any of the given @ref RBACPermissions "permissions"
+    |@ref OMQ::UserApi::Service::ServiceApi::testJobAccess() "ServiceApi::testJobAccess()"|Returns @ref True if the current user can access all the given @ref jobs "jobs"
+    |@ref OMQ::UserApi::Service::ServiceApi::testMapperAccess() "ServiceApi::testMapperAccess()"|Returns @ref True if the current user can access all the given @ref mappers "mappers"
+    |@ref OMQ::UserApi::Service::ServiceApi::testServiceAccess() "ServiceApi::testServiceAccess()"|Returns @ref True if the current user can access all the given @ref services "services"
+    |@ref OMQ::UserApi::Service::ServiceApi::testVmapAccess() "ServiceApi::testVmapAccess()"|Returns @ref True if the current user can access all the given @ref value-maps "value maps"
+    |@ref OMQ::UserApi::Service::ServiceApi::testWorkflowAccess() "ServiceApi::testWorkflowAccess()"|Returns @ref True if the current user can access all the given @ref workflowmodel "workflows"
+
+    @subsection service_soap_functions Service SOAP Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::registerSoapHandler() "ServiceApi::registerSoapHandler()"|Registers the current service as a SOAP server
+
+    @subsection service_http_functions Service HTTP and UI Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::bindHandler() "ServiceApi::bindHandler()"|Binds a new HTTP handler to a dedicated HTTP service listener
+    |@ref OMQ::UserApi::Service::ServiceApi::bindHttp() "ServiceApi::bindHttp()"|Binds an HTTP handler to the service
+    |@ref OMQ::UserApi::Service::ServiceApi::uiExtensionRegister() "ServiceApi::uiExtensionRegister()"|Registers the current service as a UI extension handler
+    |@ref OMQ::UserApi::Service::ServiceApi::getHttpCallContext() "ServiceApi::getHttpCallContext()"|Returns a hash with info about the external HTTP call, if any
+
+    @subsection service_ftp_functions Service FTP Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::bindFtp() "ServiceApi::bindFtp()"|Binds an FTP handler to the service and starts FTP listeners
+
+    @subsection service_event_functions Service Event Handling Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEvents() "ServiceApi::getLastEvents()"|Returns the last @ref systemevents "system events" corresponding to the arguments
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEventsAnd() "ServiceApi::getLastEventsAnd()"|Returns the last @ref systemevents "system events" that meet all the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::getLastEventsOr() "ServiceApi::getLastEventsOr()"|Returns the last @ref systemevents "system events" that meet any of the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEvents() "ServiceApi::waitForEvents()"|Waits for system events corresponding to the arguments
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEventsAnd() "ServiceApi::waitForEventsAnd()"|Waits for @ref systemevents "system events" that meet all the criteria given
+    |@ref OMQ::UserApi::Service::ServiceApi::waitForEventsOr() "ServiceApi::waitForEventsOr()"|Waits for @ref systemevents "system events" that meet any of the criteria given
+
+    @subsection service_system_functions Service System Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::callApiAsCurrentUser() "ServiceApi::callApiAsCurrentUser()"|Calls a system RPC API as the current external user (if any) and returns the result
+    |@ref OMQ::UserApi::UserApi::sleep() "UserApi::sleep()"|safely pause execution for a defined period of time
+    |@ref OMQ::UserApi::UserApi::usleep() "UserApi::usleep()"|safely pause execution for a defined period of time
+
+    @subsection service_info_functions Service Info Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::getActiveJobsAsCurrentUser() "ServiceApi::getActiveJobsAsCurrentUser()"|Returns a hash of all active jobs visible to the current external user (if any)
+    |@ref OMQ::UserApi::Service::ServiceApi::getCallContext() "ServiceApi::getCallContext()"|Returns a hash of contextual information about the current service call
+    |@ref OMQ::UserApi::Service::ServiceApi::getCallContextString() "ServiceApi::getCallContextString()"|Returns a string describing the context of the current call
+    |@ref OMQ::UserApi::Service::ServiceApi::getRunningWorkflowListAsCurrentUser() "ServiceApi::getRunningWorkflowListAsCurrentUser()"|Returns a list of running workflows visible to the current external user, if any
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceInfo() "ServiceApi::getServiceInfo()"|Returns a hash of information about the current service
+    |@ref OMQ::UserApi::Service::ServiceApi::getServiceInfoAsCurrentUser() "ServiceApi::getServiceInfoAsCurrentUser()"|Returns information about the given service if the current external user, if any, can access it
+
+    @subsection service_threading_functions Service Threading Methods
+    |!Class|!Description
+    |@ref OMQ::UserApi::Service::ServiceApi::startThread() "ServiceApi::startThread()"|Starts a service thread
+    |@ref OMQ::UserApi::Service::ServiceApi::startThreadArgs() "ServiceApi::startThreadArgs()"|Starts a service thread with the given arguments as a list argument
+
+    @section events System Event Processing
+
+    @subsection eventhash Each event hash has the the following keys:
+    - \c id (int): the unique event ID for the application session; the first event starts with 1 and increases serially with each event
+    - \c time (date): the date and time the event was submitted with a resolution to the microsecond
+    - \c timeus (int): the microsecond value of the event (i.e. 0-999); this value is included separately because when the date and time are serialized through some protocols (such as XML-RPC), then microsecond value is lost
+    - \c class (int): the event class code of the event
+    - \c classstr (string): the string designation corresponding to the event class code (see the keys of the @ref OMQ::QE_RMAP_CLASS Constant Hash for possible values)
+    - \c event (int): the event code for the event
+    - \c eventstr (string): the string designation corresponding to the event code (see the keys of the @ref OMQ::QE_RMAP_EVENT Constant Hash for possible values)
+    - \c severity (int): the severity level of the event; please note that all user events will have severity code 0 (@ref OMQ::ES_Info).  Values may be integers from -1 to 4 corresponding to the keys in the @ref OMQ::ErrorSeverityMap hash.
+    - \c severitystr (string): the string corresponding to the severity level; see the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field.
+    - \c caller (hash): a hash of caller information in case the event was trigger by or can be traced directly to an external call
+    - \c compositeseverity (int) the maximum of the system and user severity levels; in case there is no user severity level; then this field is always equal to the system severity level.  Values may be integers from -1 to 4 corresponding to the keys in the @ref OMQ::ErrorSeverityMap hash.
+    - \c compositeseveritystr (string): the string corresponding to the composite severity level; see the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field
+    - \c userseverity (integer, optional): in case the event is a user event and a user severity level was supplied; this field contains the severity level of the user event
+    - \c userseveritystr (string, optional): in case the event is a user event and a user severity level was supplied; this field contains the string corresponding to the user severity level; see the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field
+    - \c info (hash, optional): additional event-specific information; See @ref eventinfo "Event Information Descriptions" for details on each message; note that user events have user-defined information in this field
+
+    @subsection eventinfo Event Information Descriptions
+
+    This section contains the definitions of the info hash of event types
+
+    @subsubsection SYSTEM_ERROR SYSTEM_ERROR Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_ERROR
+    - \c err: (string) the error code
+    - \c desc: (string) the error description
+    - \c info: (string) additional information about the error
+
+    @subsubsection SYSTEM_HEALTH_CHANGED SYSTEM_HEALTH_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_HEALTH_CHANGED
+    - \c health: (string) one of \c "GREEN", \c "YELLOW", or \c "RED"
+    - \c old-health: (string) the old health value before the change
+    - \c ongoing: (int) the number of ongoing alerts
+    - \c transient: (int) the number of transient alerts in the cache
+    - \c cutoff: (absolute date) the date time of the cutoff for transient alerts
+
+    @subsubsection SYSTEM_REMOTE_HEALTH_CHANGED SYSTEM_REMOTE_HEALTH_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_REMOTE_HEALTH_CHANGED
+    - \c name: (string) the name of the remote Qorus connection
+    - \c health: (string) one of \c "GREEN", \c "YELLOW", or \c "RED"
+    - \c old-health: (string) the old health value before the change
+    - \c url: (string) the URL to the remote system
+    - \c error: (string) an error string
+
+    @subsubsection SYSTEM_SCALED SYSTEM_SCALED Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_SCALED
+    - \c scaling-min-replicas: (int) minimum replicas
+    - \c scaling-max-replicas: (int) maximum repliacas
+    - \c scaling-cpu: (int) average CPU utliization target
+    - \c scaling-memory: (string) average memory usage target
+
+    @subsubsection SYSTEM_SHUTDOWN SYSTEM_SHUTDOWN Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_SHUTDOWN
+
+    @subsubsection SYSTEM_STARTUP SYSTEM_STARTUP Event Information Description
+    Event constant: @ref OMQ::QEC_SYSTEM_STARTUP
+    - \c name: (string) the product string for Qorus Integrtion Engine
+    - \c version: (string) the version string
+    - \c build: (string) the build string
+
+    @note This event has no info hash.
+
+    @subsubsection WORKFLOW_START WORKFLOW_START Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_START
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c execid: The workflow execution ID
+    - \c mode: The mode of the workflow (@ref OMQ::WM_Normal or @ref OMQ::WM_Recovery)
+    - \c synchronous: \c True for synchronous workflows, \c False if not
+    - \c options: A hash of workflow options
+
+    @subsubsection WORKFLOW_STOP WORKFLOW_STOP Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_STOP
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c execid: The workflow execution ID
+    - \c mode: The mode of the workflow (@ref OMQ::WM_Normal or @ref OMQ::WM_Recovery))
+    - \c synchronous: \c True for synchronous workflows, \c False if not
+
+    @subsubsection WORKFLOW_CACHE_RESET WORKFLOW_CACHE_RESET Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_CACHE_RESET
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+
+    @subsubsection WORKFLOW_DATA_SUBMITTED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_SUBMITTED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. workflow_instance.workflow_instanceid in the database)
+    - \c status: The new workflow order instance's initial status (see @ref StatusDescriptions for possible status values)
+
+    @subsubsection WORKFLOW_INFO_CHANGED WORKFLOW_INFO_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_INFO_CHANGED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. workflow_instance.workflow_instanceid in the database)
+    - \c info: The info hash for the change
+
+    @subsubsection WORKFLOW_STATUS_CHANGED WORKFLOW_STATUS_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_STATUS_CHANGED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. workflow_instance.workflow_instanceid in the database)
+    - \c info: A hash with \c old and \c new keys giving the old and new status values (see @ref StatusDescriptions for possible status values)
+
+    @subsubsection WORKFLOW_DATA_ERROR WORKFLOW_DATA_ERROR Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_ERROR
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. workflow_instance.workflow_instanceid in the database)
+    - \c execid: The workflow execution ID
+    - \c error: A hash of error information containing the following keys:
+      - \c err: the error string (ex: exception name)
+      - \c desc: the error description (ex: exception description)
+      - \c info: any additional error information provided
+      - \c business_error: \c True for business errors, \c False if not
+      - \c stepid: the stepid of the error, if any
+      - \c ind: the ind code of the step (array index), if any
+      - \c retry: retry number for error
+      - \c errorid: the error_instanceid in the database
+
+    @subsubsection WORKFLOW_DATA_RELEASED WORKFLOW_DATA_RELEASED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_RELEASED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c status: The status of the workflow as it is released
+    - \c business_error: The business error status of the workflow (\c True only if the status is @ref OMQ::StatError due to a business error)
+
+    @subsubsection WORKFLOW_DATA_CACHED WORKFLOW_DATA_CACHED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_CACHED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c status: The status of the workflow as it is released
+    - \c business_error: The business error status of the workflow (\c True only if the status is @ref OMQ::StatError due to a business error)
+    - \c external_order_instanceid: The external order instance ID of the workflow, if any
+    - \c keys: A hash of workflow order keys, if any
+
+    @subsubsection WORKFLOW_DATA_UPDATED WORKFLOW_DATA_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_UPDATED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c datatype: Type of data updated: \c staticdata or \c dynamicdata
+
+    @subsubsection WORKFLOW_DATA_LOCKED WORKFLOW_DATA_LOCKED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_LOCKED
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: (int) The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c note: (string) the note stored against the workflow order when locking it
+
+    @subsubsection WORKFLOW_DATA_UNLOCKED WORKFLOW_DATA_UNLOCKED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_DATA_UNLOCKED
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: (int) The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c note: (string) the note stored against the workflow order when unlocking it
+
+    @subsubsection WORKFLOW_PERFORMANCE WORKFLOW_PERFORMANCE Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_PERFORMANCE
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: (int) The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c status: (string) the workflow order's status
+    - \c disposition: (string) a code giving the disposition of the workflow; see @ref WorkflowCompleteDisposition for possible values and their meanings
+    - \c start: (date) the start timestamp for workflow order execution
+    - \c end: (date) the end timestamp for the workflow order execution (i.e. when the final status is reached)
+
+    @note These events are only emitted if system option @ref workflow-perf-events is enabled and when workflow orders get a final status (final statuses are @ref OMQ::StatComplete "COMPLETE" and @ref OMQ::StatCanceled "CANCELED")
+
+    @subsubsection WORKFLOW_RECOVERED WORKFLOW_RECOVERED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_RECOVERED
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c old_statuses: (list<string>) a list of @ref StatusDescriptions "status values" for orders that have been recovered and now have the status given by \a new_status
+    - \c new_status: (string) a @ref StatusDescriptions "status value" for recovered orders
+
+    @subsubsection WORKFLOW_STATS_UPDATED WORKFLOW_STATS_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_STATS_UPDATED
+    - \c tag: the tag or label identifying the bands; either \c "global" for summarized global info or <i>&lt;id&gt;</i> where <i>&lt;id&gt;</i> is the workflow ID
+    - \c bands: list of @ref OMQ::OrderSummaryOutputInfo "OrderSummaryOutputInfo" hashes
+
+    @subsubsection WORKFLOW_STEP_DATA_UPDATED WORKFLOW_STEP_DATA_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_STEP_DATA_UPDATED
+    - \c name: The name of the workflow
+    - \c version: The version of the workflow
+    - \c workflowid: The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c stepid: The stepid for the data that was updated
+    - \c ind: the step instance index for the data that was updated
+
+    @since Qorus 4.0.1
+
+    @subsubsection WORKFLOW_STEP_PERFORMANCE WORKFLOW_STEP_PERFORMANCE Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_STEP_PERFORMANCE
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - \c workflow_instanceid: (int) The workflow instance ID (i.e. \c workflow_instance.workflow_instanceid in the database)
+    - \c stepname: (string) the name of the step
+    - \c stepid: (int) the ID of the step
+    - \c ind: (int) the array index for the step (always 0 for non-array steps)
+    - \c start: (date) the start timestamp for workflow step execution
+    - \c end: (date) the end timestamp for the workflow step execution
+
+    @note These events are only emitted if system option @ref workflow-step-perf-events is enabled
+
+    @subsubsection WORKFLOW_UPDATED WORKFLOW_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_WORKFLOW_UPDATED
+    - \c name: (string) The name of the workflow
+    - \c version: (string) The version of the workflow
+    - \c workflowid: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database)
+    - [\c remote]: (bool) the new remote value
+    - [\c autostart]: (int) the new autostart value
+    - [\c sla_threshold]: (int) the new SLA threshold value
+
+    @subsubsection SERVICE_START SERVICE_START Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_START
+    - \c type: The type of service; either USER or SYSTEM
+    - \c name: The name of the service
+    - \c version: The version of the service
+    - \c serviceid: The service ID (metadata ID, i.e. \c services.serviceid in the database)
+
+    @subsubsection SERVICE_STOP SERVICE_STOP Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_STOP
+    - \c type: The type of service; either USER or SYSTEM
+    - \c name: The name of the service
+    - \c version: The version of the service
+    - \c serviceid: The service ID (metadata ID, i.e. \c services.serviceid in the database)
+
+    @subsubsection SERVICE_ERROR SERVICE_ERROR Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_ERROR
+    - \c type: The type of service; either USER or SYSTEM
+    - \c name: The name of the service
+    - \c version: The version of the service
+    - \c serviceid: The service ID (metadata ID, i.e. \c services.serviceid in the database)
+    - \c err: The error code for the error
+    - \c desc: The error description
+    - \c info: Additional information for the error, if available
+
+    @subsubsection SERVICE_AUTOSTART_CHANGE SERVICE_AUTOSTART_CHANGE Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_AUTOSTART_CHANGE
+
+    @deprecated This event it no longer raised as of Qorus 4.0
+
+    @subsubsection SERVICE_METHOD_PERFORMANCE SERVICE_METHOD_PERFORMANCE Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_METHOD_PERFORMANCE
+    - \c type: (string) the service type (\c "system" or \c "user")
+    - \c name: (string) the name of the service
+    - \c version: (string) the version of the service
+    - \c serviceid: (int) the ID of the service
+    - \c method: (string) the name of the service method called
+    - \c start: (date) the start timestamp for the call
+    - \c end: (date) the end timestamp for the call
+    - \c error: (bool) an indicator if the call ended in an error or not
+
+    @note
+    - These events are only emitted if system option @ref service-perf-events is enabled
+    - Service method call time also includes time spent serializing and deserializing messages to/from @ref qsvc "remote service processes" if the service is @ref service_remote "running remotely"
+
+    @subsubsection SERVICE_UPDATED SERVICE_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_SERVICE_UPDATED
+    - \c type: (string) the service type (\c "system" or \c "user")
+    - \c name: (string) the name of the service
+    - \c version: (string) the version of the service
+    - \c serviceid: (int) the ID of the service
+    - [\c remote]: (bool) the new remote value
+    - [\c autostart]: (bool) the new autostart value
+
+    @subsubsection JOB_START JOB_START Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_START
+    - \c name: The name of the job
+    - \c version: The version of the job
+    - \c jobid: The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - \c info: Additional information about the job; a hash with the following keys:
+      - \c description: the job's description
+      - \c run_skipped: boolean flag, \c True if the job will be run immediately if its last trigger time was missed due to the system being down
+      - \c last_executed: date/time of last execution
+      - \c next: next trigger date/time
+      - \c trigger: a string describing the job's trigger
+
+    @subsubsection JOB_STOP JOB_STOP Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_STOP
+    - \c name: The name of the job
+    - \c version: The version of the job
+    - \c jobid: The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+
+    @subsubsection JOB_INSTANCE_START JOB_INSTANCE_START Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_INSTANCE_START
+    - \c name: The name of the job
+    - \c version: The version of the job
+    - \c jobid: The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - \c job_instanceid: The job instance ID (i.e. \c job_instance.job_instanceid in the database)
+
+    @subsubsection JOB_INSTANCE_STOP JOB_INSTANCE_STOP Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_INSTANCE_STOP
+    - \c name: The name of the job
+    - \c version: The version of the job
+    - \c jobid: The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - \c job_instanceid: The job instance ID (i.e. \c job_instance.job_instanceid in the database)
+    - \c status: the job instance's final status in the database (see @ref SQLJobStatusCodes for possible values)
+
+    @subsubsection JOB_ERROR JOB_ERROR Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_ERROR
+    - \c name: The name of the job
+    - \c version: The version of the job
+    - \c jobid: The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - \c job_instanceid: The job instance ID (i.e. \c job_instance.job_instanceid in the database)
+    - \c error: a hash of error information with the following keys:
+      - \c err: the error code
+      - \c desc: the description of the error
+      - \c info: optional info about the error
+      - \c business_error: boolean flag, \c True if the error is a business error
+      - \c errorid: the error instance id for the job (i.e. \c job_errors.job_errorid in the database)
+
+    @subsubsection JOB_RECOVERED JOB_RECOVERED Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_RECOVERED
+    - \c name: (string) The name of the job
+    - \c version: (string) The version of the job
+    - \c jobid: (int) The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - \c old_statuses: (list<string>) a list of @ref StatusDescriptions "status values" for orders that have been recovered and now have the status given by \a new_status
+    - \c new_status: (string) a @ref StatusDescriptions "status value" for recovered job instances
+
+    @subsubsection JOB_UPDATED JOB_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_UPDATED
+    - \c name: (string) The name of the job
+    - \c version: (string) The version of the job
+    - \c jobid: (int) The job ID (metadata ID, i.e. \c jobs.jobid in the database)
+    - [\c remote]: (bool) the new remote value
+    - [\c sched_txt]: (string) the new schedule value
+    - [\c month]: (string) the new month value
+    - [\c day]: (string) the new day value
+    - [\c wday]: (string) the new wday value
+    - [\c hour]: (string) the new hour value
+    - [\c minute]: (string) the new minute value
+    - [\c active]: (bool) the new active value
+    - [\c expiry_date]: (*date) the new expiry date or @ref nothing if the expiry date has been cleared
+
+    @subsubsection CONFIG_ITEM_CHANGED CONFIG_ITEM_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_CONFIG_ITEM_CHANGED
+    - \c interfaceType: (string) The type of the interface (job, service, step, workflow or global)
+    - [\c type]: (string) The type of the service if the interface type is "service"
+    - \c name: (string) The name of the interface
+    - [\c version]: (string) The version of the interface if is present
+    - [\c workflowid]: (int) The workflow ID (metadata ID, i.e. \c workflows.workflowid in the database) if the interface type is "workflow" or "step"
+    - [\c stepid]: (int) The step ID (metadata ID, i.e. \c steps.stepid in the database) if the interface type is "step"
+    - [\c serviceid]: (int) The service ID (metadata ID, i.e. \c services.serviceid in the database) if the interface type is "service"
+    - [\c jobid:] (int) The job ID (metadata ID, i.e. \c jobs.jobid in the database) if the interface type is "job"
+    - \c item: (string) the name of the configuration item
+    - \c value: (any) the new value of the configuration item
+
+    @subsubsection GROUP_STATUS_CHANGED GROUP_STATUS_CHANGED Event Information Description
+    Event constant: @ref OMQ::QEC_GROUP_STATUS_CHANGED
+    - \c name: the interface group's name
+    - \c enabled: the new status of the group
+
+    @subsubsection ALERT_ONGOING_RAISED ALERT_ONGOING_RAISED Event Information Description
+    Event constant: @ref OMQ::QEC_ALERT_ONGOING_RAISED
+    - \c type: the alert type
+    - \c id: the ID of the object causing or related to the alert
+    - \c alert: the string "name" of the alert
+    - \c reason: the text giving the reason for the alert
+    - \c name: the name of the object causing or related to the alert
+    - \c version: the version of the object causing or related to the alert
+
+    @subsubsection ALERT_ONGOING_CLEARED ALERT_ONGOING_CLEARED Event Information Description
+    Event constant: @ref OMQ::QEC_ALERT_ONGOING_CLEARED
+    - \c type: the alert type
+    - \c id: the ID of the object causing or related to the alert
+    - \c alert: the string "name" of the alert
+    - \c reason: the text giving the reason for the alert
+    - \c name: the name of the object causing or related to the alert
+    - \c version: the version of the object causing or related to the alert
+
+    @subsubsection ALERT_TRANSIENT_RAISED ALERT_TRANSIENT_RAISED Event Information Description
+    Event constant: @ref OMQ::QEC_ALERT_TRANSIENT_RAISED
+    - \c type: the alert type
+    - \c id: the ID of the object causing or related to the alert
+    - \c alert: the string "name" of the alert
+    - \c reason: the text giving the reason for the alert
+    - \c name: the name of the object causing or related to the alert
+    - \c version: the version of the object causing or related to the alert
+
+    @subsubsection CONNECTION_UP CONNECTION_UP Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_UP
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+
+    @subsubsection CONNECTION_DOWN CONNECTION_DOWN Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_DOWN
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+    - \c err: (string) the error string
+
+    @subsubsection CONNECTION_ENABLED_CHANGE CONNECTION_ENABLED_CHANGE Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_ENABLED_CHANGE
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+    - \c enabled: (bool) the enabled status for the connection
+
+    @subsubsection CONNECTION_DEBUG_DATA_CHANGE CONNECTION_DEBUG_DATA_CHANGE Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_DEBUG_DATA_CHANGE
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+    - \c debug_data: (bool) the new state of Socket data debugging for the connection
+
+    @note socket data debugging only takes effect on connections that support it; see the documentation for the
+    connection in question for more information
+
+    @subsubsection CONNECTION_CREATED CONNECTION_CREATED Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_CREATED
+    - \c conntype: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+    - \c desc: (string) the description of the connection
+    - \c url: (string) the URL for the connection
+    - \c url_hash: (hash) a broken-down hash of \c url
+    - \c opts: (hash) connection options
+    - \c enabled: (bool) the enabled status of the connection
+    - see the REST info response for the appopriate connection type for details about the message per connection type:
+      - @ref rest_api_GET_latest_remote_datasources__name_
+      - @ref rest_api_GET_latest_remote_qorus__name_
+      - @ref rest_api_GET_latest_remote_user__name_
+
+    @subsubsection CONNECTION_UPDATED CONNECTION_UPDATED Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_UPDATED
+    - \c conntype: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+    - \c desc: (string) the description of the connection
+    - \c url: (string) the URL for the connection
+    - \c url_hash: (hash) a broken-down hash of \c url
+    - \c opts: (hash) connection options
+    - \c enabled: (bool) the enabled status of the connection
+    - see the REST info response for the appopriate connection type for details about the message per connection type:
+      - @ref rest_api_GET_latest_remote_datasources__name_
+      - @ref rest_api_GET_latest_remote_qorus__name_
+      - @ref rest_api_GET_latest_remote_user__name_
+
+    @subsubsection CONNECTION_DELETED CONNECTION_DELETED Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTION_DELETED
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c name: (string) the unique name for the connection in its type
+
+    @subsubsection CONNECTIONS_RELOADED CONNECTIONS_RELOADED Event Information description
+    Event constant: @ref OMQ::QEC_CONNECTIONS_RELOADED
+    - \c type: (string) the connection type name (one of \c "DATASOURCE", \c "REMOTE", or \c "USER-CONNECTION")
+    - \c connections: (list of hashes) list of connections reloaded
+
+    @subsubsection LOGGER_CREATED LOGGER_CREATED Event Information description
+    Event constant: @ref OMQ::QEC_LOGGER_CREATED emitted when logger is created
+    - \c loggerId: (string) logger id
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) interface id (not set for default loggers)
+    - \c params: (hash) actual logger params
+    - \c isDefault: (bool) true if created defaut logger
+
+    @subsubsection LOGGER_UPDATED LOGGER_UPDATED Event Information description
+    Event constant: @ref OMQ::QEC_LOGGER_UPDATED emitted when logger is updated
+    - \c loggerId: (string) logger id
+    - \c appenderIds: (list) list of assigned appender ids (not set if no appenders assigned)
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) interface id (not set for default loggers)
+    - \c params: (hash) actual logger params
+    - \c isDefault: (bool) true if edited defaut logger
+
+    @subsubsection LOGGER_DELETED LOGGER_DELETED Event Information description
+    Event constant: @ref OMQ::QEC_LOGGER_DELETED emitted when logger is deleted
+    - \c loggerId: (string) logger id
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) interface id (not set for default loggers)
+    - \c current_logger: (hash) actual logger information
+    - \c isDefault: (bool) true if deleted defaut logger
+
+    @subsubsection APPENDER_CREATED APPENDER_CREATED Event Information description
+    Event constant: @ref OMQ::QEC_APPENDER_CREATED emitted when logger appender is created
+    - \c loggerId: (string) logger id
+    - \c logger_appenderid: (string) appender id
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) if exists contains interface name (e.g. workflow/jobs/services name)
+    - \c params: (hash) actual appender params
+    - \c isDefault: (bool) true if created appender for defaut logger
+
+    @subsubsection APPENDER_DELETED APPENDER_DELETED Event Information description
+    Event constant: @ref OMQ::QEC_APPENDER_DELETED emitted when logger is created
+    - \c logger_appenderid: (string) appender id
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) if exists contains interface name (e.g. workflow/jobs/services name)
+    - \c isDefault: (bool) true if deleted appender from defaut logger
+
+    @subsubsection APPENDER_UPDATED APPENDER_UPDATED Event Information description
+    Event constant: @ref OMQ::QEC_APPENDER_UPDATED emitted when logger appender is updated
+    - \c loggerId: (string) logger id
+    - \c logger_appenderid: (string) appender id
+    - \c interface: (string) type of related system (e.g. workflows, jobs, services, system, audit, http, ...)
+    - \c interfaceId: (*string) if exists contains interface name (e.g. workflow/jobs/services name)
+    - \c params: (hash) actual appender params
+    - \c isDefault: (bool) true if created appender for defaut logger
+
+    @subsubsection PROCESS_STARTED PROCESS_STARTED Event Information description
+    Event constant: @ref OMQ::QEC_PROCESS_STARTED
+    - \c id: (string) the unique name for the process
+    - \c node: (string) the node where the process is running
+    - \c status: (int) the process status code; 0 = IDLE, 1 = STARTING, 2 = RUNNING, 3 = STOPPING, 4 = ERROR
+    - \c urls: (list<string>) a list of distributed queue URLs for the proces
+    - \c host: (string) the hostname of the node running the process
+    - \c pid: (int) the PID of the process on the host
+    - \c type: (string) the type of cluster process
+    - \c client_id: (string) the type-specific ID for the process
+    - \c start_code: (int) the start code or start reason: 0 = manual start, 1 = manual restart, 2 = automatic restart
+
+    @subsubsection PROCESS_START_ERROR PROCESS_START_ERROR Event Information Description
+    Event constant: @ref OMQ::QEC_PROCESS_START_ERROR
+    - \c id: (string) the unique name for the process
+    - \c node: (string) the node where the process is running
+    - \c status: (int) the process status code; 0 = IDLE, 1 = STARTING, 2 = RUNNING, 3 = STOPPING, 4 = ERROR
+    - \c urls: (list<string>) a list of distributed queue URLs for the proces
+    - \c host: (string) the hostname of the node running the process
+    - \c pid: (int) the PID of the process on the host
+    - \c type: (string) the type of cluster process
+    - \c client_id: (string) the type-specific ID for the process
+    - \c error: (string) the error string
+
+    @subsubsection PROCESS_STOPPED PROCESS_STOPPED Event Information description
+    Event constant: @ref OMQ::QEC_PROCESS_STOPPED
+    - \c id: (string) the unique name for the process
+    - \c node: (string) the node where the process is running
+    - \c status: (int) the process status code; 0 = IDLE, 1 = STARTING, 2 = RUNNING, 3 = STOPPING, 4 = ERROR
+    - \c urls: (list<string>) a list of distributed queue URLs for the proces
+    - \c host: (string) the hostname of the node running the process
+    - \c pid: (int) the PID of the process on the host
+    - \c type: (string) the type of cluster process
+    - \c client_id: (string) the type-specific ID for the process
+
+    @subsubsection PROCESS_MEMORY_CHANGED PROCESS_MEMORY_CHANGED Event Information description
+    Event constant: @ref OMQ::QEC_PROCESS_MEMORY_CHANGED
+    - \c id: (string) the unique ID for the process
+    - \c node: (string) the node where the process is running
+    - \c status: (int) the process status code; 0 = IDLE, 1 = STARTING, 2 = RUNNING, 3 = STOPPING, 4 = ERROR
+    - \c urls: (list<string>) a list of distributed queue URLs for the proces
+    - \c host: (string) the hostname of the node running the process
+    - \c pid: (int) the PID of the process on the host
+    - \c type: (string) the type of cluster process
+    - \c client_id: (string) the type-specific ID for the process
+    - \c priv: (int) the amount of private memory (stacks, heap, non-shared, non-memory-mapped virtual memory segments) for the process in bytes
+    - \c rss: (int) the resident size of the process in bytes
+    - \c vsz: (int) the virtual memory size of the process in bytes (includes shared and memory-mapped segments)
+    - \c pct: (int) the percentage of main memory on the node used by private memory
+    - \c node_priv: (int) the amount of non-shared private memory used by the cluster on the node in bytes
+    - \c node_priv_str: (string) a descriptive string giving the amount of non-shared private memory used by the cluster on the current node
+    - \c node_ram: (int) the total amount of physical RAM on the node in bytes
+    - \c node_ram_str: (string) a descriptive string giving the total amount of physical RAM on the node
+    - \c node_ram_in_use: (int) the amount of physical RAM in use on the node in bytes
+    - \c node_ram_in_use_str: (string) a descriptive string giving the amount of physical RAM in use on the node
+    - \c node_cpu_count: (int) the number of CPUs on the node
+    - \c node_load_pct: (float) the average load on the machine over the last minute
+
+    @subsubsection NODE_INFO NODE_INFO Event Information Description
+    Event constant: @ref OMQ::QEC_NODE_INFO
+    - \c name: (string) the name of the node
+    - \c node_priv: (int) the amount of private memory used by Qorus processes for the instance on the node
+    - \c node_priv_str: (string) a string corresponding to \c node_priv
+    - \c node_ram_in_use: (int) the amount of physical RAM in use on the node in bytes
+    - \c node_ram_in_use_str: (string) a descriptive string giving the amount of physical RAM in use on the node
+    - \c node_cpu_count: (int) the number of CPUs on the node
+    - \c node_load_pct: (float) the average load on the machine over the last minute
+    - \c processes: (int) the number of Qorus processes for the instance on the node
+
+    @subsubsection NODE_REMOVED NODE_REMOVED Event Information Description
+    Event constant: @ref OMQ::QEC_NODE_REMOVED
+    - \c name: (string) the name of the node that was removed
+
+    @subsubsection USER_EVENT USER_EVENT Event Information Description
+    Event constant: @ref OMQ::QEC_USER_EVENT
+
+    @subsubsection CLASS_CREATED CLASS_CREATED Event Information Description
+    Event constant: @ref OMQ::QEC_CLASS_CREATED
+    - \c name: (string) name
+    - \c version: (string) version
+    - \c classid: (int) class ID
+    - \c info: (hash) new class information
+
+    @subsubsection CLASS_DELETED CLASS_DELETED Event Information Description
+    Event constant: @ref OMQ::QEC_CLASS_DELETED
+    - \c name: (string) name
+    - \c version: (string) version
+    - \c classid: (int) class ID
+
+    @subsubsection CLASS_UPDATED CLASS_UPDATED Event Information Description
+    Event constant: @ref OMQ::QEC_CLASS_UPDATED
+    - \c name: (string) name
+    - \c version: (string) version
+    - \c classid: (int) class ID
+    - \c info: (hash) new class information
+
+    @subsubsection JOB_CREATED JOB_CREATED Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_CREATED
+    - \c name: (string) name
+    - \c version: (string) version
+    - \c jobid: (int) class ID
+    - \c info: (hash) new job information
+
+    @subsubsection JOB_DELETED JOB_DELETED Event Information Description
+    Event constant: @ref OMQ::QEC_JOB_DELETED
+    - \c name: (string) name
+    - \c version: (string) version
+    - \c jobid: (int) class ID
+
+    The info hash for user events is free form; any serializable information can be included in the info hash.
+
+    @subsection eventfilters Event Filter Criteria
+
+    The following gives a list of the criteria that can be used for filtering events:
+    - \c "all": The argument with this criteria is ignored; automatically matches all events; this criteria is useful with “logical or” filtering and an “and not” list to specify all events except events matching all of the criteria in any of the “and not” criteria hashes.
+    - \c "class": The class code for the event; the event’s class code must match this class code exactly for the criteria to match
+    - \c "classstr": The string designation corresponding to the event class code (see the keys of the @ref OMQ::QE_RMAP_CLASS Constant Hash for possible values); the event’s class string must match this class string exactly for the criteria to match
+    - \c "event": The event code for the event; the event’s event code must match this event code exactly for the criteria to match
+    - \c "eventstr": The string designation corresponding to the event code (see the keys of the @ref OMQ::QE_RMAP_EVENT Constant Hash for possible values); the event’s event string must match this event string exactly for the criteria to match
+    - \c "mincompositeseverity": The minimum composite severity code for the event.   Composite severity is the maximum of the event and user severity levels.  Values may be integers from -1 to 4 corresponding to the keys in the @ref OMQ::ErrorSeverityMap hash.  If the event has an equal or higher composite severity code, then this criteria matches.
+    - \c "mincompositeseveritystr": The string description corresponding to the minimum composite severity code for the event.  Composite severity is the maximum of the event and user severity levels.  See the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field.  When the strings are converted to severity codes, works like the mincompositeseverity criteria.
+    - \c "minseverity": The minimum severity code for the event; values may be integers from -1 to 4 corresponding to the keys in the @ref OMQ::ErrorSeverityMap hash.  If the event has an equal or higher severity code, then this criteria matches.
+    - \c "minseveritystr": The string description corresponding to the minimum severity code for the event; see the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field.  When the strings are converted to severity codes, works like the minseverity criteria.
+    - \c "miuserseverity": The minimum user severity for the event; values may be integers from -1 to 4 corresponding to the keys in the @ref OMQ::ErrorSeverityMap hash.  If the event has an equal or higher user severity code, then this criteria matches.
+    - \c "minuserseveritystr": The string description corresponding to the minimum user severity code for the event; see the keys of the @ref OMQ::ErrorSeverityOrder hash for possible values of this field.  When the strings are converted to severity codes, works like the minuserseverity criteria.
+    - \c "none": The argument with this criteria is ignored; automatically matches no events; this criteria is useful with “logical and” filtering” and an “or not” list to specify all events except those not matching the criteria in the “or not” list.
+
+    @image html qorus-small-white-on-transparent-200x77.png "Qorus Integration Engine&reg;"
+*/

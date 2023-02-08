@@ -1,0 +1,18 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: test function
+# name: issue3102test_function2
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub issue3102test_function2() {
+    UserApi::logInfo("issue3102test_function2 called");
+}
+# END

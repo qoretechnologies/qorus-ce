@@ -1,0 +1,13 @@
+# This is a generated file, don't edit!
+type: class
+name: QoreConnectorTest
+desc: testing Qore connectors mixed with other languages
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: test
+    method: test
+    type: input-output
+lang: qore
+version: "1.0"
+code: QoreConnectorTest-1.0.qclass

@@ -1,0 +1,22 @@
+# This is a generated file, don't edit!
+type: pipeline
+name: issue-3563-pipeline
+desc: test
+groups:
+  - regression
+  - test
+children:
+  - type: processor
+    name: issue3563CreateProcessor
+    pid: KmxHv3Z4t
+    children:
+      - type: queue
+        children:
+          - type: processor
+            name: issue3563LeftProcessor
+            pid: 15YUM9r_3
+      - type: queue
+        children:
+          - type: processor
+            name: issue3563RightProcessor
+            pid: -jov0iO0-

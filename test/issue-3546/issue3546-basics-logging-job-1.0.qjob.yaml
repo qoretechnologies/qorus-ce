@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: job
+name: issue3546-basics-logging-job
+desc: "Job implementation example. The job simply logs every hour."
+author:
+  - Qore Technologies, s.r.o.
+active: false
+base-class-name: QorusJob
+class-name: Issue3546BasicsLoggingJob
+lang: qore
+schedule:
+    minutes: "0"
+    hours: "*"
+    days: "*"
+    months: "*"
+    dow: "*"
+version: "1.0"
+code: issue3546-basics-logging-job-1.0.qjob

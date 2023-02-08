@@ -1,0 +1,52 @@
+# name: QoreDevModulesTestStep1
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreDevModulesTestStep1 inherits TestNormalStep, QoreTest {
+    primaryImpl() {
+        QoreTest::assertTrue(True);
+
+        hash<auto> sh = getStepInfo();
+        logInfo("sh: %y", sh);
+
+        # get static data
+        hash<auto> sd = getStaticData();
+
+        # get configuration items
+        assertEq(sd."global-string", getConfigItemValue("global-string-test"));
+        assertEq(sd."global-float", getConfigItemValue("global-float-test"));
+        assertEq(sd."global-date", getConfigItemValue("global-date-test"));
+        assertEq(sd."global-int", getConfigItemValue("global-int-test"));
+        assertEq(sd."string", getConfigItemValue("string-test"));
+        assertEq(sd."float", getConfigItemValue("float-test"));
+        assertEq(sd."date", getConfigItemValue("date-test"));
+        assertEq(sd."int", getConfigItemValue("int-test"));
+
+        assertEq({
+            "global-string-test": sd."global-string",
+            "global-float-test": sd."global-float",
+            "global-date-test": sd."global-date",
+            "global-int-test": sd."global-int",
+            "string-test": sd."string",
+            "float-test": sd."float",
+            "date-test": sd."date",
+            "int-test": sd."int",
+        }, getConfigItemHash(){
+            "global-string-test",
+            "global-float-test",
+            "global-date-test",
+            "global-int-test",
+            "string-test",
+            "float-test",
+            "date-test",
+            "int-test",
+        });
+    }
+}
+# END

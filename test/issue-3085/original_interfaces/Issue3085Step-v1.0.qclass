@@ -1,0 +1,36 @@
+# name: Issue3085Step
+# version: 1.0
+# desc: Simple worklfow step example
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3085Step inherits QorusNormalStep {
+    primary() {
+        UserApi::logInfo("Issue3085Step was called");
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3085-step-config-1": <ConfigItemInfo>{
+                "type": "hash",
+                "default_value": {
+                    "step_key_1": "step_value_1",
+                    "step_key_2": "step_value_2"
+                },
+                "description": "This is an example configuration item of type hash",
+                "strictly_local": False,
+            },
+            "issue-3085-step-config-2": <ConfigItemInfo>{
+                "type": "string",
+                "default_value": "step_value_3",
+                "description": "This is an example configuration item of type string",
+                "strictly_local": True,
+            },
+        };
+    }
+}
+# END

@@ -1,0 +1,96 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file TestService.qm Qorus Integration Engine test module
+
+/* TestService.qm Copyright (C) 2012 - 2022 Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module TestService {
+    version = "1.0";
+    desc = "service dev extension test module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+public namespace TestService {
+    public class TestService inherits QorusService {
+        # name: example
+        # desc: method defined in the TestService module
+        string example() {
+            return "example";
+        }
+
+        # name: getItemValue
+        # desc: returns the value of the given configuration item
+        auto getItemValue(string name) {
+            return getConfigItemValue(name);
+        }
+
+        # name: getItems
+        # desc: returns all config items as a hash
+        hash<auto> getItems() {
+            return getConfigItemHash();
+        }
+
+        private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+            return {
+                "string-test": <ConfigItemInfo>{
+                    "default_value": "test",
+                    "description": "This is a test configuration item",
+                },
+                "int-test": <ConfigItemInfo>{
+                    "type": "int",
+                    "default_value": 1,
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                },
+                "float-test": <ConfigItemInfo>{
+                    "type": "float",
+                    "default_value": 1.0,
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                },
+                "date-test": <ConfigItemInfo>{
+                    "type": "date",
+                    "description": "This is a test configuration item",
+                    "strictly_local": True,
+                    "default_value": now(),
+                },
+                "global-string-test": <ConfigItemInfo>{
+                    "default_value": "test",
+                    "description": "This is a test configuration item with a very long description that will take up a lot of "
+                        "space but at the same time be extremely informative to the point that the anyone reading will "
+                        "know exactly what this item is about, how it's used, and what the impact will be of changing "
+                        "it.  And in this small way, this global configuration item and its verbose but useful "
+                        "description will have made the world a slightly better place.",
+                },
+                "global-int-test": <ConfigItemInfo>{
+                    "type": "int",
+                    "default_value": 1,
+                    "description": "This is a test configuration item",
+                },
+                "global-float-test": <ConfigItemInfo>{
+                    "type": "float",
+                    "default_value": 1.0,
+                    "description": "This is a test configuration item",
+                },
+                "global-date-test": <ConfigItemInfo>{
+                    "type": "date",
+                    "description": "This is a test configuration item",
+                    "default_value": now(),
+                },
+                "service-string-test": <ConfigItemInfo>{
+                    "default_value": "wf test",
+                    "description": "This is a test configuration item on the service level only",
+                    "strictly_local": True,
+                },
+            };
+        }
+    }
+}

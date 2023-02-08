@@ -1,0 +1,15 @@
+# This is a generated file, don't edit!
+type: service
+name: issue3546-basics-simple-service
+desc: Service simple example
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: Issue3546BasicsSimpleService
+version: '1.0'
+servicetype: USER
+code: issue3546-basics-simple-service-1.0.qsd
+methods:
+  - name: init
+    desc: initialization of the service

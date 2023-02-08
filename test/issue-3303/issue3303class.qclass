@@ -1,0 +1,10 @@
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class issue3303class {
+    string test() {
+        return "test";
+    }
+}

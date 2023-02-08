@@ -1,0 +1,77 @@
+# This is a generated file, don't edit!
+type: service
+name: fsm-flow-test
+desc: FSM flow test service
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: FsmFlowTest
+fsm:
+    [
+        {
+            "name": "fsm-flow-test-1",
+            "triggers": [
+                {
+                    "method": "test1"
+                }
+            ]
+        },
+        {
+            "name": "fsm-flow-test-2",
+            "triggers": [
+                {
+                    "method": "test2"
+                }
+            ]
+        },
+        {
+            "name": "fsm-flow-test-3",
+            "triggers": [
+                {
+                    "method": "test3"
+                }
+            ]
+        },
+        {
+            "name": "fsm-flow-test-4",
+            "triggers": [
+                {
+                    "method": "test4"
+                }
+            ]
+        },
+        {
+            "name": "fsm-flow-test-5",
+            "triggers": [
+                {
+                    "method": "test5"
+                }
+            ]
+        }
+    ]
+groups:
+  - regression
+  - test
+version: "1.0"
+servicetype: USER
+code: fsm-flow-test-1.0.qsd
+config-items:
+  - name: if-config
+    default_value:
+        true
+    description: if config test
+    config_group: Test
+    type: bool
+    strictly_local: true
+methods:
+  - name: test1
+    desc: test FSM flow 1
+  - name: test2
+    desc: test FSM flow 2
+  - name: test3
+    desc: test FSM flow 3
+  - name: test4
+    desc: test FSM flow 4
+  - name: test5
+    desc: test

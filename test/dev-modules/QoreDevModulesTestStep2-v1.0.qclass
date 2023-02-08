@@ -1,0 +1,17 @@
+# name: QoreDevModulesTestStep2
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreDevModulesTestStep2 inherits TestSubworkflowStep, QoreTest {
+    primaryImpl() {
+        assertTrue(True);
+        skipSubworkflow();
+    }
+}
+# END

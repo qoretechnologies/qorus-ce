@@ -1,0 +1,60 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class SyncCancelTest
+
+class SyncCancelTest inherits Test {
+    public {
+        const Timeout = 10s;
+        const WorkflowName = "SYNC-CANCEL-TEST";
+    }
+
+    constructor() : Test("SyncCancelTest", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("testWorkflow", \testWorkflow());
+        set_return_value(main());
+    }
+
+    testWorkflow() {
+        hash<auto> wfh = qrest.get("workflows/" + WorkflowName);
+        if (wfh.enabled) {
+            qrest.put("workflows/" + WorkflowName + "/enable");
+        }
+
+        {
+            if (!wfh.remote) {
+                qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": True});
+            }
+            on_exit qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": False});
+
+            doWorkflowTest();
+        }
+
+        doWorkflowTest();
+    }
+
+    doWorkflowTest() {
+        hash<auto> oh = {
+            "staticdata": {},
+        };
+        # start synchronous workflow execution
+        hash<auto> h = qrest.post("workflows/" + WorkflowName + "/execSynchronousAsync", oh);
+        printf("h: %y\n", h);
+        assertEq(Type::Int, h.workflow_instanceid.type());
+        int workflow_instanceid = h.workflow_instanceid;
+        qrest.setTimeout(Timeout);
+        assertEq(OMQ::StatCanceled, qrest.put("orders/" + workflow_instanceid + "/cancel").workflow_status);
+    }
+}

@@ -1,0 +1,577 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# Quick setup:
+# - use BASH as a shell
+# - source completion wrapper distributed with Qorus, installed in OMQ_DIR/etc
+#   example: . OMQ_DIR/etc/qorus-bash-completion.sh
+# - ensure this script is located in PATH (it should be in OMQ_DIR/bin
+# - enjoy it
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusClientBase
+
+%new-style
+%strict-args
+%require-our
+%require-types
+%exec-class BashCompleter
+
+# for debugging
+const LOG = False;
+
+const ocmd_options = (
+                      '-u', '--url',
+                      '-p', '--proxy-url',
+                      '-W', '--show-url',
+                      '-x', '--xml',
+                      '-X', '--unformatted-xml',
+                      '-f', '--foreign',
+                      '-l', '--literal',
+                      '-m', '--monitor',
+                      '-t', '--timeout',
+                      '-v', '--verbose',
+                      '-h', '--help',
+                     );
+const ocmd_options_skip = (
+                      '-u': True, '--url': True,
+                      '-p': True, '--proxy-url': True,
+                      '-t': True, '--timeout': True,
+                        );
+
+const ostart_options = (
+                      '-a', '--all',
+                      '-u', '--url',
+                      '-p', '--proxy-url',
+                      '-W', '--show-url',
+                      '-f', '--file',
+                      '-t', '--timeout',
+                      '-l', '--literal',
+                      '-R', '--reformat',
+                      '-h', '--help',
+                      );
+const ostart_options_skip = (
+                      '-u': True, '--url': True,
+                      '-p': True, '--proxy-url': True,
+                      '-f': True, '--file': True,
+                      '-t': True, '--timeout': True,
+                      );
+
+const ostop_options = (
+                      '-a', '--all',
+                      '-u', '--url',
+                      '-p', '--proxy-url',
+                      '-W', '--show-url',
+                      '-t', '--timeout',
+                      '-l', '--literal',
+                      '-R', '--reformat',
+                      '-v', '--verbose',
+                      '-h', '--help'
+                      );
+const ostop_options_skip = (
+                      '-u': True, '--url': True,
+                      '-p': True, '--proxy-url': True,
+                      '-t': True, '--timeout': True,
+                      );
+
+const oprop_options = (
+                      '-u', '--url',
+                      '-P', '--proxy-url',
+                      '-U', '--show-url',
+                      '-p', '--push',
+                      '-r', '--retrieve',
+                      '-t', '--timeout',
+                      '-v', '--verbose',
+                      '-x', '--xml',
+                      '-l', '--literal',
+                      '-R', '--reformat',
+                      '-h', '--help'
+                    );
+const oprop_options_skip = (
+                      '-u': True, '--url': True,
+                      '-P': True, '--proxy-url': True,
+                      '-p': True, '--push': True,
+                      '-r': True, '--retrieve': True,
+                      '-t': True, '--timeout': True,
+                    );
+
+const qrest_options = (
+                      '-p', '--proxy-url',
+                      '-P', '--path',
+                      '-t', '--timeout',
+                      '-l', '--literal',
+                      '-R', '--reformat',
+                      '-H', '--header',
+                      '-h', '--help',
+                    );
+const qrest_options_skip = (
+                      '-p': True, '--proxy-url': True,
+                      '-P': True, '--path': True,
+                      '-t': True, '--timeout': True,
+                      '-H': True, '--header': True,
+                    );
+
+class AbstractCompleter {
+
+    private {
+        string script;
+        *string allCompl;
+        *string compl;
+        *string prevCompl;
+
+        list options;
+        hash options_skip;
+        hash commands;
+    }
+
+    constructor(string n_script, *string n_allCompl, *string n_compl, *string n_prevCompl) {
+        script = n_script;
+        allCompl = n_allCompl;
+        compl = n_compl;
+        prevCompl = n_prevCompl;
+    }
+
+    abstract complete();
+
+    private cout(list l) {
+        log("cout", l);
+        map printf("%s \n", $1), l;
+        flush();
+    }
+
+    private *bool checkOptionsSkip() {
+        if (!exists allCompl)
+            return;
+        list parts = allCompl.split(" ");
+        return options_skip{parts.last()};
+    }
+
+    private handleOptions() {
+        cout(select options, regex($1, sprintf("^%s", compl)));
+    }
+
+    private any callService(string name) {
+        any res = call_service(name, argv);
+        if (!exists res)
+            cout(options);
+        else
+            return res;
+    }
+
+    private log(string what, any msg) {
+        if (!LOG) return;
+        stderr.printf("%n\t%s\n", now(), what);
+        if (exists msg)
+            stderr.printf("%N\n", msg);
+        stderr.sync();
+    }
+}
+
+class OCMDCompleter inherits AbstractCompleter {
+
+    constructor(string script, *string allCompl, *string compl, *string prevCompl)
+        : AbstractCompleter(script, allCompl, compl, prevCompl)
+    {
+        options = ocmd_options;
+        options_skip = ocmd_options_skip;
+    }
+
+    complete() {
+        # prevent call server if it's not necessary
+        if (compl =~ /^\-/) {
+            handleOptions();
+            log("opts only");
+            return;
+        }
+
+        if (checkOptionsSkip()) return;
+
+        try {
+            hash help = omqapi.help();
+
+            HashIterator it(help);
+            while (it.next()) {
+                string key = it.getKey();
+                #log(sprintf("KEY %n", key));
+                commands{BashUtils::clean_command(key)} = True;
+                # potential aliases
+                if (exists help{key}.alias) {
+                    commands{BashUtils::clean_command(help{key}.alias)} = True;
+                }
+            }
+        } catch (hash ex) {
+            log("help", ex);
+            handleOptions();
+            exit(1);
+        }
+
+        if (allCompl =~ /delete-service/
+            || allCompl =~ /reset-service/
+            || allCompl =~ /set-service-autostart/
+            || allCompl =~ /get-service-autostart/
+            || allCompl =~ /set-service-options/
+            || allCompl =~ /get-service-options/ )
+        {
+            if (allCompl =~ /.*omq\.user\./)
+                cout(deleteServices("USER", compl));
+            else
+                cout(deleteServices("SYSTEM", compl));
+        }
+        else if (allCompl =~ /reset-workflow/
+                || allCompl =~ /stop-workflow/
+#               || allCompl =~ /start-workflow/
+                )
+        {
+            cout(get_workflows(compl));
+        }
+        else if (!exists compl) {
+            cout(options);
+            cout(commands.keys());
+        }
+        else {
+            *list selected = select keys commands, regex($1, sprintf("^%s", compl));
+            if (elements selected == 1)
+                compl = selected[0];
+
+            if (compl =~ /^-.*$/ )
+                handleOptions();
+            else if (compl =~ /^omq\.user\.service\..*$/ )
+                selected += addServices("USER");
+            else if (compl =~ /^omq\.system\.service\..*$/ )
+                selected += addServices("SYSTEM");
+            else
+                selected += select keys commands, regex($1, sprintf("^%s", compl));
+
+            cout(selected);
+        }
+
+    } # complete
+
+    private *list addServices(string type) {
+        list ret = ();
+
+        # flag if the method names will be appended to service name
+        # only if the compl does not end with service.
+        log(sprintf("compl: %n, %d", compl, compl.split('.', True).size()));
+
+        # if it was suggest only service name(s).
+        # methods go only when the final name of the service is known already.
+        *hash services = qrest.get("system/metadata/servicemap");
+        HashIterator it(services);
+        while (it.next()) {
+            if (it.getValue() == type.lwr()) {
+                push ret, sprintf("omq.%s.service.%s.", type.lwr(), it.getKey());
+            }
+        }
+
+        ret = select ret, regex($1, sprintf("^%s", compl));
+        if (elements ret > 1)
+            return ret;
+
+        if (compl.regex("^omq\.(user|system)\.service\.[a-zA-Z0-9]*\..*")) {
+
+            # methods for service
+            *hash methods = qrest.get("system/metadata/servicemap");
+            it = new HashIterator(methods);
+            while (it.next()) {
+                if (it.getValue().type != type.lwr())
+                    continue;
+                HashIterator mit(it.getValue().methods);
+                while (mit.next()) {
+                    push ret, sprintf("omq.%s.service.%s.%s", type.lwr(), it.getValue().name, mit.getValue().name);
+                }
+            }
+        }
+
+        return select ret, regex($1, sprintf("^%s", compl));
+    }
+
+    private list deleteServices(string type, *string base) {
+        log("deleteServices", sprintf("%s=%n", type, base));
+        list ret = ();
+        *hash services = qrest.get("system/metadata/servicemap"){type};
+        HashIterator it(services);
+        while (it.next()) {
+            push ret, it.getKey();
+        }
+
+        return select ret, regex($1, sprintf("^%s", base));
+    }
+}
+
+class OSTARTCompleter inherits AbstractCompleter {
+
+    constructor(string script, *string allCompl, *string compl, *string prevCompl)
+        : AbstractCompleter(script, allCompl, compl, prevCompl)
+    {
+        options = ostart_options;
+        options_skip = ostart_options_skip;
+    }
+
+    complete() {
+        # prevent call server if it's not necessary
+        if (compl =~ /^\-/) {
+            handleOptions();
+            log("opts only", NOTHING);
+            return;
+        }
+
+        if (checkOptionsSkip()) return;
+
+        softlist parts = exists allCompl ? allCompl.split(" ") : NOTHING;
+        if (options_skip{parts.last()})
+            return; # TODO/FIXME: dir list?
+
+        # get all workflows in the instance. We will use it almost all time
+        *hash wfs = qrest.get("system/metadata/wfrmap");
+        if (wfs)
+            commands = map {$1: True}, keys wfs;
+        else
+            commands = {};
+
+        # handle the command line "history" e.g. ostop WFNAME -> ('ostop', 'WFNAME')
+        *list prev = exists allCompl ? allCompl.split(" ") : NOTHING;
+        # here we can get the last completed word from the line. It will not
+        # be completed, just used as a decision maker for workflow versions
+        *string lastPart = pop prev;
+
+        # last part of the commandline is empty - it can be first completion or
+        # the space after workflow name
+        if (!exists compl) {
+            # just check if the
+            if (commands{lastPart}) {
+                # show available WF versions
+                cout(getWFVersions(wfs{lastPart}, compl));
+            } else {
+                # first completion - show all options and workflows too
+                cout(options);
+                cout(commands.keys());
+            }
+        } else {
+            # there is something to complete - based on unfinished word
+            log("lastPart", lastPart);
+            # In the case there is something like a "1.x" number - find a versions
+            # available
+            if (float(lastPart) != 0.0) {
+                # last in prev is WF name probably
+                string wfName = pop prev;
+                *list wfVersions = getWFVersions(wfs{wfName}, compl);
+                if (exists wfVersions)
+                    cout(wfVersions);
+                return;
+            }
+            # here we need to complete workflow name or --option
+            *list selected = select keys commands, regex($1, sprintf("^%s", compl));
+            log("selected", selected);
+            if (elements selected == 1)
+                compl = selected[0];
+            if (compl =~ /^-.*$/ )
+                handleOptions();
+            else
+                cout(selected);
+        }
+    } # complete
+
+    static private *list getWFVersions(hash data, *string compl) {
+        string str = sprintf("^[^l]%s", compl);
+        return select (keys data), regex($1, str);
+    }
+}
+
+class OSTOPCompleter inherits OSTARTCompleter {
+
+    constructor(string script, *string allCompl, *string compl, *string prevCompl)
+        : OSTARTCompleter(script, allCompl, compl, prevCompl)
+    {
+        options = ostop_options;
+        options_skip = ostop_options_skip;
+    }
+}
+
+class OPROPCompleter inherits AbstractCompleter {
+
+    constructor(string script, *string allCompl, *string compl, *string prevCompl)
+        : AbstractCompleter(script, allCompl, compl, prevCompl)
+    {
+        options = oprop_options;
+        options_skip = oprop_options_skip;
+        commands = (
+            "get": True,
+            "set": True,
+            "update": True,
+            );
+    }
+
+    complete() {
+        # prevent call server if it's not necessary
+        if (compl =~ /^\-/) {
+            handleOptions();
+            return;
+        }
+
+        if (checkOptionsSkip()) return;
+
+        if (!exists compl)
+            handleOptions();
+
+        if (allCompl !~ /(get|set|update)/)
+            cout( select keys commands, regex($1, sprintf("^%s", compl)) );
+        else {
+            hash props = callService("omq.system.service.prop.get");
+            softlist cmd = allCompl.split(" ");
+            string lastWord = cmd.last();
+            *hash ret;
+
+            if (commands{lastWord})
+                ret = props;
+            else if (exists props{lastWord})
+                ret = props{lastWord};
+            else if (cmd.size() > 1) {
+                lastWord = cmd[cmd.size()-2];
+                if (exists props{lastWord})
+                    ret = props{lastWord};
+                else
+                    ret = props;
+            }
+
+            cout( select keys ret, $1.regex("^" + compl) );
+        }
+    }
+}
+
+class QRESTCompleter inherits AbstractCompleter {
+
+    constructor(string script, *string allCompl, *string compl, *string prevCompl)
+        : AbstractCompleter(script, allCompl, compl, prevCompl)
+    {
+        options = qrest_options;
+        options_skip = qrest_options_skip;
+        commands = (
+            "get": True,
+            "put": True,
+            "post": True,
+            "delete": True,
+            );
+    }
+
+    complete() {
+        # prevent call server if it's not necessary
+        if (compl =~ /^\-/) {
+            handleOptions();
+            return;
+        }
+
+        if (checkOptionsSkip()) return;
+
+        if (!exists compl)
+            handleOptions();
+
+        if (!allCompl.regex("(get|put|post|delete)"))
+            cout( select keys commands, regex($1, sprintf("^%s", compl)) );
+        else {
+            return;
+        }
+    }
+}
+
+
+namespace BashUtils {
+
+    string sub clean_command(string value) {
+        string realCmd = regex_subst(value, "\\\[.*$", "");#"
+        # if there is no [], it can be used as a "shortcut".
+        # of course if there is no remaining "."
+        if (realCmd =~ /^omq\.system\..*/) {#/)
+            string stripped = replace(realCmd, "omq.system.", "");
+            #log("stripped", stripped);
+            if (stripped !~ /\./ ) {
+                #log("pushhss", stripped);
+                return stripped;
+            }
+        }
+        return realCmd;
+    }
+
+    list sub get_workflows(*string filter) {
+        # get all workflows in the instance. We will use it almost all time
+        *hash wfs = qrest.get("system/metadata/wfrmap");
+        if (exists wfs)
+            if (exists filter)
+                return select keys wfs, regex($1, sprintf("^%s", filter));
+            else
+                return keys wfs;
+        else
+            return ();
+    }
+
+    any sub call_service(string name, softlist args) {
+        try {
+            return omqapi.callAPIArgs(name, args);
+        } catch (hash ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR" && ex.desc =~ /Connection refused/) {
+                return;
+            }
+            else
+                rethrow;
+        }
+    }
+
+} # namespace BashUtils
+
+
+class BashCompleter {
+
+    constructor() {
+        *string script = shift ARGV;
+        if (!script) {
+            stderr.printf("%s: this script is designed to be run as a bash command-line completion helper; run . OMQ_DIR/etc/qorus-bash-completion.sh to install\n", get_script_name());
+            exit(1);
+        }
+        *string allCompl = shift ARGV;
+        *string compl = pop ARGV;
+        *string prevCompl = pop ARGV;
+
+        QorusClient::init2();
+
+        # try to guess URL to connect
+        if (allCompl) {
+            *list url = regex_extract(allCompl, "(\-u=|\-\-url=)(.* )");
+            if (elements url == 2 && exists url[1])
+                omqapi.setURL(url[1]);
+            # proxy
+            *list proxy = regex_extract(allCompl, "(\-p=|\-\-proxy=)(.* )");
+            if (elements proxy == 2 && exists proxy[1])
+                omqapi.setProxyURL(proxy[1]);
+        }
+
+        if (script =~ /^ocmd/)
+            new OCMDCompleter(script, allCompl, compl, prevCompl).complete();
+        else if (script =~ /^ostart/)
+            new OSTARTCompleter(script, allCompl, compl, prevCompl).complete();
+        else if (script =~ /^ostop/)
+            new OSTOPCompleter(script, allCompl, compl, prevCompl).complete();
+        else if (script =~ /^oprop/)
+            new OPROPCompleter(script, allCompl, compl, prevCompl).complete();
+        else if (script =~ /^qrest/)
+            new QRESTCompleter(script, allCompl, compl, prevCompl).complete();
+        else
+            throw "UNIMPLEMENTED";
+
+    } # constructor
+
+} # class BashCompleter

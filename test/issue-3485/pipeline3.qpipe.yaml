@@ -1,0 +1,32 @@
+type: pipeline
+name: pipeline3
+desc: pipeline 3
+children:
+  - pid: 'id1'
+    name: Issue3485Processor2
+    type: processor
+    children:
+      - pid: 'id2'
+        name: Issue3485Processor1
+        type: processor
+        config-items:
+          - name: pfx
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+            value: prefix1
+          - name: crec
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+          - name: raise_error
+            parent:
+              interface-name: Issue3485Processor1
+              interface-type: class
+              interface-version: '1.0'
+            value: true
+groups:
+  - regression
+  - test

@@ -1,0 +1,22 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-retry-test
+desc: FSM retry test
+groups:
+  - regression
+  - test
+states:
+    '1':
+        action:
+            type: connector
+            value:
+                class: FsmRetryTest
+                connector: retry
+        id: state1
+        initial: true
+        execution_order: 1
+        name: Retry
+        position:
+            x: 93.125
+            'y': 71.17578125
+        type: state

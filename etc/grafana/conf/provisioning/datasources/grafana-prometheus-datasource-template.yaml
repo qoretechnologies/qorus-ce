@@ -1,0 +1,9 @@
+%auto_generated_file_disclaimer%
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: %prometheus_url%

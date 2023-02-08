@@ -1,0 +1,26 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$simple = ( "reschedule_test_1:1.0" );
+
+$options = ( "reschedule" : "seconds to reschedule in attach function",
+	     "iterations" : "number of times to reschedule",
+	     "stop"       : "stop all execution instances after reschedule" );
+
+$workflows."RESCHEDULE"."1.0" =
+    ( "desc"    : "reschedule test workflow",
+      "author"  : "Qore Technologies, sro",
+      "steps"	: $simple,
+      "keylist" : (
+          "test1",
+          "test2",
+      ),
+      "options" : $options,
+      "attach"  : "reschedule_attach:1.0",
+      "groups"  : "test",
+      );

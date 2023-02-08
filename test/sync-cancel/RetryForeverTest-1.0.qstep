@@ -1,0 +1,10 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class RetryForeverTest inherits QorusNormalStep {
+    primary() {
+        stepError("RETRY-ERROR", "retry with a one-year delay", 1Y);
+    }
+}

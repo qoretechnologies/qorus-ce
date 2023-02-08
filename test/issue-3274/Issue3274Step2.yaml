@@ -1,0 +1,8 @@
+type: step
+name: Issue3274Step2
+class-name: Issue3274Step
+version: "1.0"
+desc: Simple worklfow step example
+author:
+    - Qore Technologies, s.r.o.
+code: Issue3274Step.qstep

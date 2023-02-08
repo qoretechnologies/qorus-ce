@@ -1,0 +1,45 @@
+#!/usr/bin/qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires Qyaml
+
+%exec-class QyamlTest
+
+class QyamlTest inherits QUnit::Test {
+    private {
+        string srcDir = dirname(get_module_hash()."Qyaml".filename) + Qore::DirSep + "test" + Qore::DirSep;
+    }
+
+    constructor() : Test("QyamlTest", "1.0") {
+        addTestCase("parseSomeFilesTest", \parseSomeFilesTest());
+        set_return_value(main());
+    }
+
+    private parseSomeFilesTest() {
+        Dir dir();
+        dir.chdir(srcDir);
+
+        list<string> files = dir.listFiles("\\.yaml$");
+        files = map srcDir + Qore::DirSep + $1, files;
+
+        hash<string, hash<auto>> parsed_files = Qyaml::parse(files);
+
+        foreach hash<auto> i in (parsed_files.pairIterator()) {
+            print("------------------------------------------------------\n");
+            printf("type: %y\n", i.value.type);
+
+            Qyaml::Validator validator = Qyaml::create_validator(i.value.type);
+            Qyaml::ParsedYaml parsed_yaml_object(i.value);
+
+            print("validating\n");
+            validator.validate(i.key, parsed_yaml_object);
+            print("validation OK\n");
+            print("------------------------------------------------------\n");
+        }
+    }
+}

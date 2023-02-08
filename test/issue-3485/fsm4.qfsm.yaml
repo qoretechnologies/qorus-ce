@@ -1,0 +1,154 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm4
+desc: fsm 4
+groups:
+  - regression
+  - test
+states:
+    '0':
+        action:
+            type: pipeline
+            value: pipeline3
+        id: initstate1
+        initial: true
+        name: initState1
+        position:
+            x: 177.125
+            'y': 15.17578125
+        transitions:
+            -
+                state: '2'
+            -
+                condition: 123 - 2 == 121
+                errors:
+                    - PIPELINE-FAILED
+                state: '3'
+        execution_order: 1
+        type: state
+    '1':
+        action:
+            type: connector
+            value:
+                class: Issue3485Action
+                connector: errorAction
+        id: initstate2
+        initial: true
+        name: initState2
+        position:
+            x: 183.125
+            'y': 252.17578125
+        transitions:
+            -
+                state: '4'
+            -
+                errors:
+                    - TEST-ERROR
+                    - ERROR-ACTION
+                state: '5'
+            -
+                errors:
+                    - TEST-ERROR
+                state: '6'
+        execution_order: 2
+        type: state
+    '2':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state2
+        name: state2
+        position:
+            x: 85.125
+            'y': 180.17578125
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm4\\.state2}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '3':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state3
+        name: state3
+        position:
+            x: 275.125
+            'y': 176.17578125
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm4\\.state3}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '4':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state4
+        name: state4
+        position:
+            x: 81.125
+            'y': 364.17578125
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm4\\.state4}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '5':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state5
+        name: state5
+        position:
+            x: 290.125
+            'y': 364.17578125
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$pstate:{state.fsm4\.state5}': true
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"
+    '6':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state6
+        name: state6
+        position:
+            x: 187.125
+            'y': 440.17578125
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                {"$pstate:{state.fsm4\\.state6}":true}
+            parent:
+                interface-name: FsmDepTest
+                interface-type: class
+                interface-version: "1.0"

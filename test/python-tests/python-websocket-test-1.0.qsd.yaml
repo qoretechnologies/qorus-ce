@@ -1,0 +1,24 @@
+# This is a generated file, don't edit!
+type: service
+name: python-websocket-test
+desc: Python REST server test
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusService
+class-name: PythonWebSocketTest
+groups:
+  - regression
+  - test
+lang: python
+version: "1.0"
+servicetype: USER
+code: python-websocket-test-1.0.qsd.py
+system-options:
+  stack-size:
+    type: byte-size
+    value: 1MB
+methods:
+  - name: init
+    desc: init method
+  - name: stop
+    desc: stop method

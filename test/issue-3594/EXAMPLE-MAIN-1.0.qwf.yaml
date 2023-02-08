@@ -1,0 +1,23 @@
+# This is a generated file, don't edit!
+type: workflow
+name: EXAMPLE-MAIN
+desc: Example main workflow
+version: "1.0"
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+tags:
+    TEST: "issue-3594"
+steps:
+    [
+        "ExampleMain1:1.0",
+        [
+            "ExampleMain2:1.0",
+            "ExampleMain3:1.0"
+        ],
+        "ExampleMain4:1.0",
+        [
+            "ExampleMain5:1.0",
+            "ExampleStep6:1.0"
+        ]
+    ]

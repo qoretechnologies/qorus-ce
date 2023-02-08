@@ -1,0 +1,59 @@
+swagger: "2.0"
+info:
+  description: "Swagger Test1"
+  version: "1.0.0"
+  title: "issue #2234"
+  contact:
+    email: "info@qoretechnologies.com"
+host: "192.168.0.1:8001"
+basePath: "/"
+tags:
+- name: "supplier"
+  description: "get supplier info"
+schemes:
+- "http"
+consumes:
+- "application/json"
+produces:
+- "application/json"
+paths:
+  /test/test1:
+    get:
+      tags:
+      - "test1"
+      summary: "do test1"
+      description: "test1"
+      operationId: "test1"
+      parameters:
+      - name: "test1_1"
+        in: "query"
+        description: "test1_1"
+        required: true
+        type: "integer"
+        format: "int32"
+      - name: "test1_2"
+        in: "query"
+        description: "test1_2"
+        required: true
+        type: "integer"
+        format: "int32"
+      responses:
+        405:
+          description: "Invalid input"
+        200:
+          description: "successful operation"
+          schema:
+            $ref: "#/definitions/ApiResponse"
+definitions:
+  ApiResponse:
+    type: "object"
+    required:
+    - "id"
+    - "name"
+    properties:
+      id:
+        type: "integer"
+        format: "int64"
+      name:
+        type: "string"
+        example: "test"

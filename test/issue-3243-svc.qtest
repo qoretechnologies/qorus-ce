@@ -1,0 +1,32 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusInterfaceTest
+
+%exec-class Issue3243ServiceTest
+
+class Issue3243ServiceTest inherits QorusServiceTest {
+    public {}
+
+    constructor() : QorusServiceTest("issue-3243", "1.0", \ARGV) {
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        qrest.put("services/issue-3243/load");
+        on_exit qrest.put("services/issue-3243/unload");
+
+        int svcid = qrest.get("services/issue-3243/serviceid");
+        assertEq(svcid, qrest.put("services/issue-3243/get/call"));
+    }
+}

@@ -1,0 +1,11 @@
+<html lang="en" >
+    <head>
+        <meta charset="utf-8" />
+        <title>Issue 3250 Test: {{ (date now = now_us()).format("YYYY-MM-DD HH:mm:SS.xx") }}</title>
+    </head>
+    <body>
+        <header>
+            <h2>Another test: {{ (now = now_us()).format("YYYY-MM-DD HH:mm:SS.xx") }}</h2>
+        </header>
+    </body>
+</html>

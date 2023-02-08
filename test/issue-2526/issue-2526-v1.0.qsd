@@ -1,0 +1,59 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2526
+# serviceversion: 1.0
+# servicedesc: issue 2526 test service
+# serviceauthor: Qore Technologies, s.r.o.
+# autostart: false
+# remote: true
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+sub wait_forever_intern() {
+    Condition cond();
+    Mutex m();
+    m.lock();
+    while (True) {
+        cond.wait(m);
+    }
+}
+
+sub init() {
+}
+# END
+
+# name: stop
+# desc: noop for test - if wait_forever() is called, the service must be killed
+sub stop() {
+}
+# END
+
+# desc: starts a background that that will block until the service is killed
+sub wait_forever() {
+    UserApi::logInfo("calling wait_forever(); the service will have to be killed");
+    ServiceApi::startThread(\wait_forever_intern());
+}
+# END
+
+# desc: blocks until the service is killed
+sub wait_forever_inline() {
+    UserApi::logInfo("calling wait_forever_inline(); the service will have to be killed");
+    wait_forever_intern();
+}
+# END
+
+# desc: kills the service in the call
+sub die() {
+    UserApi::logInfo("die(): killing the service in the call");
+
+    # get the current service id
+    softint svcid = ServiceApi::getServiceInfo().serviceid;
+
+    # kill the issue-2526 qsvc process
+    system(ENV.OMQ_DIR + "/bin/qctl kill qsvc-user-issue-2526-v1.0-" + svcid + "-stateful");
+}
+# END

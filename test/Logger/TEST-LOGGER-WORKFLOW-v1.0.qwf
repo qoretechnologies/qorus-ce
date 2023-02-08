@@ -1,0 +1,28 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+#
+# Qorus Integration Engine
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups."test".desc = "help workflow for LoggerRestInterfaceTest unit test";
+
+const simple_step = {
+    "name": "test_logger_workflow_step:1.0",
+};
+
+const steps = (
+    simple_step,
+);
+
+our hash<auto> workflows."TEST-LOGGER-WORKFLOW"."1.0" = {
+    "desc"      : "Test logger workflow",
+    "author"    : "Taras Petrychkovych (Qore Technologies)",
+    "steps"     : steps,
+    "groups"    : ("test",),
+    "autostart" : 0,
+};

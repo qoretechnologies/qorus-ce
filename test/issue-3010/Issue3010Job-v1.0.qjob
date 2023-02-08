@@ -1,0 +1,24 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-3010-job
+# class-name: Issue3010Job
+# version: 1.0
+# desc: class-based test job
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# define-group: issue-3010-group: issue 3010 test group
+# groups: test, regression, issue-3010-group
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class Issue3010Job inherits QorusJob {
+    run() {
+        logInfo("Job is run");
+    }
+}
+# END

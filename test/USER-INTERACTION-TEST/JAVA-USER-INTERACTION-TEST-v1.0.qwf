@@ -1,0 +1,35 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups.test.desc = "test interfaces";
+
+our hash<auto> queues."java-user-interaction-test-1" = {
+    "desc": "Java user interaction test asynchronous test queue",
+};
+
+const Steps = (
+    {
+        "name": "java-user-interaction-test-1:1.0",
+        "classname": "JavaUserInteractionTest:1.0",
+        "queue": "java-user-interaction-test-1",
+        "user-interaction": True,
+    },
+);
+
+our hash<auto> workflows."JAVA-USER-INTERACTION-TEST"."1.0" = {
+    "desc": "Java user interaction test workflow",
+    "author": "Qore Technologies, s.r.o.",
+    "steps": Steps,
+    "keylist": ("test-key1",),
+    "groups": "test",
+    "sla_threshold": 30,
+};

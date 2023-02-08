@@ -1,0 +1,31 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+%requires RestClient
+
+%exec-class Issue3255Test
+
+class Issue3255Test inherits QorusServiceTest {
+    constructor(): QorusServiceTest("issue-3255", "user", \ARGV) {
+        addTestCase("test bind", \testBind());
+        set_return_value(main());
+    }
+
+    private testBind() {
+        qrest.put("services/issue-3255/load");
+        on_exit qrest.put("services/issue-3255/unload");
+
+        int port = omqservice.user."issue-3255".getPort();
+        RestClient rest({"url": "http://localhost:" + port + "/test"});
+        auto resp = rest.get("");
+        assertEq("issue-3255", resp.body);
+    }
+}
+
+

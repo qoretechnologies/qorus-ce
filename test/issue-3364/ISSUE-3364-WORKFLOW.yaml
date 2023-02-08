@@ -1,0 +1,10 @@
+type: workflow
+name: ISSUE-3364-WORKFLOW
+version: "1.0"
+desc: ISSUE-3364-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+mappers:
+  - issue3364mapper:1.0
+steps: ["issue3364step:1.0"]

@@ -1,0 +1,26 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups.test.desc = "test workflows and services";
+
+const Steps = (
+    "issue_3313_1:1.0",
+    "issue_3313_2:1.0",
+);
+
+our hash<auto> workflows."ISSUE-3313"."1.0" = {
+    "desc"          : "simple test workflow with 3 linear steps",
+    "author"        : "Qore Technologies, s.r.o.",
+    "steps"	    : Steps,
+    "groups"        : "test",
+    "mappers"       : (
+        "issue-3313-1:1.0",
+        "issue-3313-2:1.0",
+    ),
+};

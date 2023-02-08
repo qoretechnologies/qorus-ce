@@ -1,0 +1,74 @@
+# BLOCKED test function library
+
+# type: GENERIC
+# version: 1.0
+# desc: shared function to wait for givena mount of time
+# author: Qore Technologies, sro
+sub blocked_wait() {
+    my any $w = UserApi::propGet("blocktest", "delay");
+    if (!exists $w)
+        $w = 180;
+    UserApi::sleep($w);
+}
+# END
+
+# type: GENERIC
+# version: 1.0
+# desc: attach function
+# author: Qore Technologies, sro
+sub blocked_attach() {
+    UserApi::logInfo("blocked_attach function call");
+
+#   setCustomStatus('B');
+
+    WorkflowApi::addOrderNote("attach function");
+
+    my any $w = UserApi::propGet("blocktest", "blockattach");
+    if ($w == 1)
+        WorkflowApi::setBlocked();
+
+    my any $h = WorkflowApi::getDynamicData();
+    $h.attach = now();
+    WorkflowApi::updateDynamicData($h);
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: blocked function 1
+# author: Qore Technologies, sro
+sub blocked_step_1() {
+    UserApi::logInfo("blocked_step_1 function call");
+
+    WorkflowApi::setCustomStatus('B');
+    WorkflowApi::addOrderNote("step 1");
+
+    my any $w = UserApi::propGet("blocktest", "blockstep");
+    if ($w == 1)
+        WorkflowApi::setBlocked();
+
+    my any $h = WorkflowApi::getDynamicData();
+    $h.step1 = now();
+    WorkflowApi::updateDynamicData($h);
+
+    blocked_wait();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: blocked function 2
+# author: Qore Technologies, sro
+sub blocked_step_2() {
+    UserApi::logInfo("blocked_step_2 function call");
+
+    WorkflowApi::setCustomStatus('C');
+    WorkflowApi::addOrderNote("step 2");
+
+    my hash $h = WorkflowApi::getDynamicData();
+    $h.step2 = now();
+    WorkflowApi::updateDynamicData($h);
+
+    blocked_wait();
+}
+# END

@@ -1,0 +1,48 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2677
+# serviceversion: 1.0
+# servicedesc: issue 2677 test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue2677
+# autostart: false
+# remote: true
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class Issue2677 inherits QorusService {
+    private:internal {
+        Counter cnt(1);
+    }
+
+    # name: start
+    # desc: background thread for test service
+    start() {
+        cnt.waitForZero();
+    }
+
+    # name: stop
+    # desc: stops the service
+    stop() {
+        # issue #2677: test handling services that will not stop
+        if (getConfigItemValue("deadlock")) {
+            logInfo("service is now deadlocking and will have to be killed; disable the \"deadlock\" "
+                "configuration item to avoid this behavior");
+        } else {
+            logInfo("service terminating normally; deadlock flag not set");
+            cnt.dec();
+        }
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "deadlock": <ConfigItemInfo>{
+                "type": "bool",
+                "default_value": False,
+                "description": "determines if the service will deadlock on stop or not",
+            },
+        };
+    }
+}

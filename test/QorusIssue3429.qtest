@@ -1,0 +1,45 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3429
+
+class Issue3429 inherits Test {
+    private {
+        const Types = (
+            "string",
+            "int",
+            "bool",
+            "float",
+            "number",
+            "binary",
+            "date",
+            "hash",
+            "list",
+        );
+    }
+
+    constructor(): Test("Issue3429", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        foreach string type in (Types) {
+            hash<auto> h = qrest.get("dataprovider/basetypes/*" + type);
+            assertTrue(h.or_nothing_type);
+            h.types_returned = map $1, h.types_returned, $1 != "integer";
+            assertEq(2, h.types_returned.size());
+            h = qrest.get("dataprovider/basetypes/" + type);
+            assertFalse(h.or_nothing_type);
+        }
+    }
+}

@@ -1,0 +1,8 @@
+type: workflow
+name: ISSUE-3485-WORKFLOW
+version: "1.0"
+desc: ISSUE-3485-WORKFLOW test workflow
+author:
+  - Qore Technologies, s.r.o.
+autostart: 0
+steps: ["Issue3485Step:1.0", "Issue3485Step2:1.0", "Issue3485Step3:1.0"]

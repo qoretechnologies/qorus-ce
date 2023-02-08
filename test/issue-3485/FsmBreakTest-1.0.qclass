@@ -1,0 +1,11 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class FsmBreakTest {
+    auto breakMethod(auto input_data) {
+        UserApi::logDebug("input data: %y", input_data);
+	throw "FSM-BREAK";
+    }
+}

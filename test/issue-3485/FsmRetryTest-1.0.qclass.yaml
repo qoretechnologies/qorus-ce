@@ -1,0 +1,18 @@
+# This is a generated file, don't edit!
+type: class
+name: FsmRetryTest
+desc: FSM retry test
+author:
+  - Qore Technologies, s.r.o.
+class-connectors:
+  - name: retry
+    method: retry
+    output-provider:
+        can_manage_fields: false
+        name: qoretechnologies
+        path: /building-blocks/generic/string
+        type: type
+    type: output
+lang: qore
+version: "1.0"
+code: FsmRetryTest-1.0.qclass

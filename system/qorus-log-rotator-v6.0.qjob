@@ -1,0 +1,250 @@
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+    DEALINGS IN THE SOFTWARE.
+*/
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class QorusLogRotator inherits QorusJob {
+    private {
+        #! The archive dir, if any; set on each run
+        *string archdir;
+
+        #! Process old files too?  Set on each run
+        bool process_old;
+
+        #! Log retention days
+        *int retention_days;
+
+        #! Log compression type
+        string log_compression;
+
+        #! Map of current files
+        *hash<string, hash<auto>> fmap;
+
+        #! The system log directory cannot be changed while Qorus is running
+        const Logdir = UserApi::getQorusOptions("logdir").logdir;
+
+        #! The maximum number of log files kept when rotating
+        const MaxLogFiles = UserApi::getQorusOptions("max-log-files")."max-log-files";
+
+        #! Log file directory
+        const logdir = new Dir();
+
+        #! Stat attributes
+        const StatAttrs = (
+            "size",
+            "atime",
+            "mtime",
+            "ctime",
+        );
+
+        #! Archive block size (16K)
+        const BlockSize = 16 * 1024;
+    }
+
+    run() {
+        # set global / class vars
+        setVars();
+
+        # map of current files if necessary
+        getCurrentFileMap();
+
+        # execute the rotation action
+        callRestApi("PUT", "system/rotateLogFiles");
+
+        # delete old files
+        deleteOldFiles();
+
+        # manually rotate old files if necessary to handle interfaces not running now with log files
+        rotateOldFiles();
+
+        # perform file archiving
+        archiveFiles();
+
+        # log done
+        logInfo("done");
+    }
+
+    private setVars() {
+        # get archive directory, if any
+        archdir = getConfigItemValue("qorus-log-archive-dir");
+        if (archdir) {
+            archdir = normalize_dir(archdir, Logdir);
+            log_compression = getConfigItemValue("qorus-log-compression");
+        } else {
+            log_compression = "<ignored>";
+        }
+
+        # process old files too?
+        process_old = getConfigItemValue("qorus-log-process-old-files");
+
+        # log retention days
+        retention_days = getConfigItemValue("qorus-log-retention-days");
+
+        # make sure logdir is in the log directory
+        logdir.chdir(Logdir);
+
+        logInfo("arch dir: %y (compression: %y) process old files: %y retention days: %y log dir: %y "
+            "max log files: %y", archdir, log_compression, process_old, retention_days, Logdir, MaxLogFiles);
+    }
+
+    private getCurrentFileMap() {
+        if (!process_old) {
+            return;
+        }
+
+        # get a hash of all files
+        # issue #3838: skip hidden files starting with a dot
+        fmap = cast<*hash<string, hash<auto>>>(map {$1.name: $1}, logdir.listFiles(True), $1.name !~ /^\./);
+    }
+
+    private deleteOldFiles() {
+        if (!exists retention_days) {
+            return;
+        }
+
+        date cutoff = now() - days(retention_days);
+        deleteOldFiles(logdir, cutoff);
+        if (archdir && hstat(archdir)) {
+            deleteOldFiles(archdir, cutoff);
+        }
+    }
+
+    private deleteOldFiles(string dir, date cutoff) {
+        Dir d();
+        d.chdir(dir);
+        deleteOldFiles(d, cutoff);
+    }
+
+    private deleteOldFiles(Dir dir, date cutoff) {
+        foreach hash<auto> info in (dir.listFiles(True)) {
+            # issue #3838: skip hidden files starting with a dot
+            if (info.ctime > cutoff || info.name =~ /^\./) {
+                continue;
+            }
+
+            string path = normalize_dir(sprintf("%s%s%s", dir.path(), DirSep, info.name));
+            logInfo("deleting old %y (create date %y < cutoff %y)", info.name, info.ctime, cutoff);
+            unlink(path);
+        }
+    }
+
+    private rotateOldFiles() {
+        if (!process_old) {
+            return;
+        }
+
+        # check for identical base files in fmap
+        foreach hash<auto> info in (logdir.listFiles(True)) {
+            # skip rotated files
+            # issue #3838: skip hidden files starting with a dot as well
+            if (info.name =~ /\.[0-9]+$/ || info.name =~ /^\./) {
+                continue;
+            }
+            *hash<auto> orig_info = fmap{info.name};
+            # rotate files manually if present in both hashes
+            if (orig_info == info) {
+                rotate(info.name);
+            }
+        }
+    }
+
+    private rotate(string basename, int num = 0) {
+        int next = num + 1;
+        string next_name = sprintf("%s.%d", basename, next);
+        string next_path = normalize_dir(sprintf("%s%s%s", Logdir, DirSep, next_name));
+        if (is_file(next_path)) {
+            rotate(basename, next);
+            # delete files if archdir is not set and if the current version is greater than the max
+            if (!archdir && next > MaxLogFiles) {
+                logInfo("manual rotation: deleting old %y (version %d > max log file version %d)", next_name, next,
+                    MaxLogFiles);
+                unlink(next_path);
+            }
+        }
+        if (archdir || (num <= MaxLogFiles)) {
+            string name = basename;
+            if (num) {
+                name += sprintf(".%d", num);
+            }
+            logInfo("manual rotation: renaming %y -> %y", name, next_name);
+            string path = normalize_dir(sprintf("%s%s%s", Logdir, DirSep, name));
+            rename(path, next_path);
+        }
+    }
+
+    private archiveFiles() {
+        if (!archdir) {
+            logInfo("archiving disabled; skipping");
+            return;
+        }
+
+        if (!is_dir(archdir)) {
+            mkdir_ex(archdir, hstat(Logdir).mode, True);
+        }
+
+        # issue #3838: skip hidden files starting with a dot as well
+        map archive($1), logdir.listFiles("\\.[0-9]+$", NOTHING, True), $1.name !~ /^\./;
+    }
+
+    private archive(hash<auto> info) {
+        # get source and target paths
+        string source_path = normalize_dir(sprintf("%s%s%s", Logdir, DirSep, info.name));
+        string target_path = normalize_dir(sprintf("%s%s%s-%s", archdir, DirSep, info.name,
+            now().format("YYYY-MM-DDTHH:mm:SS")));
+        if (log_compression != "NONE") {
+            target_path += "." + log_compression.lwr();
+        }
+
+        # setup input and output streams
+        FileInputStream i(source_path);
+        OutputStream o = new FileOutputStream(target_path);
+
+        # apply compression to the stream
+        switch (log_compression) {
+            case "BZ2":
+                o = new TransformOutputStream(o, get_compressor(COMPRESSION_ALG_BZIP2));
+                break;
+
+            case "GZ":
+                o = new TransformOutputStream(o, get_compressor(COMPRESSION_ALG_GZIP));
+                break;
+
+            case "Z":
+                o = new TransformOutputStream(o, get_compressor(COMPRESSION_ALG_ZLIB));
+                break;
+        }
+
+        int size;
+        while (exists (*binary buf = i.read(BlockSize))) {
+            o.write(buf);
+            size += buf.size();
+        }
+        o.close();
+
+        # delete source file
+        unlink(source_path);
+
+        # get target file size
+        int output_size = hstat(target_path).size;
+        logInfo("archived %y -> %y (%d bytes read, %d bytes written)", source_path, target_path, size, output_size);
+    }
+}

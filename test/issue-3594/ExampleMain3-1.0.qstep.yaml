@@ -1,0 +1,10 @@
+# This is a generated file, don't edit!
+type: step
+name: ExampleMain3
+desc: Example main step 3
+lang: qore
+base-class-name: QorusSubworkflowStep
+class-name: ExampleMain3
+version: "1.0"
+steptype: SUBWORKFLOW
+code: ExampleMain3-1.0.qstep

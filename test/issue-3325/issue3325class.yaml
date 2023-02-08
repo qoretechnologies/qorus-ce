@@ -1,0 +1,9 @@
+type: class
+name: issue3325class
+version: "1.0"
+desc: test class
+author:
+  - Qore Technologies, s.r.o.
+lang: qore
+code: issue3325class.qclass
+class-name: issue3325class

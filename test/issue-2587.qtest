@@ -1,0 +1,320 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue2587
+
+class QorusIssue2587 inherits Test {
+    public {
+        const PollInterval = 250ms;
+    }
+
+    constructor() : Test("Issue2587Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # test issue 3049
+        {
+            qrest.put("workflows/DEV-MODULES-TEST/setAutostart", {"autostart": 1});
+            on_exit {
+                qrest.put("workflows/DEV-MODULES-TEST/setAutostart", {"autostart": 0});
+            }
+
+            # these calls will fail if the bug is not fixed
+            qrest.put("steps/QoreDevModulesTestStep1/config/step-string-test",
+                {"value": "test-value"});
+            qrest.put("steps/QoreDevModulesTestStep1/config/step-string-test",
+                {"value": "test-value"});
+            assertEq(True, True);
+        }
+        # ensure that the interfaces are enabled
+        if (!qrest.get("workflows/DEV-MODULES-TEST/enabled")) {
+            qrest.put("workflows/DEV-MODULES-TEST/enable");
+        }
+        if (!qrest.get("services/DevModulesTest/enabled")) {
+            qrest.put("services/DevModulesTest/enable");
+        }
+        if (!qrest.get("jobs/DevModulesTest/enabled")) {
+            qrest.put("jobs/DevModulesTest/enable");
+        }
+
+        # test workflows
+        string global_val = get_random_string();
+        string global_val2 = get_random_string();
+        date global_now = now_us();
+        {
+            # test config items
+            string val = get_random_string();
+            date now = now_us();
+
+            hash<auto> order = {
+                "staticdata": {
+                    "global-string2": global_val2,
+                    "global-string": global_val,
+                    "global-float": 20.0,
+                    "global-date": global_now,
+                    "global-int": 100,
+                    "string": val,
+                    "float": 20.0,
+                    "date": now,
+                    "int": 100,
+                },
+            };
+
+            # set/test global values
+            qrest.put("system/config/global-string-test", {"value": "test-value"});
+            assertEq("test-value", qrest.get("system/config/global-string-test/value"));
+
+            qrest.put("system/config/global-string-test", {"value": global_val});
+            assertEq(global_val, qrest.get("system/config/global-string-test/value"));
+
+            qrest.put("system/config/global-float-test", {"value": 20.0});
+            assertEq(20.0, qrest.get("system/config/global-float-test/value"));
+
+            qrest.put("system/config/global-date-test", {"value": global_now});
+            assertEq(global_now, qrest.get("system/config/global-date-test/value"));
+
+            qrest.put("system/config/string-test", {"value": "test-value-1"});
+            assertEq("test-value-1", qrest.get("system/config/string-test/value"));
+
+            qrest.put("system/config/string-test", {"value": val});
+            assertEq(val, qrest.get("system/config/string-test/value"));
+
+            # test value conversions
+            qrest.put("system/config/global-int-test", {"value": "100"});
+            assertEq(100, qrest.get("system/config/global-int-test/value"));
+
+            # test config values for "step-string-test"
+            assertEq(False, qrest.get("steps/QoreDevModulesTestStep1/config/step-string-test/strictly_local"));
+            assertEq(False, qrest.get(
+                "workflows/DEV-MODULES-TEST/stepinfo/QoreDevModulesTestStep1/config/step-string-test/strictly_local"));
+
+            # ensure there is no global step-string-test config item value
+            assertEq(NOTHING, qrest.get("system/config/step-string-test/value"));
+
+            # set workflow config value
+            string step_string_item_val = get_random_string();
+            assertNeq(step_string_item_val, val);
+            qrest.put("workflows/DEV-MODULES-TEST/config/step-string-test", {"value": step_string_item_val});
+            assertEq(step_string_item_val, qrest.get("workflows/DEV-MODULES-TEST/config/step-string-test/value"));
+
+            # set step-local config value
+            qrest.put("steps/QoreDevModulesTestStep1/config/step-string-test", {"value": "step-string-test-value-1"});
+            assertEq("step-string-test-value-1", qrest.get(
+                "workflows/DEV-MODULES-TEST/stepinfo/QoreDevModulesTestStep1/config/step-string-test/value"));
+
+            qrest.put("steps/QoreDevModulesTestStep1/config/step-string-test", {"value": val});
+            assertEq(val, qrest.get(
+                "workflows/DEV-MODULES-TEST/stepinfo/QoreDevModulesTestStep1/config/step-string-test/value"));
+
+            qrest.put("workflows/DEV-MODULES-TEST/config/float-test", {"value": 20.0});
+            assertEq(20.0, qrest.get("workflows/DEV-MODULES-TEST/config/float-test/value"));
+
+            qrest.put("workflows/DEV-MODULES-TEST/config/date-test", {"value": now});
+            assertEq(now, qrest.get("workflows/DEV-MODULES-TEST/config/date-test/value"));
+
+            # test value conversions
+            qrest.put("workflows/DEV-MODULES-TEST/config/int-test", {"value": "100"});
+            assertEq(100, qrest.get("workflows/DEV-MODULES-TEST/config/int-test/value"));
+
+            qrest.put("workflows/DEV-MODULES-TEST/setAutostart", {"autostart": 1});
+            on_exit qrest.put("workflows/DEV-MODULES-TEST/setAutostart", {"autostart": 0});
+
+            softint wfiid = qrest.post("workflows/DEV-MODULES-TEST/createOrder", order).workflow_instanceid;
+            if (m_options.verbose > 2) {
+                printf("workflow dev modules test: created wfiid %y\n", wfiid);
+            }
+            on_error {
+                printf("ERRORS: %N\n", qrest.get("orders/" + wfiid).ErrorInstances);
+            }
+            waitForStatus("2587-1", wfiid, StatComplete, StatError);
+        }
+
+        # test services
+        {
+            # issue #3154: make sure the services run locally, or there can be a race condition with
+            # reading the config item values after setting them with the REST API
+            qrest.put("services/DevModulesTest/setRemote", {"remote": False});
+
+            assertEq("base", qrest.put("services/DevModulesTest/base/call"));
+            assertEq("example", qrest.put("services/DevModulesTest/example/call"));
+            assertEq("str", qrest.put("services/DevModulesTest/str/call"));
+
+            # test config items
+            string val = get_random_string();
+            date now = now_us();
+
+            qrest.put("system/config/string-test", {"value": val});
+            assertEq(val, qrest.put("services/DevModulesTest/getItemValue/call", {"args": "string-test"}));
+            on_exit qrest.put("services/DevModulesTest/unload");
+
+            assertEq(True, qrest.get("services/DevModulesTest/config/float-test/strictly_local"));
+            qrest.put("services/DevModulesTest/config/float-test", {"value": 10.0});
+            assertEq(10.0, qrest.put("services/DevModulesTest/getItemValue/call", {"args": "float-test"}));
+
+            qrest.put("services/DevModulesTest/config/date-test", {"value": now});
+            assertEq(now, qrest.put("services/DevModulesTest/getItemValue/call", {"args": "date-test"}));
+
+            # test value conversions
+            qrest.put("services/DevModulesTest/config/int-test", {"value": "100"});
+            assertEq(100, qrest.put("services/DevModulesTest/getItemValue/call", {"args": "int-test"}));
+
+            # test default value
+            qrest.del("services/DevModulesTest/config/int-test");
+            assertEq(1, qrest.put("services/DevModulesTest/getItemValue/call", {"args": "int-test"}));
+
+            # invalid item
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", \qrest.put(), ("services/DevModulesTest/config/invalid"));
+            # invalid value type
+            assertThrows("CONFIG-ITEM-ERROR", \qrest.put(), ("services/DevModulesTest/config/string-test",
+                {"value": {}}));
+
+            # Java config item tests
+            qrest.put("system/config/string-test", {"value": global_val});
+        }
+
+        # test job
+        {
+            hash<auto> h = qrest.put("jobs/DevModulesTest/run");
+            assertEq(OMQ::StatComplete, h.status);
+
+            # test config items
+            string val = get_random_string();
+            date now = now_us();
+
+            qrest.put("jobs/DevModulesTest/config/string-test", {"value": "testtest"});
+            assertEq("testtest", qrest.get("jobs/DevModulesTest/config/string-test/value"));
+
+            qrest.put("jobs/DevModulesTest/config/string-test", {"value": val});
+            assertEq(val, qrest.get("jobs/DevModulesTest/config/string-test/value"));
+
+            qrest.put("jobs/DevModulesTest/config/float-test", {"value": 20.0});
+            assertEq(20.0, qrest.get("jobs/DevModulesTest/config/float-test/value"));
+
+            qrest.put("jobs/DevModulesTest/config/date-test", {"value": now});
+            assertEq(now, qrest.get("jobs/DevModulesTest/config/date-test/value"));
+
+            qrest.put("jobs/DevModulesTest/config/job-string-test", {"value": global_val2});
+            assertEq(global_val2, qrest.get("jobs/DevModulesTest/config/job-string-test/value"));
+
+            # test value conversions
+            qrest.put("jobs/DevModulesTest/config/int-test", {"value": "100"});
+            assertEq(100, qrest.get("jobs/DevModulesTest/config/int-test/value"));
+
+            # run job and test info
+            {
+                int jiid = qrest.put("jobs/DevModulesTest/run").job_instanceid;
+                hash<auto> jh = qrest.get("jobresults/" + jiid + "/info");
+                assertEq({
+                    "string-test": val,
+                    "float-test": 20.0,
+                    "date-test": now,
+                    "int-test": 100,
+                }, jh.config);
+                assertEq({
+                    "global-string-test": global_val,
+                    "global-int-test": 100,
+                    "global-float-test": 20.0,
+                    "global-date-test": global_now,
+                    "job-string-test": global_val2,
+                    "string-test": val,
+                    "int-test": 100,
+                    "date-test": now,
+                    "float-test": 20.0,
+                }, jh."all-config");
+            }
+
+            # test default value
+            qrest.del("jobs/DevModulesTest/config/int-test");
+            assertEq(1, qrest.get("jobs/DevModulesTest/config/int-test/value"));
+
+            # invalid item
+            assertThrows("DATASTREAM-CLIENT-RECEIVE-ERROR", \qrest.put(), ("jobs/DevModulesTest/config/invalid"));
+            # invalid value type
+            assertThrows("CONFIG-ITEM-ERROR", \qrest.put(), ("jobs/DevModulesTest/config/string-test",
+                {"value": {}}));
+        }
+
+        # issue #2797: test dev module job running locally
+        if (qrest.get("jobs/DevModulesTest/remote")) {
+            qrest.put("jobs/DevModulesTest/setRemote", {"remote": False});
+            on_exit {
+                qrest.put("jobs/DevModulesTest/setRemote", {"remote": True});
+            }
+
+            hash<auto> h = qrest.put("jobs/DevModulesTest/run");
+            assertEq(OMQ::StatComplete, h.status);
+        }
+    }
+
+    waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors,
+            *string stepname) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (exists errors && inlist(h.workflowstatus, errors))
+                break;
+
+            #if (m_options.verbose > 2) {
+            #    printf("%y wfiid %y status == %y (err: %y) h: %y\n", testname, wfiid, status, errors, h);
+            #}
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        if (stepname) {
+            bool done;
+            while (!done) {
+                bool found;
+                foreach hash sh in (h.step_instance.iterator()) {
+                    if (sh.name == stepname) {
+                        if (sh.stepstatus == status) {
+                            if (m_options.verbose > 2) {
+                                printf("wfiid %d step %y has status %y\n", wfiid, stepname, status);
+                            }
+                            done = True;
+                            break;
+                        }
+                        if (sh.stepstatus != OMQ::StatInProgress)
+                            throw "STEP-STATUS-ERROR", sprintf("wfiid %d step %y expecting status %y; got %y", wfiid,
+                                stepname, status, sh.stepstatus);
+                        found = True;
+                    }
+                }
+
+                if (m_options.verbose > 2) {
+                    printf("wfiid %d step %y %sfound; sleeping %d us\n", wfiid, stepname, found ? "" : "not ",
+                        PollInterval);
+                }
+
+                # wait for status to change
+                usleep(PollInterval);
+                h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            }
+        }
+
+        assertEq(h.workflowstatus, status, testname);
+    }
+}

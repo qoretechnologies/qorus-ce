@@ -1,0 +1,466 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusInterfaceTest
+
+%requires QUnit
+%requires Util
+%requires FsUtil
+%requires SqlUtil
+%requires QorusClientCore
+
+%exec-class DatasourceConnections
+
+class DatasourceConnections inherits QUnit::Test {
+    private {
+        const CONN_TYPE = "DATASOURCE";
+
+        string m_api_name;
+        string m_conn_name;
+        string m_connstr;
+        string m_qconn_file;
+        string m_svc_file;
+        AbstractDatasource m_ds;
+    }
+
+    constructor() : QUnit::Test("DatasourceConnections", "1.0") {
+        QorusClient::init2();
+
+        m_ds = omqclient.getSQLIF().omqp;
+        on_exit {
+            m_ds.rollback();
+        }
+
+        m_conn_name = Util::get_random_string();
+        m_api_name = "remote/datasources/" + m_conn_name;
+        m_connstr = omqclient.getDatasourceConnectionString("omquser");
+
+        addTestCase("test API", \testApi());
+        addTestCase("options test", \optionsTest());
+        addTestCase("test DB specific API calls", \testApiDbSpecific());
+
+        addTestCase("test disable - standalone process", \testDisable());
+        addTestCase("test enable - standalone process", \testEnable());
+
+        addTestCase("test enable - core", \testEnableCore());
+        addTestCase("test disable - core", \testDisableCore());
+
+        set_return_value(main());
+    }
+
+    private cout(string msg) {
+        if (m_options.verbose > 2) {
+            printf("VERBOSE2: %s\n", vsprintf(msg, argv));
+        }
+    }
+
+    private string oloadFile(string suffix, string content) {
+        hash<auto> file = FsUtil::make_tmp_file(NOTHING, suffix);
+        on_error {
+            unlink(file.path);
+        }
+
+        file.file.write(content);
+        cout(content);
+
+        int rc;
+        string out = backquote(sprintf("oload -lR %s 2>&1", file.path), \rc);
+        if (rc) {
+            printf("ERROR: %s\n", trim out);
+        } else {
+            cout(out);
+        }
+        assertEq(0, rc);
+
+        return file.path;
+    }
+
+    globalSetUp() {
+        m_qconn_file = oloadFile(".qconn", sprintf("%s = (desc = unit test connection,\nurl = db://%s\n)",
+                                                    m_conn_name, m_connstr));
+
+        string svc = sprintf("# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: svc-test-user-conn-enable-disable
+# serviceversion: 1.0
+# servicedesc: test of disabling of user connections
+# serviceauthor: Qore Technologies, sro
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# ENDSERVICE
+
+# desc: dummy init
+sub init() {
+}
+# END
+
+# desc: just obtain a user connection's path
+auto sub foo() {
+    AbstractDatasource ds = UserApi::getDatasourcePool('%s');
+    return ds.getServerVersion();
+}
+# END
+        ", m_conn_name);
+        m_svc_file = oloadFile(".qsd", svc);
+    }
+
+    globalTearDown() {
+        unlink(m_qconn_file);
+        if (m_svc_file) {
+            unlink(m_svc_file);
+        }
+
+        qrest.del(m_api_name);
+
+        # delete the service
+        qrest.put("services/svc-test-user-conn-enable-disable/disable");
+        int rc;
+        backquote("oload -lR -X=service:svc-test-user-conn-enable-disable:1.0", \rc);
+    }
+
+    private testApi() {
+        string name = "db-" + Util::get_random_string();
+
+        # negative POST tests
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", {},));
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", {"name": name},));
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", {"name": name, "desc": "foo"},));
+
+        hash body = {
+            "name": name,
+            "desc": "a testing connection - " + Util::get_random_string(),
+            "url": "db://pgsql:omq/omq@somedb",
+        };
+
+        # create a connection using API
+        auto ret = qrest.post("remote/datasources", body);
+        cout("POST: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+        # validation of a connection
+        ret = qrest.get("remote/datasources/"+name);
+        cout("GET: %N", ret);
+        assertEq("DATASOURCE", ret.conntype);
+        assertEq(name, ret.name);
+        assertEq(body.desc, ret.desc);
+        assertEq("db://pgsql:omq@somedb", ret.url);
+        assertEq("omq", ret.url_hash.user);
+        assertEq("somedb", ret.url_hash.db);
+        assertEq(False, ret.url_hash.hasKey("options"));
+        assertEq({}, ret.opts);
+        assertEq({"type": "pgsql", "user": "omq", "db": "somedb",}, ret.url_hash);
+        # persistent storage test
+        *hash row = m_ds.selectRow("select * from connections where name = %v and connection_type = %v",
+                                    name, CONN_TYPE);
+        cout("DB ROW: %N", row);
+        assertEq(True, exists row);
+        assertEq(body.desc, row.description);
+        assertEq(body.url, row.url);
+        assertEq(1, row.monitor);
+        assertEq(1, row.enabled);
+        assertEq(0, row.manually_updated);
+
+        # negative test - let's try to create the same connection again
+        assertThrows("DATASOURCE-ERROR", \qrest.post(), ("remote/datasources", body,));
+
+        # change a connection using API - negative - wrong option
+        assertThrows("USER-CONNECTION-ERROR", \qrest.put(), ("remote/datasources/" + name, {"options": "bar"}));
+        # change a connection using API
+        body.desc = "updated " + body.desc;
+        ret = qrest.put("remote/datasources/" + name, body - "name");
+        cout("PUT: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+        # validation of a connection
+        ret = qrest.get("remote/datasources/"+name);
+        cout("GET: %N", ret);
+        assertEq("DATASOURCE", ret.conntype);
+        assertEq(name, ret.name);
+        assertEq(body.desc, ret.desc);
+        assertEq("db://pgsql:omq@somedb", ret.url);
+        assertEq("omq", ret.url_hash.user);
+        assertEq("somedb", ret.url_hash.db);
+        assertEq({}, ret.opts);
+        assertEq(False, ret.url_hash.hasKey("options"));
+        assertEq({"type": "pgsql", "user": "omq", "db": "somedb",}, ret.url_hash);
+        # persistent storage test
+        row = m_ds.selectRow("select * from connections where name = %v and connection_type = %v",
+                              name, CONN_TYPE);
+        cout("DB ROW: %N", row);
+        assertEq(True, exists row);
+        assertEq(body.desc, row.description);
+        assertEq(body.url, row.url);
+        assertEq(1, row.monitor);
+        assertEq(1, row.enabled);
+        assertEq(1, row.manually_updated); # it has been manually updated!
+
+        # ping a connection using API
+        ret = qrest.put("remote/datasources/" + name + "/ping");
+        cout("PUT ping: %N", ret);
+        assertEq(name, ret.name);
+        assertEq(body.desc, ret.desc);
+        assertEq(body.opts ?? {}, ret.opts);
+        assertEq("db://pgsql:omq@somedb", ret.url);
+        assertEq(True, ret.hasKey("ok"));
+        assertEq(True, ret.hasKey("info"));
+
+        # delete a connection using API
+        ret = qrest.del("remote/datasources/" + name);
+        cout("DELETE: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+        # persistent storage test
+        row = m_ds.selectRow("select * from connections where name = %v and connection_type = %v",
+                              name, CONN_TYPE);
+        cout("DB ROW: %N", row);
+        assertEq(False, exists row);
+        # get from api again -> 404
+        try {
+            qrest.get("remote/datasources/"+name);
+            fail("connection cannot exists in the server");
+        }
+        catch (hash ex) {
+            assertEq("DATASTREAM-CLIENT-RECEIVE-ERROR", ex.err);
+            assertEq(True, ex.desc =~ /HTTP status code 404/);
+        }
+    }
+
+    private testApiDbSpecific() {
+        string name = "db-" + Util::get_random_string();
+
+        hash conn_hash = {
+            "name": name,
+            "type": "pgsql",
+            "user": "omq",
+            "db": "omq",
+            "options": {
+                "min": 0,
+                "max": 0,
+            },
+        };
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", conn_hash));
+        conn_hash.options.min = -1;
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", conn_hash));
+        conn_hash.options.min = 10;
+        conn_hash.options.max = 1;
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", conn_hash));
+
+        hash body = {
+            "name": name,
+            "type": "pgsql",
+            "user": "omq",
+            "db": "foo"
+        };
+        # connetion hash calls are allowed in < APIv3
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", body));
+
+        QorusSystemRestHelper qrest_v2({"opts": {"api_version": "v2"}});
+        cout("new APIv2 object: %N", qrest_v2);
+        assertEq("v2", qrest_v2.api_version);
+
+        # create a connection using API
+        any ret = qrest_v2.post("remote/datasources", body);
+        cout("POST: %N", ret);
+        assertEq("OK", ret);
+        # validation of a connection
+        ret = qrest.get("remote/datasources/"+name);
+        cout("GET: %N", ret);
+        assertEq("DATASOURCE", ret.conntype);
+        assertEq(name, ret.name);
+        assertEq("pgsql:omq@foo", ret.desc);
+        assertEq("db://pgsql:omq@foo", ret.url);
+        assertEq(body.user, ret.url_hash.user);
+        assertEq(body.db, ret.url_hash.db);
+        assertEq(False, ret.hasKey("options"));
+        assertEq({}, ret.opts);
+        assertEq({"type": "pgsql", "user": "omq", "db": "foo"}, ret.url_hash);
+        # persistent storage test
+        *hash row = m_ds.selectRow("select * from connections where name = %v and connection_type = %v",
+                                    name, CONN_TYPE);
+        cout("DB ROW: %N", row);
+        assertEq(True, exists row);
+        assertEq("pgsql:omq@foo", row.description);
+        assertEq("db://pgsql:omq@foo", row.url);
+        assertEq(1, row.monitor);
+        assertEq(1, row.enabled);
+        assertEq(0, row.manually_updated);
+
+        # negative test - let's try to create the same connection again
+        assertThrows("DATASOURCE-ERROR", \qrest_v2.post(), ("remote/datasources", body,));
+
+        # change a connection using API
+        body.db = "bar";
+        ret = qrest_v2.put("remote/datasources/" + name, body);
+        cout("PUT: %N", ret);
+        assertEq("OK", ret);
+        # validation of a connection
+        ret = qrest.get("remote/datasources/"+name);
+        cout("GET: %N", ret);
+        assertEq("DATASOURCE", ret.conntype);
+        assertEq(name, ret.name);
+        assertEq("pgsql:omq@foo", ret.desc);
+        assertEq("db://pgsql:omq@bar", ret.url);
+        assertEq(body.user, ret.url_hash.user);
+        assertEq(body.db, ret.url_hash.db);
+        assertEq(False, ret.hasKey("options"));
+        assertEq({}, ret.opts);
+        assertEq({"type": "pgsql", "user": "omq", "db": "bar"}, ret.url_hash);
+        # persistent storage test
+        row = m_ds.selectRow("select * from connections where name = %v and connection_type = %v",
+                              name, CONN_TYPE);
+        cout("DB ROW: %N", row);
+        assertEq(True, exists row);
+        assertEq("pgsql:omq@foo", row.description);
+        assertEq("db://pgsql:omq@bar", row.url);
+        assertEq(1, row.monitor);
+        assertEq(1, row.enabled);
+        assertEq(1, row.manually_updated); # it has been manually updated!
+
+        qrest.del("remote/datasources/" + name);
+    }
+
+    private optionsTest() {
+        string name = "db-" + Util::get_random_string();
+
+        hash body = {
+            "name": name,
+            "desc": "a testing connection - " + Util::get_random_string(),
+            "url": "db://pgsql:omq/omq@omq{min=a}",
+        };
+
+        auto ret = qrest.post("remote/datasources", body);
+        on_exit qrest.del("remote/datasources/" + name);
+        cout("min=a: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+
+        # options must ne mepty, because one missing min or max leads to remove of both of them
+        ret = qrest.get("remote/datasources/" + name);
+        assertEq({}, ret.opts);
+        assertEq(False, ret.hasKey("options"));
+
+        qrest.del("remote/datasources/" + name);
+
+        # ensure that min >= 0 and max >= min and max > 0
+        body.url = "db://pgsql:omq/omq@omq{min=-1,max=1}";
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", body));
+        body.url = "db://pgsql:omq/omq@omq{min=0,max=0}";
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", body));
+        body.url = "db://pgsql:omq/omq@omq{min=10,max=1}";
+        assertThrows("DATASOURCE-CONNECTION-ERROR", \qrest.post(), ("remote/datasources", body));
+
+        # really create it
+        body.url = "db://pgsql:omq/omq@omq{min=1,max=10}";
+        ret = qrest.post("remote/datasources", body);
+        cout("min and max POST: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+
+        # options must ne mepty, because one missing min or max leads to remove of both of them
+        ret = qrest.get("remote/datasources/" + name);
+        cout("min and max GET: %N", ret);
+        assertEq(1, ret.opts.min);
+        assertEq(10, ret.opts.max);
+
+        qrest.del("remote/datasources/" + name);
+
+        body.url = "db://pgsql:omq/omq@omq";
+        body.options = {"min": 1, "max": 10};
+        ret = qrest.post("remote/datasources", body);
+        cout("min and max POST: %N", ret);
+        assertEq(True, ret.hasKey("info"));
+
+        # options must ne mepty, because one missing min or max leads to remove of both of them
+        ret = qrest.get("remote/datasources/" + name);
+        cout("min and max GET: %N", ret);
+        assertEq(1, ret.opts.min);
+        assertEq(10, ret.opts.max);
+
+    }
+
+    private testDisable() {
+        auto res = qrest.put("services/svc-test-user-conn-enable-disable/setRemote", {"remote": 1});
+        assertEq(True, res.remote, "svc must run in qorus-core");
+
+        testDisabledSvc();
+    }
+
+    private testDisableCore() {
+        auto res = qrest.put("services/svc-test-user-conn-enable-disable/setRemote", {"remote": 0});
+        assertEq(False, res.remote, "svc must run in qorus-core");
+
+        testDisabledSvc();
+    }
+
+    private testDisabledSvc() {
+        # it must be enabled initially
+        auto res = qrest.get(m_api_name);
+        assertEq(True, res.enabled, "API value must be true");
+
+        res = m_ds.selectRow("select * from connections where name = %v and connection_type = %v", m_conn_name, CONN_TYPE);
+        assertEq(True, boolean(res.enabled), "DB value must be true");
+
+        # disable it now
+        qrest.put(m_api_name, {"action": "disable"});
+        res = qrest.get(m_api_name);
+        assertEq(False, res.enabled, "API value must be false");
+
+        res = m_ds.selectRow("select * from connections where name = %v and connection_type = %v", m_conn_name, CONN_TYPE);
+        assertEq(False, boolean(res.enabled), "DB value must be false");
+
+        # wait until service is disabled
+        {
+            date start = now_us();
+            while (True) {
+                if (qrest.get("services/svc-test-user-conn-enable-disable/enabled")) {
+                    break;
+                }
+                if ((now_us() - start) > 5s) {
+                    assertTrue(False);
+                }
+                usleep(250ms);
+            }
+        }
+
+        object o = omqservice.user."svc-test-user-conn-enable-disable";
+        try {
+            o.foo();
+            fail("the call above must throw an exception");
+        } catch (hash<ExceptionInfo> ex) {
+            # UserApi::getUserConnection must fail. Unfortunately we cannot use assertThrows because it sometimes
+            # throws CONNECTION-DISABLED but sometimes (jenkins) API-CALL-ERROR with real exception wrapped.
+            if (ex.err == "CONNECTION-DISABLED" || ex.err == "GROUP-DISABLED"
+                || (ex.err == "API-CALL-ERROR"
+                    && (ex.desc =~ /CONNECTION-DISABLED/ || ex.desc =~ /GROUP-DISABLED/))) {
+                assertTrue(True);
+            } else {
+                fail(sprintf("unexpected exception raised: %s - %s", ex.err, ex.desc));
+            }
+        }
+    }
+
+    private testEnable() {
+        # disable it now
+        qrest.put(m_api_name, {"action": "enable"});
+        auto res = qrest.get(m_api_name);
+        assertEq(True, res.enabled, "API value must be true");
+
+        res = m_ds.selectRow("select * from connections where name = %v and connection_type = %v", m_conn_name, CONN_TYPE);
+        assertEq(True, boolean(res.enabled), "DB value must be true");
+
+        res = omqservice.user."svc-test-user-conn-enable-disable".foo();
+        cout("foo result: %n", res);
+        assertEq(True, exists res, "result value check");
+    }
+
+    private testEnableCore() {
+        auto res = qrest.put("services/svc-test-user-conn-enable-disable/setRemote", {"remote": 0});
+        assertEq(False, res.remote, "svc must run in qorus-core");
+
+        testEnable();
+    }
+} # class Main

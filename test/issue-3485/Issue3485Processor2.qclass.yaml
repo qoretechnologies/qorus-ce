@@ -1,0 +1,10 @@
+type: class
+name: Issue3485Processor2
+processor: {}
+class-name: Issue3485Processor2
+base-class-name: AbstractDataProcessor
+version: "1.0"
+desc: Simple class processor
+author:
+    - Qore Technologies, s.r.o.
+code: Issue3485Processor2.qclass

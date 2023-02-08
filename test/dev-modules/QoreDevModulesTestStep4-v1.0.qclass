@@ -1,0 +1,19 @@
+# name: QoreDevModulesTestStep4
+# version: 1.0
+# desc: Qore test step class
+# author: Qore Technologies, s.r.o.
+# requires: QoreTest
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+class QoreDevModulesTestStep4 inherits TestNormalArrayStep, QoreTest {
+    softlist<auto> array() {
+        return ("val1", "val2");
+    }
+
+    primaryImpl(auto array_arg) {
+    }
+}
+# END

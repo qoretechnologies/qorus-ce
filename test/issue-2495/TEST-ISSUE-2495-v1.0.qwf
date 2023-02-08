@@ -1,0 +1,63 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test workflows and services",
+    },
+    "regression": {
+        "desc": "regression test group",
+    },
+};
+
+our hash<auto> queues = {
+    "issue-2495-test": {
+        "desc" : "issue 2495 asynchronous test queue",
+    },
+};
+
+our hash<auto> events = {
+    "issue-2495": {
+        "desc": "issue 2495 test event type",
+    },
+};
+
+const step_1 = {
+    "name": "issue_2495_step1:1.0",
+    "subworkflow": True,
+};
+
+const step_2 = {
+    "name": "issue_2495_step2:1.0",
+};
+
+const step_3 = {
+    "name": "issue_2495_step3:1.0",
+    "endname": "issue_2495_step3_end:1.0",
+    "queue": "issue-2495-test",
+};
+
+const step_4 = {
+    "name": "issue_2495_step4:1.0",
+    "eventtype": "issue-2495",
+};
+
+const steps = (
+    step_1,
+    step_2,
+    step_3,
+    step_4,
+);
+
+our hash<auto> workflows."TEST-ISSUE-2495"."1.0" = {
+    "author": "Qore Technologies, s.r.o.",
+    "desc": "issue 2495 test",
+    "steps": steps,
+    "groups": ("test", "regression"),
+};

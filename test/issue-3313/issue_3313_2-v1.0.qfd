@@ -1,0 +1,22 @@
+# type: STEP
+# name: issue_3313_2
+# version: 1.0
+# desc: Qore test step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub issue_3313_2() {
+    InboundTableMapper m1 = UserApi::getMapper("issue-3313-1");
+    InboundTableMapper m2 = UserApi::getMapper("issue-3313-2");
+
+    # if we have the bug, here the cache has been poisoned
+    AbstractDatasource d1 = m1.getDatasource();
+    AbstractDatasource d2 = m2.getDatasource();
+    if (d1 != d2) {
+        throw "ERR", sprintf("d1: %s != d2: %s", d1.uniqueHash(), d2.uniqueHash());
+    }
+}
+# END

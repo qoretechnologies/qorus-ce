@@ -1,0 +1,46 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%requires qore >= 0.9.5
+
+module TestUserConnectionProvider {
+    version = "1.0";
+    desc = "just test the connection provider module";
+    author = "Qore Technologies, s.r.o.";
+    url = "http://qoretechnologies.com";
+}
+
+%requires QorusClientCore >= 3.1.1
+%requires ConnectionProvider
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+public namespace TestUserConnectionProvider {
+    public AbstractIterator sub get_schemes() {
+        softlist<auto> l = (
+            # qorus 4 style
+            new ConnectionScheme("qtest", "TestUserConnectionProvider::TestUserConnection"),
+        );
+
+        return l.iterator();
+    }
+
+    public softlist sub required_resources() {
+    }
+
+    public sub set_resources(hash h) {
+    }
+
+    public class TestUserConnection inherits HttpConnection {
+        constructor(string name, string desc, string url, hash<auto> attrs, hash<auto> opts)
+           : HttpConnection(name, desc, url, attrs, opts) {
+        }
+
+        string getType() {
+            return "testuserconnection";
+        }
+    }
+}
+

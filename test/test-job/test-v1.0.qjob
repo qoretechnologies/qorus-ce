@@ -1,0 +1,31 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: test
+# version: 1.0
+# desc: test job
+# author: Qore Technologies, s.r.o.
+# single-instance: false
+# active: false
+# run-skipped: true
+##schedule: run once a year @ 3 AM on Jan 1
+##schedule: min hour day month dow
+# schedule: 0 3 1 1 *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: test_job_1
+# functions: regression-lib
+%new-style
+
+sub run() {
+    UserApi::logInfo("test job info: %y", JobApi::getInfo());
+
+    *int aid = UserApi::auditUserEvent("REGRESSION-JOB-EVENT");
+    test_value(aid.type(), UserApi::auditCheckEventString(OMQ::AES_USER_EVENT) ? Type::Int : Type::NothingType, "audit-1");
+
+    UserApi::logInfo("h: %y", UserApi::getUserContextInfo());
+
+    test_job_1();
+}
+
+# END

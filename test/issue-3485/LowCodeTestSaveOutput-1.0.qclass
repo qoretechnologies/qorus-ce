@@ -1,0 +1,15 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class LowCodeTestSaveOutput inherits AbstractDataProcessor {
+    private submitImpl(code enqueue, auto _data) {
+        UserApi::logInfo("data: %y", _data);
+        UserApi::updateOutputData("map", _data, {"map": "$jinfo:map"});
+    }
+
+    private bool supportsBulkApiImpl() {
+        return True;
+    }
+}

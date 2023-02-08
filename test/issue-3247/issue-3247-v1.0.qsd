@@ -1,0 +1,21 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3247
+# serviceversion: 1.0
+# class-name: Issue3247
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# serviceauthor: Qore Technologies, s.r.o.
+# servicedesc: test service
+# autostart: false
+# remote: false
+# classes: Issue3247Base
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class Issue3247 inherits Issue3247Base {
+    private int getValueImpl() {
+        return 1;
+    }
+}

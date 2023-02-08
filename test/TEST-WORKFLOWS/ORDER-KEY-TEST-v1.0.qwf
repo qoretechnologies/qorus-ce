@@ -1,0 +1,19 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$workflows."ORDER-KEY-TEST"."1.0" = (
+    "desc"          : "test empty order key setting",
+    "author"        : "Qore Technologies, sro",
+    "steps"         : ( "order_key_set:1.0", ),
+    "constants"     : ( "TestConstants1", "TestConstants2" ),
+    "classes"       : ( "TestClass1", "TestClass2" ),
+    "functions"     : ( "TestFunction1", "TestFunction2", "doTest" ),
+    "keylist"       : ("key1"),
+    "groups"        : "test",
+    );

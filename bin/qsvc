@@ -1,0 +1,469 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+%include QorusDistributedProcess.qc
+
+%include cpc-core-api.ql
+%include cpc-svc-api.ql
+
+%exec-class QSvc
+
+our QSvc Qorus;
+
+# FIXME: remove
+our Datasource omquser;
+
+# cluster service manager
+our ClusterServiceManager services;
+
+class QSvc inherits QorusInterfaceProcess, QorusMasterCoreQsvcCommon {
+    public {
+        # service type
+        string svctype;
+
+        # session ID
+        int sessionid;
+
+        # the service object
+        ClusterQorusService svc;
+
+        # qorus-core services client object
+        QorusCoreSubsystemClientBase services_client;
+    }
+
+    private {
+        hash<auto> svcctx;
+
+        #! counter that signals when the service has been created
+        Counter svc_cnt(1);
+
+        #! termination lock
+        Mutex monitor_lck();
+
+        #! termination flag
+        bool terminate;
+
+        #! last get memory info request timestamp
+        date last_get_memory_info_request;
+
+        #! master registration busy retry interval
+        const MasterBusyRetryInterval = 10s;
+
+        #! Maximum period for getting a get memory request from a master node
+        const MaxGetMemoryPeriod = 20s;
+    }
+
+    constructor() : QorusInterfaceProcess(\ARGV, Opts) {
+        interfaceType = "services";
+        svcctx = {
+            "svc": {
+                "type": svctype,
+                "name": interfaceName,
+                "version": interfaceVersion,
+                "serviceid": interfaceId,
+            },
+        };
+
+        # install shutdown signal handlers
+        set_signal_handler(SIGTERM, \signal_handler());
+        set_signal_handler(SIGINT,  \signal_handler());
+        set_signal_handler(SIGHUP,  \signal_handler());
+        set_signal_handler(SIGUSR2, \signal_handler());
+
+        try {
+            startQsvc();
+        } catch (hash<ExceptionInfo> ex) {
+            logError("error starting service: %s", get_exception_string(ex));
+            shutdownIntern();
+        }
+    }
+
+    startQsvc() {
+        # authorize start before starting service
+        doAuthStart();
+
+        initInterface();
+
+%ifdef QorusDebugInternals
+        # issue #2558: if a signal file exists, then terminate the process here
+        if (is_file(string filename = sprintf("%s/%s-%s-%s-%s-%s-constructor-1", tmp_location(),
+            Qorus.options.get("instance-key"), svctype, interfaceName, interfaceVersion, interfaceId))) {
+            QDBG_LOG("QSvc::constructor() SIGNAL FILE %y found; unlinking", filename);
+            unlink(filename);
+            QDBG_LOG("QSvc::constructor() TERMINATING");
+            exit(1);
+        } else {
+            QDBG_LOG("QSvc::constructor() NOT FOUND: %s", filename);
+        }
+%endif
+
+        # start the service
+        startService();
+
+        # reinitialize service if this process was relaunched
+        if (restarted) {
+            svc.recover();
+        }
+
+%ifdef QorusDebugInternals
+        # issue #2558: if a signal file exists, then terminate the process here
+        if (is_file(string filename = sprintf("%s/%s-%s-%s-%s-%s-constructor-2", tmp_location(),
+            Qorus.options.get("instance-key"), svctype, interfaceName, interfaceVersion, interfaceId))) {
+            QDBG_LOG("QSvc::constructor() SIGNAL FILE %y found; unlinking", filename);
+            unlink(filename);
+            QDBG_LOG("QSvc::constructor() TERMINATING");
+            exit(1);
+        } else {
+            QDBG_LOG("QSvc::constructor() NOT FOUND: %s", filename);
+        }
+%endif
+    }
+
+    reopenLogFiles() {
+        foreach auto appender in (logger.getAppenders()) {
+            if (appender instanceof AbstractLoggerAppenderFileRotate) {
+                cast<AbstractLoggerAppenderFileRotate>(appender).reopen();
+            }
+        }
+    }
+
+    private remove_signal_handlers() {
+        remove_signal_handler(SIGTERM);
+        remove_signal_handler(SIGINT);
+        remove_signal_handler(SIGHUP);
+        remove_signal_handler(SIGUSR2);
+        QDBG_LOG("signal handlers removed");
+    }
+
+    private signal_handler(softstring sig) {
+        try {
+            remove_signal_handlers();
+
+            if (!shutting_down) {
+                try {
+                    logFatal("QSVC: %s received, starting system shutdown", SignalToName{sig});
+                } catch (hash<ExceptionInfo> ex) {
+                    # ignore log exceptions; ex: FILE-WRITE-ERROR: failed writing 95 bytes to File: Stale file handle, arg: 116
+                    if (ex.err != "FILE-WRITE-ERROR") {
+                        rethrow;
+                    }
+                }
+                QDBG_LOG("signal_handler() calling shutdownQsvc()");
+                shutdownQsvc();
+            }
+        } catch (hash<ExceptionInfo> ex) {
+            logFatal("error in signal handler: %s", get_exception_string(ex));
+        }
+    }
+
+    int getInterfaceId() {
+        return (client_id =~
+            x/-([0-9]+)-(stateful|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/)[0].toInt();
+    }
+
+    string getNode() {
+        return node;
+    }
+
+    #! Creates the initial logger if no logger parameters are provided
+    private createInitialLogger() {
+        # set global application variable
+        Qorus = self;
+        AbstractQorusDistributedProcess::createInitialLogger();
+    }
+
+    #! Processes cmd-line args, sets up the NetworkKeyHelper and sets up the connection to the active master
+    private doInitialConfig(reference<list<string>> p_argv) {
+        try {
+            # set global application variable
+            Qorus = self;
+
+            QorusInterfaceProcess::doInitialConfig(\p_argv);
+
+            *string svctype = shift ARGV;
+            if (!exists svctype) {
+                usage();
+            }
+            self.svctype = svctype;
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("startup error: %s", get_exception_string(ex));
+            stderr.printf("%s: %s\n", ex.err, ex.desc);
+            exit(QSE_STARTUP_ERROR);
+        }
+    }
+
+    private *hash<auto> handleKillProcMessage(hash<auto> h) {
+        if (h.shutdown) {
+            monitor_lck.lock();
+            on_exit monitor_lck.unlock();
+
+            if (terminate) {
+                logFatal("shutdown message received, but the process is already stopping");
+                return;
+            }
+            terminate = True;
+            logFatal("executing an immediate shutdown from external request: %y", h);
+            background shutdownQsvc();
+            return;
+        }
+        return AbstractQorusClusterApi::handleKillProcMessage(h);
+    }
+
+    #! called when a config item used by this interface has its value changed
+    configItemValueChanged(string change_type, string name, string level, auto value) {
+        if (svc) {
+            if (restarted) {
+                waitForStartup();
+            }
+            svc.configItemValueChanged(name, value);
+        }
+    }
+
+    *hash<auto> getTldContext() {
+        QDBG_LOG("getTldContext() returning %y", tld{QorusSharedContextKeys} + svcctx);
+        return tld{QorusSharedContextKeys} + svcctx;
+    }
+
+    setupMappers() {
+        # log closure
+        code infoLogging = sub (string msg) { logInfo("OMQ: " + msg, argv); };
+        # issue #3198: initialize mapper objects after service is created
+        mappers.init(infoLogging, options.get("mapper-modules"));
+    }
+
+    #! Returns the interface object for the process
+    CommonInterfaceBase getInterface() {
+        if (!svc) {
+            # we need to wait for startup
+            waitForStartup();
+        }
+
+        return svc;
+    }
+
+    #! Returns the interface object for the process, if available
+    *CommonInterfaceBase tryGetInterface() {
+        return svc;
+    }
+
+    updateLoggerImpl(Logger logger) {
+        if (svc) {
+            svc.updateLogger(logger);
+        }
+    }
+
+    private processAbortedImpl(string process, *hash<ClusterProcInfo> info, bool restarted, date abort_timestamp) {
+        QorusInterfaceProcess::processAbortedImpl(process, info, restarted, abort_timestamp);
+        if (process == QDP_NAME_QORUS_CORE) {
+            if (!restarted) {
+                logInfo("qorus-core aborted without restart");
+                return;
+            }
+            # we do not need to terminate here if the status is not "running", qorus-master will do that for us
+            if (svc) {
+                background svc.qorusCoreRestarted();
+            }
+        }
+    }
+
+    private startService() {
+        try {
+            services = new ClusterServiceManager();
+
+            services_client = new QorusCoreSubsystemClientBase(core, "services");
+
+            # init service infrastructure
+            AbstractQorusService::staticInit();
+
+            # create local service object
+            svc = new ClusterQorusService(svctype, interfaceName);
+
+            # signal service creation done
+            svc_cnt.dec();
+        } catch (hash<ExceptionInfo> ex) {
+            logInfo("Unable to initialize service: %s", get_exception_string(ex));
+            reportStartupErrorAndDie("failed to create service: %s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+        }
+    }
+
+    synchronized private int checkStartShutdown() {
+        #QDBG_LOG("calling checkStartShutdown(): %y", shutting_down);
+        if (shutting_down) {
+            QDBG_LOG("shutdown flag already set");
+            return -1;
+        }
+        QDBG_LOG("set shutdown flag");
+        shutting_down = True;
+        return 0;
+    }
+
+    # may be sent with context information if called from system API
+    synchronized int shutdownQsvc() {
+        if (checkStartShutdown()) {
+            return -1;
+        }
+        background shutdownIntern();
+        return 0;
+    }
+
+    private shutdownIntern() {
+        # delete service
+        if (svc) {
+            try {
+                svc.stopIntern();
+            } catch (hash<ExceptionInfo> ex) {
+                logError("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+            }
+            try {
+                # issue #3765: delete program after service; allow service destructor to run normally
+                Program pgm = svc.getProgram();
+                delete svc;
+                delete pgm;
+            } catch (hash<ExceptionInfo> ex) {
+                logError("%s", get_exception_string(ex));
+            }
+        }
+
+        try {
+            # stop any mapper reloads and avoid race conditions
+            mappers.shutdown();
+
+            # stop cluster server process event thread
+            stopEventThread();
+
+            logInfo("stopped cluster server process event thread; PID %d exiting normally", getpid());
+
+            # delete all clients
+            deleteAllClients();
+        } catch (hash<ExceptionInfo> ex) {
+            logError("error in qsvc shutdown: %s; exiting with error", get_exception_string(ex));
+            exit(1);
+        }
+
+        # we need to call exit() in case, for example, there are Java threads running that won't otherwise die
+%ifndef QorusDebugInternals1
+        # don't call exit() when performing memory debugging
+        exit(0);
+%endif
+    }
+
+    synchronized int getSessionId() {
+        if (!exists sessionid) {
+            # get the sessionid from qorus-core
+            sessionid = callCoreFunction("qorus_api_get_session_id");
+        }
+        return sessionid;
+    }
+
+    # required for CryptoKeyHelper
+    *string getKeyOption(string opt) {
+        return options.get(opt);
+    }
+
+    private logEvent() {
+        if (log_subscribed) {
+            core.sendCmdOneWay(CPC_CORE_LOG_IF, {"method": "serviceLogEvent", "args": argv});
+        }
+    }
+
+    # required by InstanceData but never called in qsvc
+    string encodeEncryptSensitiveValue(string svalue) {
+        throw "ERROR";
+    }
+
+    auto deserialize(data d) {
+        return svc ? svc.deserialize(d) : Serializable::deserialize(d);
+    }
+
+    private logCommonFatal(string fmt) {
+        logArgs(LoggerLevel::FATAL, fmt, argv);
+    }
+
+    private logCommonInfo(string fmt) {
+        logArgs(LoggerLevel::INFO, fmt, argv);
+    }
+
+    private logCommonDebug(string fmt) {
+        logArgs(LoggerLevel::DEBUG, fmt, argv);
+    }
+
+    # we cannot block the I/O thread; calls here must be guaranteed to be very fast or must
+    # be made asynchronously in a background thread
+    private bool processCmdImpl(ZSocketRouter sock, int index, string sender, string mboxid, string cmd, ZMsg msg) {
+        if (QorusInterfaceProcess::processCmdImpl(sock, index, sender, mboxid, cmd, msg))
+            return True;
+
+        switch (cmd) {
+            case CPC_QSVC_CALL_SUBSYSTEM: {
+                auto msgdata = qorus_cluster_deserialize(msg);
+                background callSubsystem(index, sender, mboxid, msgdata);
+                return True;
+            }
+        }
+        return False;
+    }
+
+    private callSubsystem(int index, string sender, string mboxid, hash<auto> h) {
+        try {
+            QDBG_LOG("subsystem request: sender: %y TID %d index: %y h: %y", sender, mboxid, index, h);
+            if (restarted) {
+                waitForStartup();
+            }
+            create_tld();
+            if (h.tld) {
+                tld += h.tld;
+            }
+            auto rv;
+            switch (h.subsystem) {
+                case "svc":
+                    if (!svc) {
+                        if (svc_cnt.getCount()) {
+                            svc_cnt.waitForZero();
+                        } else {
+                            throw "SERVICE-SHUTDOWN-ERROR", sprintf("cannot call qsvc method %y, as the service is "
+                                "shutting down", h.method);
+                        }
+                    }
+                    # always set current service context when calling a service method
+                    tld.svc = svc;
+                    rv = call_object_method_args(svc, h.method, h.args);
+                    break;
+
+                default:
+                    throw "UNKNOWN-SUBSYSTEM-ERROR", sprintf("qsvc subsystem %y is unknown", h.subsystem);
+            }
+            QDBG_LOG("subsystem response: sender: %y TID %d index: %y: %y", sender, mboxid, index, rv);
+            sendAnyResponse(index, sender, mboxid, CPC_OK, rv);
+        } catch (hash<ExceptionInfo> ex) {
+            logError("subsystem exception: sender: %y TID %d index: %y: %s", sender, mboxid, index, get_exception_string(ex));
+            sendExceptionResponse(index, sender, mboxid, ex);
+        }
+    }
+
+    private *int usageImpl() {
+        stderr.printf("usage: %s [options] <api> <node> <master-node> <master-urls> <interfaces> <network-key-path> "
+            "<process-type> <unique-proc-name> <logpath> <restarted> <svctype> <svcname> <svcver> <stack-size>\n",
+            get_script_name());
+        stderr.printf("this program is not meant to be started by hand\n");
+        return OffsetColumn;
+    }
+}

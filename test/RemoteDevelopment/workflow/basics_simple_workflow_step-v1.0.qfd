@@ -1,0 +1,13 @@
+# type: STEP
+# version: 1.0
+# desc: Simple worklfow step example
+# author: Qore Technologies, s.r.o.
+%strict-args
+%require-types
+%new-style
+%enable-all-warnings
+
+sub basics_simple_workflow_step() {
+    UserApi::logInfo("basics_simple_workflow_step was called, staticdata: %y", WorkflowApi::getStaticData());
+}
+# END

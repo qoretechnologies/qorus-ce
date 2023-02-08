@@ -1,0 +1,101 @@
+required:
+  type:
+    type: string
+    allowed-values:
+      - workflow
+  name:
+    type: string
+    max-length: 160
+  version:
+    type: string
+    max-length: 80
+  desc:
+    type: string
+    max-length: 4000
+  steps:
+    type: list
+
+optional:
+  author:
+    type: list
+    element-type: string
+  modules:
+    type: list
+    element-type: string
+  remote:
+    type: bool
+    default: true
+  autostart:
+    type: integer
+    default: 1
+  sla_threshold:
+    type: integer
+    default: 1800
+  max_instances:
+    type: integer
+  classes:
+    type: list
+    element-type: string
+  constants:
+    type: list
+    element-type: string
+  functions:
+    type: list
+    element-type: string
+  mappers:
+    type: list
+    element-type: string
+  vmaps:
+    type: list
+    element-type: string
+  errors:
+    type: string # file name
+  options:
+    type: hash
+  keylist:
+    type: list
+    element-type: string
+  statuses:
+    type: hash
+  groups:
+    type: list
+    element-type: string
+  tags:
+    type: hash
+    element-type: string
+  code:
+    type: string
+  base-class-name: # used only in the IDE
+    type: string
+    max-length: 160
+  class-name:
+    type: string
+    max-length: 160
+  lang:
+    type: string
+    allowed-values:
+      - qore
+      - java
+      - python
+    default: qore
+  config-item-values:
+    type: list
+    element-type: workflow-config-item-value
+  staticdata-type:
+    type: hash
+  system-options:
+    type: hash
+
+definitions:
+  workflow-config-item-value:
+    required:
+      name:
+        type: string
+      value:
+        type: any
+      is_value_templated_string:
+        type: bool
+        default: false
+    optional:
+      prefix:
+        type: string

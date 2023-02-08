@@ -1,0 +1,43 @@
+type: service
+name: issue3353service
+version: "1.0"
+desc: Test service written using YAML format
+author:
+  - Qore Technologies, s.r.o.
+remote: true
+autostart: true
+base-class-name: QorusService
+class-name: issue3353service
+methods:
+  - name: init
+    desc: init method
+code: issue3353service.qsd
+config-items:
+  - name: issue-3353-test-config-item-1
+    type: "*hash"
+    default_value:
+      test_key_1: test_1
+      test_key_2: test_2
+    description: test config item of type *hash with prefix 'group-1-'
+    config_group: Test Group
+    value: null
+    prefix: group-1-
+  - name: issue-3353-test-config-item-1
+    type: "hash"
+    default_value:
+      test_key_1: test_1
+    description: test config item of type *hash with prefix 'group-2-'
+    config_group: Test Group
+    prefix: group-2-
+  - name: issue-3353-test-config-item-2
+    type: string
+    default_value: test_1
+    description: test config item of type string with prefix 'group-2-'
+    config_group: Test Group
+    prefix: group-2-
+  - name: issue-3353-test-config-item-3
+    type: int
+    default_value: 123
+    value: 666
+    description: test config item of type string without any prefix
+    config_group: Test Group

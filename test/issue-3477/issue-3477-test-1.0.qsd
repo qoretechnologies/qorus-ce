@@ -1,0 +1,18 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3477Test inherits QorusService {
+    private {
+        string file_data;
+    }
+
+    init() {
+        file_data = getTextFileFromLocation("resource://issue-3477-test:dummy.txt");
+    }
+
+    string get() {
+        return file_data;
+    }
+}

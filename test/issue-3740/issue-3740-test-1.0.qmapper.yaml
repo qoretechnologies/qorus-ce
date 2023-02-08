@@ -1,0 +1,32 @@
+# This is a generated file, don't edit!
+type: mapper
+name: issue-3740-test
+desc: test
+author:
+  - Qore Technologies, s.r.o.
+options:
+    mapper-input:
+        type: type
+        name: qoretechnologies
+        path: /qorus/regression/issue-3740-1
+        can_manage_fields: false
+        custom-fields: {}
+    mapper-output:
+        type: type
+        name: qoretechnologies
+        path: /qorus/regression/issue-3740-1
+        can_manage_fields: false
+        custom-fields: {}
+mappertype: Mapper
+version: '1.0'
+fields:
+    field2\.field2-1:
+        name: field1\.field1-1
+    field2.field2-1:
+        name: field1.field1-1
+    field1.field1-1:
+        name: field2.field2-1
+    field3:
+        name: field3
+    field1\.field1-1:
+        name: field2\.field2-1

@@ -1,0 +1,64 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: issue-3255
+# serviceversion: 1.0
+# class-name: Issue3255
+# parse-options: PO_NEW_STYLE, PO_REQUIRE_TYPES, PO_STRICT_ARGS
+# serviceauthor: Qore Technologies, s.r.o.
+# servicedesc: test service
+# autostart: false
+# remote: false
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+class TestRestClass inherits AbstractRestClass {
+    constructor() : AbstractRestClass() {}
+
+    string name() {
+        return "test";
+    }
+
+    hash<HttpHandlerResponseInfo> get(hash<auto> cx, *hash<auto> ah) {
+        return RestHandler::makeResponse(200, "issue-3255");
+    }
+}
+
+class Issue3255RestHandler inherits AbstractServiceRestHandler {
+    constructor() : AbstractServiceRestHandler("/issue-3255", False, new PermissiveAuthenticator()) {
+        addClass(new TestRestClass());
+
+        hash<HttpListenerOptionInfo> listener_info = <HttpListenerOptionInfo>{
+            "service": 0,
+        };
+        addListener(listener_info);
+    }
+
+    removeRootPath(reference<string> path) {
+        path =~ s/^\/*issue-3255//;
+    }
+}
+
+class Issue3255 inherits QorusService {
+    private {
+        int port;
+    }
+
+    # name: init
+    # desc: init
+    init() {
+        Issue3255RestHandler rh();
+        bindHttp(rh);
+
+        hash<auto> info = getServiceInfo();
+        port = info.resources.firstValue().info.port;
+        logInfo("listening on port %d", port);
+    }
+
+    # name: getPort
+    # desc: returns the port
+    int getPort() {
+        return port;
+    }
+}

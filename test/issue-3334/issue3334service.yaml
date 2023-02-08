@@ -1,0 +1,16 @@
+type: service
+name: issue3334service
+version: "1.0"
+desc: Test service written using YAML format
+author:
+  - Qore Technologies, s.r.o.
+remote: true
+autostart: true
+base-class-name: QorusService
+class-name: issue3334service
+methods:
+  - name: init
+    desc: init method
+code: issue3334service.qsd
+define-auth-label:
+  auth: permissive

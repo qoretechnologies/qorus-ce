@@ -1,0 +1,41 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class Issue3350Test
+
+class Issue3350Test inherits Test {
+    public {
+        const Group = {
+            "desc": "del",
+            "workflows": "REGRESSION-TEST",
+        };
+    }
+
+    constructor() : Test("issue-3350", "1.0") {
+        QorusClient::init2();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        # create groups
+        qrest.post("groups", Group + {"group": "del1"});
+        qrest.post("groups", Group + {"group": "del2"});
+
+        # delete groups
+        qrest.del("groups/del1");
+        qrest.del("groups/del2");
+    }
+}

@@ -1,0 +1,26 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-2235
+# serviceversion: 1.0
+# servicedesc: start service test service
+# serviceauthor: Qore Technologies, s.r.o.
+# autostart: false
+# parse-options: PO_NEW_STYLE, PO_STRICT_ARGS, PO_REQUIRE_TYPES
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# define-group: issue-2235-test: test for issue #2235
+# groups: test, regression, issue-2235-test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the issue-2235 service
+sub init() {
+}
+# END
+
+# desc: provides information about the service
+hash<auto> sub info() {
+    return {
+        "tid": gettid(),
+    };
+}
+# END

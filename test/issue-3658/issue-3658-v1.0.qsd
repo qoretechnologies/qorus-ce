@@ -1,0 +1,20 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-3658
+# serviceversion: 1.0
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue3658
+# autostart: false
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3658 inherits QorusService {
+    # desc: test method
+    # name: test
+    string test() {
+        return "OK";
+    }
+}

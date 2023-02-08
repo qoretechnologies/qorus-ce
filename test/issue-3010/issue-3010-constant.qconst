@@ -1,0 +1,6 @@
+# name: issue-3010-constant
+# version: 1.0
+# desc: test constant 1
+# author: Qore Technologies, s.r.o.
+const test1 = 1;
+# END

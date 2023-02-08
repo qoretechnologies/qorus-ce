@@ -1,0 +1,260 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires FsUtil
+%requires QUnit
+%requires QorusClientCore
+
+%exec-class QorusIssue3546
+
+class QorusIssue3546 inherits Test {
+    private {
+        string srcDir = get_script_dir() + "issue-3546" + Qore::DirSep;
+    }
+
+    constructor(): Test("QorusIssue3546", "1.0", \ARGV, Opts) {
+        QorusClient::init2();
+
+        addTestCase("oloadSimpleTest", \oloadSimpleTest());
+        addTestCase("oloadMultipleTest", \oloadMultipleTest());
+        addTestCase("oloadResourceTest", \oloadResourceTest());
+        addTestCase("ocmdTest", \ocmdTest());
+        addTestCase("ojviewTest", \ojviewTest());
+        addTestCase("opropTest", \opropTest());
+        addTestCase("ostartTest", \ostartTest());
+        addTestCase("ostatusTest", \ostatusTest());
+        addTestCase("ostopTest", \ostopTest());
+        addTestCase("oviewTest", \oviewTest());
+        addTestCase("qctlTest", \qctlTest());
+        addTestCase("qrestTest", \qrestTest());
+        addTestCase("schematoolTest", \schematoolTest());
+        addTestCase("usertoolTest", \usertoolTest());
+        addTestCase("restTest", \restTest());
+        addTestCase("schemareverseTest", \schemareverseTest());
+        addTestCase("sfrestTest", \sfrestTest());
+        addTestCase("soaputilTest", \soaputilTest());
+        addTestCase("sqlutilTest", \sqlutilTest());
+        addTestCase("qdpTest", \qdpTest());
+        addTestCase("saprestTest", \saprestTest());
+        set_return_value(main());
+    }
+
+    private globalSetUp() {
+    }
+
+    private globalTearDown() {
+    }
+
+    private oloadSimpleTest() {
+        string url = UserApi::qorusGetLocalUrl();
+        string tmp_path = tmp_location() + Qore::DirSep + qrest.get("system/instance-key");
+        string filename = "issue3546-basics-simple-service-1.0.qsd";
+
+        # uploading filename
+        string dir = backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"filepath:%s\" --data-binary \"@%s%s\"", url, filename, srcDir, filename));
+        string dir_path = tmp_path + Qore::DirSep + dir;
+        assertTrue(FsUtil::path_exists(dir_path));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename));
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s.yaml\" --data-binary \"@%s%s.yaml\"", url, dir, filename, srcDir, filename));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename + ".yaml"));
+
+        # asserting after delete to prevent folder been kept in case of error
+        string res = backquote(sprintf("curl -k -s -X POST %s/api/latest/command -d \"cmd=oload&args=-v&dir=%s&files=%s.yaml\"", url, dir, filename));
+        backquote(sprintf("curl -k -s -X DELETE %s/raw/remote-file -H \"dir:%s\"", url, dir));
+        on_error printf("res: %y\n", res);
+        assertTrue(regex(res, "[\s\S]*validated USER service issue3546-basics-simple-service/1.0[\s\S]*"));
+        assertFalse(FsUtil::path_exists(dir_path));
+    }
+
+    private oloadMultipleTest() {
+        string url = UserApi::qorusGetLocalUrl();
+        string tmp_path = tmp_location() + Qore::DirSep + qrest.get("system/instance-key");
+        string filename = "issue3546-basics-simple-service-1.0.qsd";
+        string filename2 = "issue3546-basics-logging-job-1.0.qjob";
+
+        # uploading filename
+        string dir = backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"filepath:%s\" --data-binary \"@%s%s\"", url, filename, srcDir, filename));
+        string dir_path = tmp_path + Qore::DirSep + dir;
+        assertTrue(FsUtil::path_exists(dir_path));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename));
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s.yaml\" --data-binary \"@%s%s.yaml\"", url, dir, filename, srcDir, filename));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename + ".yaml"));
+
+        # uploading filename2
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s\" --data-binary \"@%s%s\"", url, dir, filename2, srcDir, filename2));
+        assertTrue(Qore::exists(sprintf("%s/%s", dir, filename2)));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename2));
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s.yaml\" --data-binary \"@%s%s.yaml\"", url, dir, filename2, srcDir, filename2));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename2 + ".yaml"));
+
+        # asserting after delete to prevent folder been kept in case of error
+        string res = backquote(sprintf("curl -k -s -X POST %s/api/latest/command -d \"cmd=oload&args=-v&dir=%s&files=%s.yaml %s.yaml\"", url, dir, filename, filename2));
+        backquote(sprintf("curl -k -s -X DELETE %s/raw/remote-file -H \"dir:%s\"", url, dir));
+        on_error printf("RES: %s\n", res);
+        assertTrue(regex(res, "[\s\S]*validated USER service issue3546-basics-simple-service/1.0[\s\S]*"));
+        assertTrue(regex(res, "[\s\S]*validating job issue3546-basics-logging-job/1.0[\s\S]*"));
+        assertFalse(FsUtil::path_exists(dir_path));
+    }
+
+    private oloadResourceTest() {
+        string url = UserApi::qorusGetLocalUrl();
+        string tmp_path = tmp_location() + Qore::DirSep + qrest.get("system/instance-key");
+        string filename = "issue3546-AdvExampleRestServerTest-1.0.qsd";
+        string resource = "issue3546-example.yaml";
+
+        # uploading filename
+        string dir = backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"filepath:%s\" --data-binary \"@%s%s\"", url, filename, srcDir, filename));
+        string dir_path = tmp_path + Qore::DirSep + dir;
+        assertTrue(FsUtil::path_exists(dir_path));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename));
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s.yaml\" --data-binary \"@%s%s.yaml\"", url, dir, filename, srcDir, filename));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + filename + ".yaml"));
+
+        # uploading resource
+        backquote(sprintf("curl -k -s -X POST %s/raw/remote-file -H \"dir:%s\" -H \"filepath:%s\" --data-binary \"@%s%s\"", url, dir, resource, srcDir, resource));
+        assertTrue(FsUtil::path_exists(dir_path + Qore::DirSep + resource));
+
+        # asserting after delete to prevent folder been kept in case of error
+        string res = backquote(sprintf("curl -k -s -X POST %s/api/latest/command -d \"cmd=oload&args=-v&dir=%s&files=%s %s.yaml\"", url, dir, filename, filename));
+        backquote(sprintf("curl -k -s -X DELETE %s/raw/remote-file -H \"dir:%s\"", url, dir));
+        assertTrue(regex(res, "[\s\S]*validated USER service Issue3546AdvExampleRestServerTest/1.0[\s\S]*"));
+        assertFalse(FsUtil::path_exists(dir_path));
+    }
+
+    private ocmdTest() {
+        string res = qrest.post("command", {"cmd": "ocmd", "args": "-W"});
+        # strip Java msgs
+        res =~ s/Picked up JAVA_TOOL_OPTIONS:.*\n//;
+        trim res;
+        string url = UserApi::qorusGetLocalUrl();
+        assertEq(url, res);
+    }
+
+    private ojviewTest() {
+        string res = qrest.post("command", {
+            "cmd": "ojview",
+            "args": "job/issue3546-basics-logging-job",
+        });
+        assertRegex("job job/issue3546-basics-logging-job: no results since [0-9 :-]*", res);
+    }
+
+    private opropTest() {
+        string res = qrest.post("command", {"cmd": "oprop"});
+        on_error printf("RES: %s\n", res);
+        assertRegex(".* schema-version: \"[0-9]+.[0-9]+(.[0-9]+(.[0-9]+)?)?\", schema-compatibility: "
+            "\"[0-9]+.[0-9]+(.[0-9]+(.[0-9]+)?)?\", schema-load-compatibility: "
+                "\"[0-9]+.[0-9]+(.[0-9]+(.[0-9]+)?)?\"}}}", res);
+    }
+
+    private ostartTest() {
+        string res = qrest.post("command", {"cmd": "ostart", "args": "WORKFLOW 1.0"});
+        assertRegex(".*DATASTREAM-CLIENT-RECEIVE-ERROR: HTTP status code 404 received: message: "
+            "\"Not Found\".*: 404 Not Found: class \"workflows\" has no subclass \"WORKFLOW:1.0\" for HTTP method "
+            "\"PUT\"", res);
+    }
+
+    private ostatusTest() {
+        string res = qrest.post("command", {"cmd": "ostatus", "args": "-W"});
+        # strip Java msgs
+        res =~ s/Picked up JAVA_TOOL_OPTIONS:.*\n//;
+        trim res;
+        string url = UserApi::qorusGetLocalUrl();
+        assertEq(url, res);
+    }
+
+    private ostopTest() {
+        string res = qrest.post("command", {"cmd": "ostop", "args": "issue-3546"});
+        assertRegex("0 workflow execution instances have been stopped[\s\S]*", res);
+    }
+
+    private oviewTest() {
+        string res = qrest.post("command", {"cmd": "oview", "args": "job:issue3546-basics-logging-job"});
+        # strip Java msgs
+        res =~ s/^Picked up.*\n//g;
+        res =~ s/^## .*\n//g;
+        res =~ s/^## .*\n//g;
+        assertEq("# name: issue3546-basics-logging-job
+# version: 1.0
+# desc: Job implementation example. The job simply logs every hour.
+# author: Qore Technologies, s.r.o.
+# active: false
+# run-skipped: false
+# schedule: 0 * * * *
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3546BasicsLoggingJob inherits QorusJob {
+    run() {
+        logInfo(\"job info: %y\", getInfo());
+    }
+}
+# END
+",
+        res);
+    }
+
+    private qctlTest() {
+        string res = qrest.post("command", {"cmd": "qctl", "args": "kill issue3546-fake"});
+        on_error printf("RES: %y\n", res);
+        assertTrue(regex(res, "ERROR: Qorus process \"issue3546-fake\" is not running;"));
+    }
+
+    private qrestTest() {
+        string res = qrest.post("command", {"cmd": "qrest", "args": "services/issue3546-basics-simple-service"});
+        assertTrue(regex(res, "[\s\S]*name : \"issue3546-basics-simple-service\"[\s\S]*"));
+    }
+
+    private schematoolTest() {
+        string res = qrest.post("command", {"cmd": "schema-tool"});
+        on_error printf("RES: %s\n", res);
+        assertTrue(regex(res, "[0-9].[0-9](.[0-9](.[0-9])?)?"));
+    }
+
+    private usertoolTest() {
+        string res = qrest.post("command", {"cmd": "user-tool", "args": "-S"});
+        assertTrue(regex(res, "[\s\S]*\+ GROUP:[\s\S]*"));
+    }
+
+    private restTest() {
+        string res = qrest.post("command", {"cmd": "rest", "args": "issue3546 https://localhost:8011"});
+        assertTrue(regex(res, "[\s\S]*unhandled QORE User exception thrown in [\s\S]*"));
+    }
+
+    private schemareverseTest() {
+        string res = qrest.post("command", {"cmd": "schema-reverse", "args": "-v=a issue3546"});
+        assertTrue(regex(res, "[\s\S]*DATASOURCE-ERROR: datasource identifier \"issue3546\" could not be matched to a known datasource[\s\S]*"));
+    }
+
+    private sfrestTest() {
+        string res = qrest.post("command", {"cmd": "sfrest", "args": "-c issue3546"});
+        assertTrue(regex(res, "[\s\S]*connection \"issue3546\":[\s\S]*"));
+    }
+
+    private soaputilTest() {
+        string res = qrest.post("command", {"cmd": "soaputil"});
+        assertTrue(regex(res, "[\s\S]*No WSDL file provided[\s\S]*"));
+    }
+
+    private sqlutilTest() {
+        string res = qrest.post("command", {"cmd": "sqlutil", "args": "issue-3546:omq/omq@omq"});
+        assertTrue(regex(res, "[\s\S]*LOAD-MODULE-ERROR: feature 'issue-3546' is not builtin and no module with this name could be found in the module path[\s\S]*"));
+    }
+
+    private qdpTest() {
+        string res = qrest.post("command", {"cmd": "qdp", "args": "-t"});
+        assertTrue(regex(res, "[\s\S]*[\"/qore/hash\"[\s\S]*"));
+    }
+
+    private saprestTest() {
+        string res = qrest.post("command", {"cmd": "saprest", "args": "get command"});
+        assertEq("saprest: ERROR: missing --apikey / SAP_APIKEY env var or --client-id and --client-secret / SAP_CLIENT_ID and SAP_CLIENT_SECRET env vars; cannot connect to SAP without authentication\n",
+        res);
+    }
+}

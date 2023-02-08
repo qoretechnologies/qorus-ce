@@ -1,0 +1,39 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class QorusIssue3537
+
+class QorusIssue3537 inherits Test {
+    constructor() : Test("Issue3537Test", "1.0", \ARGV) {
+        QorusClient::init();
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        hash<auto> job = qrest.get("jobs/issue-3537-test");
+        if (job.remote) {
+            qrest.put("jobs/issue-3537-test/setRemote", {"remote": False});
+        }
+        doTest();
+        qrest.put("jobs/issue-3537-test/setRemote", {"remote": True});
+        doTest();
+    }
+
+    doTest() {
+        hash<auto> h = qrest.put("jobs/issue-3537-test/run");
+        assertEq(OMQ::StatComplete, h.status);
+    }
+}

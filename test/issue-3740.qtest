@@ -1,0 +1,25 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3740
+
+class Issue3740 inherits Test {
+    constructor() : Test("Issue3740", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private mainTest() {
+        hash<auto> h = qrest.put("jobs/issue-3740-test/run");
+        assertEq(StatComplete, h.status);
+    }
+}

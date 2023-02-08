@@ -1,0 +1,12 @@
+%auto_generated_file_disclaimer%
+
+# config file version
+apiVersion: 1
+
+providers:
+- name: test
+  orgId: 1
+  folder: ''
+  type: file
+  options:
+    path: %dashboard_url%

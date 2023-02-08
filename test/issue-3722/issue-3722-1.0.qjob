@@ -1,0 +1,48 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+const Domain = "issue-3722";
+const Key1 = "key1";
+const Key2 = "key2";
+
+class Issue3722 inherits QorusJob, QoreTest {
+    run() {
+        # clear system property domain
+        string result = propUpdate(Domain, Key1, "x");
+        logInfo("update %y.%y = x: %y", Domain, Key1, result);
+        result = propUpdate(Domain, Key2, "y");
+        logInfo("update %y.%y = y: %y", Domain, Key2, result);
+
+        logInfo("%y: %y", Domain, expandTemplatedValue("$sysprop:{" + Domain + "}"));
+
+        assertEq("x", expandTemplatedValue("$sysprop:{" + Domain + "." + Key1 + "}"));
+
+        # check property values
+        assertEq("x", expandTemplatedValue("$sysprop:{" + Domain + "." + Key1 + "}"));
+        assertEq("y", expandTemplatedValue("$sysprop:{" + Domain + "." + Key2 + "}"));
+
+        # write to properties
+        updateOutputData({"id": "val1"}, {"id": "$sysprop:{" + Domain + "." + Key1 + "}"});
+        updateOutputData({"id": "val2"}, {"id": "$sysprop:{" + Domain + "." + Key2 + "}"});
+
+        # check property values
+        assertEq("val1", expandTemplatedValue("$sysprop:{" + Domain + "." + Key1 + "}"));
+        assertEq("val2", expandTemplatedValue("$sysprop:{" + Domain + "." + Key2 + "}"));
+
+        # update entire domain
+        hash<auto> h = {
+            "x": 1,
+            "y": 2,
+        };
+        updateOutputData({"id": h}, {"id": "$sysprop:{" + Domain + "}"});
+
+        assertNothing(expandTemplatedValue("$sysprop:{" + Domain + "." + Key1 + "}"));
+        assertNothing(expandTemplatedValue("$sysprop:{" + Domain + "." + Key2 + "}"));
+        assertEq(1, expandTemplatedValue("$sysprop:{" + Domain + ".x" + "}"));
+        assertEq(2, expandTemplatedValue("$sysprop:{" + Domain + ".y" + "}"));
+
+        assertEq(h, expandTemplatedValue("$sysprop:{" + Domain + "}"));
+    }
+}

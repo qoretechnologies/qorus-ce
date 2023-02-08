@@ -1,0 +1,135 @@
+# This is a generated file, don't edit!
+type: fsm
+name: issue-3816-2
+desc: 'Test for issue #3816'
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 107
+            'y': 61
+        initial: true
+        name: Create Order
+        desc: ''
+        type: state
+        id: _Z9GpK0M2
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                supports_request: true
+                path: /workflows/create-order
+                use_args: true
+                args:
+                    type: hash
+                    value:
+                        workflow:
+                            type: softstring
+                            value: 'DUMMY-TEST '
+                        staticdata:
+                            type: hash<auto>
+                            value: '{}'
+        execution_order: 1
+        transitions:
+            -
+                state: '4'
+                language: qore
+            -
+                state: '5'
+                language: qore
+            -
+                state: '6'
+                language: qore
+    '3':
+        position:
+            x: 651
+            'y': 62
+        initial: false
+        name: Cancel Order
+        desc: ''
+        type: state
+        id: KHhyh01bU
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                supports_request: true
+                path: /workflows/cancel-order
+    '4':
+        position:
+            x: 385
+            'y': 62.5
+        initial: false
+        name: Map Create Order to Cancel Order
+        desc: ''
+        injected: true
+        injectedData:
+            from: Create Order
+            to: Cancel Order
+            name: issue-3816-2
+        type: state
+        id: yVBSuBNLUG
+        action:
+            type: mapper
+            value: 'issue-3816-2-Create Order-Cancel Order:1.0'
+        transitions:
+            -
+                state: '3'
+                language: qore
+    '5':
+        position:
+            x: 314
+            'y': 158
+        initial: false
+        name: Update Info
+        desc: ''
+        type: state
+        id: LV-NKnXBk
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                supports_request: true
+                path: /util/write-output
+                use_args: true
+                args:
+                    type: hash<auto>
+                    value: '\$local:input: \$jinfo:output'
+    '6':
+        position:
+            x: 189
+            'y': 259
+        initial: false
+        name: Log Message
+        desc: ''
+        type: state
+        id: KslFHcZg8
+        action:
+            type: apicall
+            value:
+                type: factory
+                name: qorus-api
+                is_api_call: true
+                supports_request: true
+                path: /util/log-message
+                use_args: true
+                args:
+                    type: hash
+                    value:
+                        level:
+                            type: string
+                            value: INFO
+                        message:
+                            type: string
+                            value: got data %y
+                        args:
+                            type: auto
+                            value: '$local:input'

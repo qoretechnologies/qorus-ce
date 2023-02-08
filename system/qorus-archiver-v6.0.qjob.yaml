@@ -1,0 +1,19 @@
+type: job
+active: false
+name: qorus-archiver
+desc: "Runs the Qorus system.arch service"
+version: "6.0"
+lang: qore
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: QorusArchiver
+code: qorus-archiver-v6.0.qjob
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "*"
+    months: "*"
+    dow: "*"
+groups:
+  - qorus-admin

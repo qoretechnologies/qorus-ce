@@ -1,0 +1,17 @@
+fsm:
+  required:
+    name:
+      type: string
+      max-length: 160
+  optional:
+    triggers:
+      type: list
+      element-type: connector|method
+definitions:
+  method:
+    required:
+      method:
+        type: string
+
+include-definitions:
+  - connector_definition.yaml

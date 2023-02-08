@@ -1,0 +1,17 @@
+# This is a generated file, don't edit!
+type: workflow
+name: EXAMPLE-SUBWF-2
+desc: Example sub 2
+version: "1.0"
+autostart: 0
+author:
+  - Qore Technologies, s.r.o.
+groups:
+  - regression
+  - test
+steps:
+    [
+        "ExampleSub2Step1:1.0",
+        "ExampleSub2Step2:1.0",
+        "ExampleSub2Step3:1.0"
+    ]

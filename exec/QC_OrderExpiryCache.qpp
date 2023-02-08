@@ -1,0 +1,72 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+    QC_OrderExpiryCache.qpp
+ */
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include <qore/Qore.h>
+
+#include "QC_OrderExpiryCache.h"
+
+//! The OrderExpiryCache class implements a cache for workflow order SLA events
+/**
+ */
+qclass OrderExpiryCache [arg=OrderExpiryCache* oec; ns=OMQ];
+
+//! Creates a new OrderExpiryCache object
+/**
+ */
+OrderExpiryCache::constructor() {
+    self->setPrivate(CID_ORDEREXPIRYCACHE, new OrderExpiryCache);
+}
+
+//! throws an exception
+/**
+ */
+OrderExpiryCache::copy() {
+    xsink->raiseException("COPY-ERROR", "OrderExpiryCache objects may not be copied");
+}
+
+//! sets a value
+/** @return False = cached, True = cache full
+ */
+nothing OrderExpiryCache::queueOrder(softint wfid, softint wfiid, int created) {
+    oec->queueOrder(wfid, wfiid, created);
+}
+
+//! returns map of wfid -> count
+/**
+ */
+*hash<string, int> OrderExpiryCache::getEvents(hash<auto> wf_slas, softint delay) {
+    return oec->getEvents(wf_slas, delay);
+}
+
+//!
+/**
+ */
+nothing OrderExpiryCache::removeOrder(softint wfid, softint wfiid) {
+    return oec->removeOrder(wfid, wfiid);
+}
+
+//!
+/**
+ */
+string OrderExpiryCache::getSummary() [flags=RET_VALUE_ONLY] {
+    return oec->getSummary();
+}
+
+//!
+/**
+ */
+string OrderExpiryCache::getDetails() [flags=RET_VALUE_ONLY] {
+    return oec->getDetails();
+}

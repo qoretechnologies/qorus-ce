@@ -1,0 +1,24 @@
+#!/usr/bin/env qr
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+%requires QorusClientCore
+
+sub main() {
+    *string wf = shift ARGV;
+    if (!wf)
+        wf = "REGRESSION-TEST";
+    printf("workflow: %n\n", wf);
+
+    QorusClient::init();
+
+    any r;
+    #r = omqapi."set-option"(("recover_delay": 10, "async_delay": 20));
+    #printf("set-options: %N\n", r);
+    printf("exec-synchronous-workflow: "); flush();
+    r = omqapi."exec-synchronous-workflow"(("name": wf, "orderdata": ("staticdata": "hello")));
+    printf("%y\n", r);
+}
+
+main();

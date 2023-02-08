@@ -1,0 +1,46 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# service: dummy-plugin
+# servicetype: SYSTEM
+# serviceversion: 1.0
+# servicedesc: Plugin simple example
+# serviceauthor: Tomas Heger (Qore Technologies)
+# autostart: false
+# class-name: DummyPluginSvc
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class DummyPluginSvc inherits QorusPluginService {
+
+    private {
+        const Name = "dummy-plugin";
+        Counter cnt();
+    }
+
+    # name: start
+    # desc: start
+    start() {
+        registerPlugin(Name);
+
+        # make sure the start() method keeps running until stop() is called
+        cnt.inc();
+        cnt.waitForZero();
+    }
+
+    # name: stop
+    # desc: stop
+    stop() {
+        # start() method can finish now
+        cnt.dec();
+
+        deregisterPlugin(Name);
+    }
+}
+

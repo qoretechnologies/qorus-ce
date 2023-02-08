@@ -1,0 +1,36 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file MultiInterface.qm Qorus Integration Engine test module
+
+/*  MultiInterface.qm Copyright (C) 2012 - 2022 Qore Technologies, s.r.o.
+*/
+
+%requires qore >= 0.9
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+module MultiInterface {
+    version = "1.0";
+    desc = "multi-interface dev module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+public namespace MultiInterface {
+public class MultiInterfaceStep inherits QorusNormalStep {
+    final primary() {
+        primaryImpl();
+    }
+    abstract primaryImpl();
+}
+public class MultiTestJob inherits QorusJob {
+    final run() {
+        runImpl();
+    }
+    abstract runImpl();
+}
+public class MultiTestService inherits QorusService {
+}
+}

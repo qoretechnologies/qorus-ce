@@ -1,0 +1,25 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: issue-3198
+# serviceversion: 1.0
+# servicedesc: issue 3198 test service
+# serviceauthor: Qore Technologies, s.r.o.
+# class-name: Issue3198Service
+# remote: true
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# mappers: issue-3198:1.0
+# ENDSERVICE
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3198Service inherits QorusService {
+    # name: mapIt
+    # desc: issue 3198 test
+    hash<auto> mapIt(hash<auto> rec) {
+        return getMapper("issue-3198").mapData(rec);
+    }
+}

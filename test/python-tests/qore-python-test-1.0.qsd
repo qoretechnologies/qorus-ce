@@ -1,0 +1,45 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class QorePythonTest inherits QorusService {
+    private {
+        ####### GENERATED SECTION! DON'T EDIT! ########
+        ClassConnections_QorePythonTest class_connections();
+        ############ GENERATED SECTION END ############
+    }
+
+    ####### GENERATED SECTION! DON'T EDIT! ########
+    auto test(auto params) {
+        return class_connections.Connection_1(params);
+    }
+    ############ GENERATED SECTION END ############
+}
+
+####### GENERATED SECTION! DON'T EDIT! ########
+class ClassConnections_QorePythonTest {
+    private {
+        # map of prefixed class names to class instances
+        hash<auto> class_map;
+    }
+
+    constructor() {
+        class_map = {
+            "PythonConnectorTest": new PythonConnectorTest(),
+        };
+    }
+
+    auto callClassWithPrefixMethod(string prefixed_class, string method) {
+        UserApi::logDebug("ClassConnections_QorePythonTest: callClassWithPrefixMethod: method: %s, class: %y", method, prefixed_class);
+        return call_object_method_args(class_map{prefixed_class}, method, argv);
+    }
+
+    auto Connection_1(auto params) {
+        UserApi::logDebug("Connection_1 called with data: %y", params);
+
+        UserApi::logDebug("calling test: %y", params);
+        return callClassWithPrefixMethod("PythonConnectorTest", "test", params);
+    }
+}
+############ GENERATED SECTION END ############

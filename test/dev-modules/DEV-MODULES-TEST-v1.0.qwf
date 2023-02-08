@@ -1,0 +1,83 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+our string format_version = "2.6";
+
+our hash<auto> events."qore-class-event-test" = {
+    "desc": "Class workflow test event type",
+};
+
+our hash<auto> queues."qore-class-test" = {
+    "desc": "Class workflow asynchronous test queue",
+};
+
+our hash<auto> groups = {
+    "test": {
+        "desc": "test interfaces",
+    },
+    "regression": {
+        "desc": "regression test group",
+    }
+};
+
+const Steps = (
+    (
+        "class:QoreDevModulesTestStep1:1.0", { "name": "QoreDevModulesTestStep1_2:1.0",
+                                               "classname": "QoreDevModulesTestStep1_2:1.0"
+                                             }
+    ),
+    {
+        "name": "qore-dev-step-4:1.0",
+        "classname": "QoreDevModulesTestStep4:1.0",
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-dev-step-2:1.0",
+        "classname": "QoreDevModulesTestStep2:1.0",
+        "subworkflow": True,
+    },
+    {
+        "name": "qore-dev-step-5:1.0",
+        "classname": "QoreDevModulesTestStep5:1.0",
+        "subworkflow": True,
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-dev-step-3:1.0",
+        "classname": "QoreDevModulesTestStep3",
+        "classversion": "1.0",
+        "queue": "qore-class-test",
+    },
+    {
+        "name": "qore-dev-step-6:1.0",
+        "classname": "QoreDevModulesTestStep6",
+        "classversion": "1.0",
+        "queue": "qore-class-test",
+        "arraytype": "SERIES",
+    },
+    {
+        "name": "qore-dev-step-7:1.0",
+        "classname": "QoreDevModulesTestStep7:1.0",
+        "eventtype": "qore-class-event-test",
+    },
+    {
+        "name": "qore-dev-step-8:1.0",
+        "classname": "QoreDevModulesTestStep8:1.0",
+        "eventtype": "qore-class-event-test",
+        "arraytype": "SERIES",
+    }
+);
+
+our hash<auto> workflows."DEV-MODULES-TEST"."1.0" = {
+    "desc": "dev-modules class test workflow",
+    "author": "Qore Technologies, s.r.o.",
+    "workflow-modules": ("TestWorkflow", "TestWorkflow2"),
+    "steps": Steps,
+    "keylist": ("test-key1",),
+    "groups": ("test", "regression"),
+    "sla_threshold": 2,
+};

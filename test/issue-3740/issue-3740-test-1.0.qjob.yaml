@@ -1,0 +1,26 @@
+# This is a generated file, don't edit!
+type: job
+name: issue-3740-test
+desc: test for issue 3740 - dots in type and mapper names
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3740Test
+groups:
+  - regression
+  - test
+mappers:
+  - issue-3740-test:1.0
+remote: false
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+classes:
+  - QoreTest
+code: issue-3740-test-1.0.qjob

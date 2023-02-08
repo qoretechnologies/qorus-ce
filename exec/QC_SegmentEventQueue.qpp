@@ -1,0 +1,295 @@
+/* -*- indent-tabs-mode: nil -*- */
+/*
+ QC_SegmentEventQueue.qpp
+*/
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include <qore/Qore.h>
+#include "QC_SegmentEventQueue.h"
+
+//! The SegmentEventQueue class implements internal queues for Qorus
+/**
+*/
+qclass SegmentEventQueue [arg=SegmentEventQueue* seq; ns=OMQ];
+
+//! Creates a new SegmentEventQueue object
+/**
+*/
+SegmentEventQueue::constructor(object workflow_params, object qorus_options) {
+    self->setPrivate(CID_SEGMENTEVENTQUEUE, new SegmentEventQueue(workflow_params, qorus_options));
+}
+
+//! destroys the object
+/**
+*/
+SegmentEventQueue::destructor() {
+    seq->destructor();
+    seq->deref(xsink);
+}
+
+//! throws an exception
+/**
+*/
+SegmentEventQueue::copy() {
+    xsink->raiseException("COPY-ERROR", "SegmentEventQueue objects may not be copied");
+}
+
+//! terminates a connection
+/**
+*/
+nothing SegmentEventQueue::terminate_connection(softint conn_id) {
+    seq->terminate_connection(conn_id);
+}
+
+//! terminates a retry connection
+/**
+*/
+nothing SegmentEventQueue::terminate_retry_connection(softint conn_id) {
+    seq->terminate_retry_connection(conn_id);
+}
+
+//! add swf segment
+/**
+*/
+nothing SegmentEventQueue::add_subworkflow_segment(softint segid) {
+    seq->add_subworkflow_segment(segid);
+}
+
+//! add async segment
+/**
+*/
+nothing SegmentEventQueue::add_async_segment(softint segid) {
+    seq->add_async_segment(segid);
+}
+
+//! add event segment
+/**
+*/
+nothing SegmentEventQueue::add_event_segment(softint segid) {
+    seq->add_event_segment(segid);
+}
+
+//! init primary queue
+/**
+*/
+nothing SegmentEventQueue::init_primary_queue(list<auto> p) {
+    seq->init_primary_queue(p);
+}
+
+//! init retry queue
+/**
+*/
+nothing SegmentEventQueue::init_retry_queue(list<auto> p) {
+    seq->init_retry_queue(p);
+}
+
+//! init async retry queue
+/**
+*/
+nothing SegmentEventQueue::init_async_retry_queue(list<auto> p) {
+    seq->init_async_retry_queue(p);
+}
+
+//! init async queue
+/**
+*/
+nothing SegmentEventQueue::init_async_queue(softint segid, list l) {
+    seq->init_async_queue(segid, l);
+}
+
+//! init event queue
+/**
+*/
+nothing SegmentEventQueue::init_event_queue(softint segid, list l) {
+    seq->init_event_queue(segid, l);
+}
+
+//! init subworkflow queue
+/**
+*/
+nothing SegmentEventQueue::init_subworkflow_queue(softint segid, list l) {
+    seq->init_subworkflow_queue(segid, l);
+}
+
+//! requeue retries
+/**
+*/
+nothing SegmentEventQueue::requeue_retries() {
+    seq->requeue_retries();
+}
+
+//! cleanup connection
+/**
+*/
+nothing SegmentEventQueue::cleanup_connection(softint conn_id) {
+    seq->cleanup_connection(conn_id);
+}
+
+//! remove wfiid
+/**
+*/
+nothing SegmentEventQueue::remove_workflow_instance(softint wfiid) {
+    assert(wfiid);
+    seq->remove_workflow_instance(wfiid);
+}
+
+//! queue async event
+/**
+*/
+nothing SegmentEventQueue::queue_async_event(softint segid, softint wfiid, softint ind, softint priority, softbool corrected, string queuekey, auto data, *hash<auto> parent_info) {
+    seq->queue_async_event(segid, wfiid, ind, priority, corrected, queuekey, data, parent_info);
+}
+
+//! queue wf event
+/**
+*/
+nothing SegmentEventQueue::queue_workflow_event(softint segid, softint wfiid, softint ind, softint priority, *hash parent_info) {
+    seq->queue_workflow_event(segid, wfiid, ind, priority, parent_info);
+}
+
+//! queue swf event
+/**
+*/
+nothing SegmentEventQueue::queue_subworkflow_event(softint segid, softint wfiid, softint ind, softint priority, string status, softint swfiid, *hash parent_info) {
+    assert(status->size() == 1);
+    seq->queue_subworkflow_event(segid, wfiid, ind, priority, status->getBuffer()[0], swfiid, parent_info);
+}
+
+//! queue primary event
+/**
+*/
+nothing SegmentEventQueue::queue_primary_event(softint wfiid, softint priority, *hash parent_info, *date scheduled) {
+    seq->queue_primary_event(wfiid, priority, parent_info, scheduled);
+}
+
+//! queue retry event
+/**
+*/
+nothing SegmentEventQueue::queue_retry_event(softint wfiid, date mod, *hash parent_info) {
+    seq->queue_retry_event(wfiid, *mod, parent_info);
+}
+
+//! queue retry event fixed
+/**
+*/
+nothing SegmentEventQueue::queue_retry_event_fixed(softint wfiid, date mod, *hash parent_info) {
+    seq->queue_retry_event_fixed(wfiid, *mod, parent_info);
+}
+
+//! queue async retry event
+/**
+*/
+nothing SegmentEventQueue::queue_async_retry_event(softint wfiid, date mod, *hash parent_info) {
+    seq->queue_async_retry_event(wfiid, *mod, parent_info);
+}
+
+//! merge all
+/**
+*/
+nothing SegmentEventQueue::merge_all(SegmentEventQueue[SegmentEventQueue] seq_arg) {
+    ReferenceHolder<SegmentEventQueue> holder(seq_arg, xsink);
+    seq->merge_all(seq_arg);
+}
+
+//! grab segment inc
+/**
+*/
+bool SegmentEventQueue::grab_segment_inc(softint wfiid) {
+    return seq->grab_segment_inc(wfiid);
+}
+
+//! get primary event
+/**
+*/
+*hash SegmentEventQueue::get_primary_event(softint segid) {
+    return seq->get_primary_event(segid);
+}
+
+//! get subworkflow event
+/**
+*/
+*hash SegmentEventQueue::get_subworkflow_event(softint conn_id, softint besegid, SegmentEventQueue[SegmentEventQueue] beq) {
+    ReferenceHolder<SegmentEventQueue> holder(beq, xsink);
+    return seq->get_subworkflow_event(conn_id, besegid, *beq);
+}
+
+//! get async event
+/**
+*/
+*hash SegmentEventQueue::get_async_event(softint conn_id, softint besegid, SegmentEventQueue[SegmentEventQueue] beq) {
+    ReferenceHolder<SegmentEventQueue> holder(beq, xsink);
+    return seq->get_async_event(conn_id, besegid, *beq);
+}
+
+//! get workflow event
+/**
+*/
+*hash SegmentEventQueue::get_workflow_event(softint conn_id, softint besegid, SegmentEventQueue[SegmentEventQueue] beq) {
+    ReferenceHolder<SegmentEventQueue> holder(beq, xsink);
+    return seq->get_workflow_event(conn_id, besegid, *beq);
+}
+
+//! get retry event
+/**
+*/
+*hash SegmentEventQueue::get_retry_event(softint conn_id) {
+    return seq->get_retry_event(conn_id, xsink);
+}
+
+//! release segment
+/**
+*/
+nothing SegmentEventQueue::release_segment(softint wfiid) {
+    seq->release_segment(wfiid);
+}
+
+//! release retry segment
+/**
+*/
+nothing SegmentEventQueue::release_retry_segment(softint wfiid) {
+    seq->release_retry_segment(wfiid);
+}
+
+//! to string
+/**
+*/
+string SegmentEventQueue::toString() {
+    return seq->toString();
+}
+
+//! get summary
+/**
+*/
+string SegmentEventQueue::getSummary() {
+    return seq->getSummary();
+}
+
+//! reschedule primary event
+/**
+*/
+bool SegmentEventQueue::resched_primary_event(int wfiid, *date scheduled) {
+    return seq->resched_primary_event(wfiid, scheduled);
+}
+
+//! reprioritize primary event
+/**
+*/
+bool SegmentEventQueue::reprioritize_primary_event(int wfiid, int prio) {
+    return seq->reprioritize(wfiid, prio);
+}
+
+//! remove workflow order
+/**
+*/
+nothing SegmentEventQueue::removeWorkflowOrder(int wfiid, int prio) {
+   seq->removeWorkflowOrder(wfiid, prio);
+}

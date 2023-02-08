@@ -1,0 +1,42 @@
+# type: STEP
+# name: gdpr_test_step
+# version: 1.0
+# desc: GDPR test step
+# author: Qore Technologies, s.r.o.
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+sub assert_eq(auto expected, auto v) {
+    if (expected !== v) {
+        throw "ERROR", sprintf("expected %y; got %y", expected, v);
+    }
+}
+
+sub gdpr_test_step() {
+    hash<auto> aliases = WorkflowApi::getSensitiveDataAliases();
+    assert_eq(("alias0", "alias1"), sort(keys aliases));
+    hash<auto> kv = WorkflowApi::getSensitiveDataKeyValues();
+    assert_eq({"key1": ("val1",), "key2": ("val2",),}, kv);
+    if (WorkflowApi::getStaticData()."do-swf") {
+        UserApi::logInfo("creating subworkflow");
+        hash sensitive_data;
+        foreach hash<auto> i in (aliases.pairIterator()) {
+            sensitive_data{i.value.skey}{i.value.svalue} = {
+                "data": WorkflowApi::getSensitiveDataFromAlias(i.key),
+                "aliases": i.key,
+            };
+        }
+        WorkflowApi::bindSubworkflow({
+            "name": "GDPR-WF-TEST",
+        }, {
+            "staticdata": {},
+            "sensitive_data": sensitive_data,
+        });
+    } else {
+        UserApi::logInfo("skipping subworkflow");
+        WorkflowApi::skipSubworkflow();
+    }
+}
+# END

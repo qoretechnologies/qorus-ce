@@ -1,0 +1,324 @@
+#!/usr/bin/env qore
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+%exec-class QBugReport
+
+our QBugReport Qorus;
+our Datasource omq;
+
+class QBugReport inherits ClientProcessBase {
+    public {}
+
+    private {
+        # network encryption key helper
+        NetworkKeyHelper nkh;
+
+        const DebugRequests = (
+            "sync-cache",
+            "sync-summary",
+            "order-stats",
+            "order-stats-summary",
+            "services",
+            "interface-serialization",
+            "workflow-control",
+            "jobs",
+            "sm-data-cache",
+            "sm-data-cache-summary",
+            "sm-segment-cache",
+            "sm-segment-summary",
+            "sm-local",
+            "development",
+        );
+
+        const Opts = {
+            "dir": "d,dir=s",
+            "timeout": "t,timeout=i",
+            "version": "V,version",
+            "help": "h,help",
+        };
+
+        const Banners = (
+            sprintf("%s v%s (build %s)", OMQ::ProductName, OMQ::version, QorusRevision),
+            "Copyright (C) 2003 - 2023 Qore Technologies, s.r.o.",
+        );
+    }
+
+    constructor() : ClientProcessBase("qbureport") {
+        # prohibit assume warning
+        ClientProcessBase::prohibit_assume_warning = True;
+
+        opts = (new GetOpt(Opts)).parse3(\ARGV);
+        if (opts.help) {
+            usage();
+        }
+
+        if (opts.version) {
+            map printf("%s\n", $1), Banners;
+            thread_exit;
+        }
+
+        # create the ZeroMQ context after closing all file descriptors; vice-versa will result in a crash
+        zctx = new ZContext();
+        zctx.setOption(ZMQ_BLOCKY, 0);
+
+        # get the target directory for the bug report
+        string dir = opts.dir ?? tmp_location();
+
+        Qorus = self;
+
+        # process the options file, set defaults, and check for sane option values
+        options.init();
+
+        nkh = new NetworkKeyHelper(options.get());
+
+        {
+            *string systemdb = options.get("systemdb");
+            if (!exists systemdb) {
+                throw "DATASOURCE-ERROR", "no definition provided for system datasource ('systemdb') in the options "
+                    "file, aborting";
+            }
+
+            omqds = new Datasource(systemdb);
+            cluster_processes = (new Table(omqds, "cluster_processes")).getTable();
+        }
+
+        string fileroot = sprintf("qorus-%s-bugreport-%s", options.get("instance-key"),
+            now().format("YYYYMMDDTHHmmSS"));
+
+        string target = sprintf("%s.tar.bz2", fileroot);
+        string target_path = sprintf("%s%s%s", dir, DirSep, target);
+        printf("gathering information for bug report file: %y\n", target_path);
+
+        string path = dir + DirSep + fileroot;
+
+        if (!opts.timeout) {
+            opts.timeout = DefaultTimeout;
+        }
+
+        bool has_qorus_core = getProcessInfo(path);
+
+        getLogFiles(path);
+
+        if (has_qorus_core) {
+            getDebugInfo(path);
+        }
+
+        # create tar.bz2 of bug report info
+        chdir(dir);
+        printf("creating tar file: %y: ", target_path);
+        flush();
+        system(sprintf("%s cjhf %s %s", ENV.GNUTAR ?? "tar", target, fileroot));
+        remove_tree(fileroot);
+        hash<StatInfo> statinfo = hstat(target);
+        printf("done (%d bytes)\n", statinfo.size);
+
+        printf("please send %y to bugs@qoretechnologies.com\n", target_path);
+    }
+
+    log(int ll, string fmt) {
+        vprintf(fmt + "\n", argv);
+    }
+
+    getLogFiles(string path) {
+        # get the log directory
+        string logdir = options.get("logdir");
+
+        # symlink logfiles
+        mkdir("log");
+        int log_count = 0;
+        {
+            *list<string> fl = glob(logdir + "/*.log");
+            map system(sprintf("ln -s %s %s/log/%s", $1, path, basename($1))), fl;
+            log_count += fl.size();
+        }
+        printf("staged %d log files\n", log_count);
+    }
+
+    getDebugInfo(string path) {
+        mkdir("debug-info");
+        foreach string dbg in (DebugRequests) {
+            string filename = sprintf("%s/debug-info/%s", path, dbg);
+            try {
+                printf("getting debug info %y from qorus-core: ", dbg);
+                flush();
+                system("qrest -t10 system/debug/" + dbg + " &> " + filename);
+                printf("done\n");
+            } catch (hash<ExceptionInfo> ex) {
+                printf("%s: %s\n", ex.err, ex.desc);
+                File f();
+                f.open2(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                f.write(get_exception_string(ex) + "\n");
+            }
+        }
+    }
+
+    # returns True if the qorus-core process exists
+    bool getProcessInfo(string path) {
+        *list<auto> process_list = cluster_processes.selectRows();
+        if (!process_list) {
+            stderr.printf("ERROR: no processes are running\n");
+            exit(2);
+        }
+        mkdir(path);
+        chdir(path);
+
+        printf("getting processing info for %d processes: ", process_list.size());
+        flush();
+        doProcessCmd(process_list, "info", CPC_GET_INFO, string sub (hash<auto> row, hash<auto> h) {
+            string memstr = get_byte_size(h.priv);
+            return sprintf("info: %N\n", h + {"memstr": memstr});
+        });
+        printf("done\ngetting thread stacks for %d processes: ", process_list.size());
+        flush();
+        doProcessCmd(process_list, "thread-stacks", CPC_GET_THREADS, string sub (hash<auto> row, hash<auto> h) {
+            return showThreadStacks(row, h);
+        });
+        print("done\n");
+        flush();
+
+        foreach hash<auto> row in (process_list) {
+            if (row.process_type == "qorus-core") {
+                return True;
+            }
+        }
+        return False;
+    }
+
+    doProcessCmd(list<auto> process_list, string subpath, string cmd, code format) {
+        mkdir(subpath);
+
+        # do process checks in parallel
+        list<hash<ZmqPollInfo>> poll_list;
+
+        foreach hash<auto> process_hash in (process_list) {
+            if (process_hash.queue_urls == "-") {
+                continue;
+            }
+            if (!checkProcess(process_hash)) {
+                continue;
+            }
+            string filename = sprintf("%s/%s", subpath, process_hash.process_network_id);
+
+            try {
+                # connections can be reused, but the identity must be unique
+                string our_id = sprintf("%s-%s", self.uniqueHash(), gettid());
+                ZSocketDealerMarker sock(zctx, our_id, process_hash.queue_urls.split(",")[0], $#, nkh,
+                    process_hash.process_network_id, filename, process_hash);
+
+                # send the command
+                sendCmdSerializedIntern(sock, cmd);
+                poll_list += <ZmqPollInfo>{
+                    "socket": sock,
+                    "events": ZMQ_POLLIN,
+                };
+            } catch (hash<ExceptionInfo> ex) {
+                File f();
+                f.open2(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                f.printf("process_hash: %N\n", process_hash);
+                f.write(get_exception_string(ex) + "\n");
+            }
+        }
+
+        code mark_unreachable = sub () {
+            # mark all remaining processes as unreachable
+            foreach hash<ZmqPollInfo> poll_hash in (poll_list) {
+                File f();
+                f.open2(cast<ZSocketDealerMarker>(poll_hash.socket).filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                f.printf("process_hash: %N\n", cast<ZSocketDealerMarker>(poll_hash.socket).process_hash);
+                f.printf("no response within: %y\n", opts.timeout);
+            }
+        };
+
+        while (poll_list) {
+            try {
+                list<hash<ZmqPollInfo>> current_list = ZSocket::poll(poll_list, opts.timeout);
+                # the poll() call will return an empty list if no data is available
+                if (!current_list) {
+                    mark_unreachable();
+                    break;
+                }
+                foreach hash<ZmqPollInfo> poll_hash in (current_list) {
+                    ZMsg msg = cast<ZSocketDealerMarker>(poll_hash.socket).recvMsg();
+                    # remove mboxid
+                    msg.popStr();
+                    checkResponseMsg(cmd, CPC_OK, msg);
+                    hash<auto> ih = qorus_cluster_deserialize(msg);
+
+                    File f();
+                    f.open2(cast<ZSocketDealerMarker>(poll_hash.socket).filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                    f.printf("process_hash: %N\n", cast<ZSocketDealerMarker>(poll_hash.socket).process_hash);
+                    f.write(format(cast<ZSocketDealerMarker>(poll_hash.socket).process_hash, ih));
+                }
+
+                # remove sockets from poll list
+                foreach hash<ZmqPollInfo> poll_hash_current in (current_list) {
+                    foreach hash<ZmqPollInfo> poll_hash_orig in (poll_list) {
+                        if (poll_hash_current.socket == poll_hash_orig.socket) {
+                            splice poll_list, $#, 1;
+                            break;
+                        }
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                #printf("DEBUG: %s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                if (ex.err == "ZSOCKET-POLL-ERROR") {
+                    mark_unreachable();
+                } else {
+                    # mark all remaining processes as unreachable
+                    foreach hash<ZmqPollInfo> poll_hash in (poll_list) {
+                        File f();
+                        f.open2(cast<ZSocketDealerMarker>(poll_hash.socket).filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        f.printf("process_hash: %N\n", cast<ZSocketDealerMarker>(poll_hash.socket).process_hash);
+                        f.printf("unexpected error: %s\n", get_exception_string(ex));
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    usage() {
+        printf("usage: %s [options]\n"
+            " -d,--dir=ARG       the directory for the bug report archive file\n"
+            " -t,--timeout=ARG   set the ZMQ timeout in milliseconds\n"
+            " -V,--version       show version information\n"
+            " -h,--help          this help text\n",
+            get_script_name());
+        exit(1);
+    }
+}
+
+class ZSocketDealerMarker inherits ZSocketDealer {
+    public {
+        int pos;
+        string process;
+        string filename;
+        hash<auto> process_hash;
+    }
+
+    constructor(ZContext ctx, string our_id, string queue_url, int pos, NetworkKeyHelper nkh, string process, string filename,
+        hash<auto> process_hash) :
+        ZSocketDealer(ctx) {
+        self.pos = pos;
+        self.process = process;
+        self.filename = filename;
+        self.process_hash = process_hash;
+        setIdentity(our_id);
+        nkh.setClient(self);
+        connect(queue_url);
+    }
+}

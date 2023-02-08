@@ -1,0 +1,319 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# service: http-test
+# serviceversion: 1.0
+# servicedesc: HTTP binding test service
+# serviceauthor: Qore Technologies, s.r.o.
+# remote: true
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# functions: regression-lib
+# TAG: qorus-example: true
+# ENDSERVICE
+
+# name: init
+# desc: initializes the http-test service
+const DEFAULTS = {
+    "url"            : "^http-test",
+    "bind"           : "0.0.0.0:0",
+    "content-type"   : "x-qorus-misc",
+    "special-headers": list("QORUS-TEST"),
+};
+
+# HTTP listener port
+our int $port;
+# HTTP listener url
+our string $url;
+
+sub single_sleeper() {
+    UserApi::logInfo("UserApi::sleep() returned %d", UserApi::sleep(99999999999));
+    # bug 671 test
+    UserApi::logInfo("deadlock test: %y", $omqservice.user."http-test".echo("hello"));
+}
+
+sub error_sleeper() {
+    while (True) {
+        try {
+            UserApi::sleep(999999);
+        }
+        catch (hash $ex) {
+            UserApi::logInfo("UserApi::sleep(): %s: %s", $ex.err, $ex.desc);
+            return;
+        }
+    }
+}
+
+hash sub get_options() {
+    # get options for service
+    my *hash $props = UserApi::propGet(ServiceApi::getServiceInfo().name);
+
+    my hash $h;
+
+    foreach my string $k in (DEFAULTS.keyIterator())
+        $h.$k = exists $props.$k ? $props.$k : DEFAULTS.$k;
+
+    return $h;
+}
+
+class MyAuthenticator inherits AbstractAuthenticator {
+    bool requiresAuthentication() {
+        return False;
+    }
+}
+
+class MyHttpHandler inherits AbstractServiceHttpHandler {
+    constructor(string $url, *string $content_type, list $special_headers = ()) : AbstractServiceHttpHandler($url, $content_type, $special_headers, new MyAuthenticator()) {
+    }
+
+    hash handleRequest(hash $cx, hash $hdr, *data $body) {
+        $stats.log += ("time": now_us()) + $cx;
+        return ("code": 200, "body": "OK");
+    }
+}
+
+# substitute environment variables in path
+string sub get_path(string $path) {
+    while (True) {
+        my *list $x = ($path =~ x/(\$[A-Za-z][A-Za-z0-9_]*)/);
+        if (!$x)
+            break;
+
+        foreach my string $var in ($x) {
+            # remove '$' character
+            splice $var, 0, 1;
+
+            # substitute environment variable
+            $path = regex_subst($path, "\\\$" + $var, $ENV{$var});
+        }
+    }
+    return $path;
+}
+
+sub init() {
+    # establish a dependency to the fs-regression user connection for issue #1912
+%ifdef Windows
+    UserApi::getUserConnection("fs-regression-win", False);
+%else
+    UserApi::getUserConnection("fs-regression", False);
+%endif
+
+    my *int $aid = UserApi::auditUserEvent("REGRESSION-SERVICE-EVENT");
+    test_value(type($aid), UserApi::auditCheckEventString(OMQ::AES_USER_EVENT) ? Type::Int : Type::NothingType, "audit-1");
+
+    our hash $stats = ("log": ());
+    my hash $opt = get_options();
+    UserApi::logInfo("options: %N", $opt);
+
+    my MyHttpHandler $lh($opt.url, $opt."content-type", $opt."special-headers");
+
+    # issue #2643: test UI service support in remote services
+    $lh.setUserIndexInfo("Test Header", "Test Title", "http-test");
+
+    # bind as global handler
+    ServiceApi::bindHttp($lh);
+
+    # clear the index info, so we don't get a duplicate resource error in the next bind with the same handler
+    $lh.clearUserIndexInfo();
+
+    # bind with wildcard port
+    $lh.addListener($opt.bind);
+
+    # issue #2187: see if we have a system HTTPS listener, and, if so,
+    # reuse the X.509 cert + PK to start our own HTTPS listener
+    my *string $sstr = UserApi::getOption("http-secure-server")[0];
+    if ($sstr) {
+        # get certificate, private key, and password (if any)
+        my string $cert = UserApi::getOption("http-secure-certificate") ?? "";
+        my string $pkey = UserApi::getOption("http-secure-private-key") ?? "";
+        my string $pass = UserApi::getOption("http-secure-private-key-password") ?? "";
+
+        # see if we need to extract any of the above parameters from the option itself
+        {
+            my *string $opts = ($sstr =~ x/{(.*)}/)[0];
+            if ($opts) {
+                $sstr =~ s/{.*}//;
+
+                foreach my string $opt in ($opts.split(";")) {
+                    my (*string $k, *string $v) = ($opt =~ x/([^=]+)=(.*)/);
+                    switch ($k) {
+                        case "cert": $cert = get_path($v); break;
+                        case "key": $pkey = get_path($v); break;
+                        case "password": $pass = $v; break;
+                        default: throw "HTTPS-OPTION-ERROR", sprintf("invalid HTTPS option: %y in %y", $k, $opts);
+                    }
+                }
+            }
+        }
+
+        UserApi::logInfo("adding HTTPS listener with cert: %y key: %y", $cert, $pkey);
+
+        # bind HTTPS listener on wildcard port on all interfaces
+        $lh.addListener("0.0.0.0:0", new SSLCertificate(ReadOnlyFile::readTextFile($cert)), new SSLPrivateKey(ReadOnlyFile::readTextFile($pkey), $pass));
+    }
+
+    # bind handler and all listeners
+    ServiceApi::bindHttp($lh);
+
+    # find URL
+    foreach my hash $rh in (ServiceApi::getServiceInfo().resources.iterator()) {
+        if (!$rh.type == "HttpListener") {
+            continue;
+        }
+        if ($rh.info.family == AF_INET && !$rh.info.ssl) {
+            $url = $rh.info.url;
+            $port = $rh.info.port;
+            break;
+        }
+        UserApi::logDebug("skipping %y url %y", $rh.info.name, $rh.info.url);
+    }
+    if (!$url) {
+        throw "HTTP-ERROR", sprintf("cannot determine HTTP url: resources: %N", ServiceApi::getServiceInfo().resources);
+    }
+    if ($url =~ /(0.0.0.0|::|\[::\])/) {
+        my string $host = parse_url(UserApi::qorusGetLocalUrl()).host;
+        $url = regex_subst($url, "(0.0.0.0|::|\\[::\\])", $host);
+    }
+    UserApi::logInfo("setting url to %y", $url);
+    return $url;
+}
+# END
+
+# desc: returns the port number of the listener
+int sub port() {
+    return $port;
+}
+# END
+
+# desc: returns the URL of the listener
+string sub url() {
+    return $url;
+}
+# END
+
+# desc: provides information about the service
+hash sub info() {
+    return $stats;
+}
+# END
+
+# desc: stops the service
+sub stop() {
+}
+# END
+
+# desc: starts a thread that will sleep until the service is stopped
+int sub startSingleSleeper() {
+    UserApi::logInfo("startSingleSleeper() context: %y", ServiceApi::getCallContext());
+    return ServiceApi::startThread(\single_sleeper());
+}
+# END
+
+# desc: starts a thread that will log the exception thrown when the service is stopped
+int sub startErrorSleeper() {
+    return ServiceApi::startThread(\error_sleeper());
+}
+# END
+
+# desc: returns True if strict-bool-eval is enaled, False if not
+bool sub testStrictBool() {
+    return !boolean((True,));
+}
+# END
+
+# desc: try to do a service reset (test for bug 544)
+sub reset() {
+    UserApi::callNetworkApi("omq.user.reset-service", "http-test");
+}
+# END
+
+# desc: stops dedicated listeners on this service, if any
+list sub stopListeners() {
+    my hash $sh = ServiceApi::getServiceInfo();
+    # get a list of dedicated listener IDs to stop for logging and for the stop API call
+    my list $l = map $1.info.id, $sh.resources.iterator(), $1.type == "HttpListener";
+    map UserApi::callNetworkApi("omq.system.stop-listener-id", $1), $l;
+    return $l;
+}
+# END
+
+# desc: returns service info
+hash sub svcInfo() {
+    return ServiceApi::getServiceInfo();
+}
+# END
+
+# desc: evaluate something and return the result
+any sub eval(string $cmd) {
+    my Program $p();
+    map $p.loadModule($1), $argv;
+    $cmd = sprintf("any sub get() { return %s; }", $cmd);
+    $p.parse($cmd, "eval");
+    return $p.callFunction("get");
+}
+# END
+
+# desc: returns the argument list
+any sub echo() {
+    return $argv;
+}
+# END
+
+# desc: ml test
+class T;
+any sub ml() {
+    my T $t1();
+    my T $t2();
+
+    $t1.a = $t2;
+    $t2.a = $t1;
+}
+# END
+
+# desc: alert test
+sub raise_alert(string $alert, string $desc) {
+    ServiceApi::raiseTransientAlert($alert, $desc);
+}
+# END
+
+# desc: misc test
+hash sub test(softbool $err = False) {
+    if ($err)
+        throw "TEST-ERROR", "err";
+    return ServiceApi::getCallContext();
+}
+# END
+
+# desc: bug 1152 test
+sub bug1152() {
+    return;
+}
+# END
+
+# desc: returns a hashdecl declared in this service
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+hashdecl MyLocalHashdecl {
+    bool test;
+}
+
+hash<MyLocalHashdecl> sub get_hashdecl(*hash<auto> h) {
+    ServiceApi::logInfo("h: %y (%s)", h, h.fullType());
+    return <MyLocalHashdecl>{
+        "test": True,
+    };
+}
+# END
+
+# desc: returns the hash passed
+%new-style
+%require-types
+%strict-args
+%enable-all-warnings
+
+hash<auto> sub get_hash(hash<auto> h) {
+    return h;
+}
+# END

@@ -1,0 +1,14 @@
+# This is a generated file, don't edit!
+type: pipeline
+name: pipeline7
+desc: low code test pipeline
+groups:
+  - regression
+  - test
+children:
+  - type: mapper
+    name: lowcode-test-1:1.0
+    children:
+      - type: processor
+        name: LowCodeTestSaveOutput
+        pid: IgMlO9rhaF

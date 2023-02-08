@@ -1,0 +1,10 @@
+# a test user connection for the filesystem
+# "file:///C:/temp" was used since it's the proper syntax on Windows
+# according to the following sources:
+# https://blogs.msdn.microsoft.com/ie/2006/12/06/file-uris-in-windows/
+# https://en.wikipedia.org/wiki/File_URI_scheme#Windows
+
+fs-regression-win = (
+    desc = temp filesystem in windows,
+    url = file:///C:/temp
+)

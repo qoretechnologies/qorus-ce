@@ -1,0 +1,16 @@
+type: errors
+name: test-errors
+desc: list of test errors
+errors:
+  - name: TEST-1
+    desc: test error 1
+    severity: INFO
+    status: RETRY
+    business: false
+    retry-delay: 5
+  - name: TEST-2
+    desc: test error 3
+    severity: WARNING
+    status: RETRY
+    business: true
+    retry-delay: 20

@@ -1,0 +1,5 @@
+# a test user connection for the filesystem
+fs-regression = (
+    desc = shared filesystem in mseplftp directory,
+    url = file:///tmp,
+)

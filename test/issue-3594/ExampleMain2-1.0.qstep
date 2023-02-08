@@ -1,0 +1,14 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class ExampleMain2 inherits QorusSubworkflowStep {
+    primary() {
+        bindSubworkflow({
+            "name": "EXAMPLE-SUBWF-1",
+        }, {
+            "staticdata": {},
+        });
+    }
+}

@@ -1,0 +1,7 @@
+type: constant
+name: issue3325constant
+version: "1.0"
+desc: example test constants 1
+author:
+  - Qore Technologies, s.r.o.
+code: issue3325constant.qconst

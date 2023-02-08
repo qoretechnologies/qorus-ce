@@ -1,0 +1,14 @@
+# type: STEP
+# version: 1.0
+# desc: issue 3010 test function
+# author: Qore Technologies, s.r.o.
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+sub issue_3010_step() {
+    UserApi::logInfo("issue_3010_step is called");
+}
+# END

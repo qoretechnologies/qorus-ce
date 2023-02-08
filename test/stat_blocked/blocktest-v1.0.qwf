@@ -1,0 +1,22 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = ( "blocked_step_1:1.0",
+           "blocked_step_2:1.0"
+          );
+
+$workflows."blocktest"."1.0" = 
+    ( "desc"          : "test workflow for BLOCKED status",
+      "author"        : "Qore Technologies, sro",
+      "patch"         : "",
+      "steps"	      : $steps,
+      "functions"     : ( "blocked_wait", ),
+      "attach"        : "blocked_attach:1.0",
+      "groups"        : "test",
+      );
+

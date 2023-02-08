@@ -1,0 +1,1636 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# Qorus Integration Engine system schema tool
+
+%require-our
+%require-types
+%enable-all-warnings
+%new-style
+%strict-args
+
+%exec-class schemaTool
+
+%requires qore >= 1.0
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# here we add fallback paths to the QORE_INCLUDE_DIR search path,
+# in case QORE_INCLUDE_DIR is not set properly
+%append-include-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib
+
+# include qorus client library code
+%requires QorusClientBase
+%requires Schema
+
+# for session recovery
+%requires HttpServerUtil
+%include intern/Session.qc
+
+
+const opts = {
+    "analyze"      : "A,analyze:s",
+    "arch"         : "a,arch:s",
+    "bb"           : "b,block-buffer:s",
+    "create"       : "C,create",
+    "code"         : "c,code",
+    "ds"           : "D,datasource=s@",
+    "dryrun"       : "d,dry-run",
+    "frebuild"     : "F,force-rebuild:s",
+    "force"        : "f,force",
+    "token"        : "k,token=s",
+    "ignorewarn"   : "I,ignore-warnings",
+    "ignore"       : "i,ignore-errors",
+    "help"         : "h,help",
+    "sessions"     : "L,list-active",
+    "lsess"        : "l,list-sessions:i",
+    "migrate"      : "M,migrate",
+    "firsttime"    : "m,first-time-install",
+    "session"      : "N,session=i",
+    "reset_loggers": "o,reset-loggers",
+    "parallel"     : "P,parallel",
+    "rebuild"      : "R,rebuild:s",
+    "run"          : "r,run-schema=s@",
+    "sstats"       : "S,schema-stats:s",
+    "snapshot"     : "s,snapshot",
+    "tstats"       : "T,table-stats=s@",
+    "type"         : "t,type",
+    "upgrade"      : "U,upgrade",
+    "verify"       : "V,align-schema:s",
+    "verbose"      : "v,verbose:i+",
+
+    "current"      : "current",
+    "data_ts"      : "data-ts=s@",
+    "drop"         : "drop-schema:s",
+    "index_ts"     : "index-ts=s@",
+    "maxh"         : "max-height=i",
+    "maxleaf"      : "max-leaf-pct=i",
+    "newrel"       : "new-release",
+    "recover"      : "recover:s",
+};
+
+const SUCCESS = 0;
+const MISSING = 1;
+const INVALID = 2;
+const VERSION_ERROR = 3;
+const CONTINUE = 4;
+const NOINIT = 5;
+const OTHER = 100;
+
+# maximum oracle index height before rebuilding index
+const DEF_ORA_INDEX_MAX_HEIGHT       = 3;
+# maximum oracle percentage of deleted leaf nodes before rebuilding index
+const DEF_ORA_INDEX_MAX_PCT_DEL_LEAF = 20;
+
+our hash o;
+
+# currently used for the "omq" datasource; equivalent to omq for standard runs, but it's custom for archive runs
+our Datasource sysDs;
+our string sysDsn;
+
+class schemaTool {
+    private {
+        auto qoption;
+        auto omqdts;
+        auto omqits;
+        auto omqds;
+        auto conn;
+
+        # flag if the arch configuration has been checked
+        bool arch_checked;
+
+        # arch datasource name, if any
+        *string arch_datasource_name;
+
+        # the service ID of the arch service
+        *int arch_serviceid;
+
+        # OMQ config_item_values table
+        SqlUtil::AbstractTable omq_config_item_values;
+    }
+
+    usage() {
+        stdout.printf(
+            vsprintf2(
+                "usage: %(prg)s [options]
+  -c,--code                 returns version code instead of string
+  -t,--type                 shows the name of the system schema driver
+  -v,--verbose              shows more information
+  -a,--arch[=ARG]           work on the Qorus archive schema; ARG is the
+                            archive datasource name; ARG is required with -V
+  -D,--datasource=ARG       overrides or sets datasource params
+                            ex: -Domq=oracle:user/pass@dbname
+     --current              show current (target) schema version
+  -d,--dry-run              do not send any SQL to the database, just prints
+                            out commands; affects only 'write' statements
+  -k,--token=ARG            use the given token with HTTP requests to the Qorus server
+  -m,--first-time-install   run first time install setup to setup archiving and log rotation
+  -h,--help                 this help text
+
+SCHEMA MAINTENANCE OPTIONS
+  -A,--analyze[=ARG]        analyze indexes and report status (Oracle only)
+                            ARG=datasource-name to use another schema
+  -R,--rebuild[=ARG]        analyze and rebuild indexes that need it in system
+                            schema (Oracle only)
+                            ARG=datasource-name to use another schema
+  -P,--parallel             use \"parallel\" when rebuilding indexes on Oracle
+  -F,--force-rebuild[=ARG]  force rebuilding of all indexes in system schema
+                            ARG=datasource-name to use another schema
+  -S,--schema-stats[=ARG]   gather statistics for system schema
+                            ARG=datasource-name to use another schema
+  -T,--table-stats=ARG      gather statistics/analyze table ARG
+                            ARG=table name or datasource=table name
+  -b,--block-buffer[=ARG]   show block buffer hit ratio (Oracle only)
+                            ARG=datasource-name to use another schema
+     --max-height=ARG       maximum height threshold for rebuilding Oracle
+                            indexes
+     --max-leaf-pct=ARG     maximum percentage of deleted leaf nodes
+                            threshold for rebuilding Oracle indexes
+  -s,--snapshot             refresh the workflow instances/statuses snapshot.
+                            It should be used in maintenance tasks only.
+                            These snapshots are handled automaticaly.
+
+SCHEMA MODIFICATION OPTIONS
+  -V,--align-schema[=ARG]   create/upgrade/verify system schema v%(ver)s
+                            optional ARG=user schema module for user schema
+  -C,--create               [DEPRECATED] create system schema v%(ver)s
+  -U,--upgrade              [DEPRECATED] upgrade system schema v%(ver)s
+  -f,--force                force schema verification
+  -r,--run-schema=ARG       run a schema script in a datasource
+                            ARG=<dsname=scriptname>[:linenumber]
+                            add the linenumber to start from a certain line
+  -i,--ignore-errors        ignore errors when loading schema files
+     --data-ts=ARG          set data tablespace name ARG=<dsname=tsname>
+     --index-ts=ARG         set index tablespace name ARG=<dsname=tsname>
+     --new-release          run release load file for new releases
+     --drop-schema[=ARG]    drop system schema v%(ver)s
+                            optional ARG=user schema module for user schema
+  -o,--reset-loggers        reset loggers and appenders tables with default params
+
+SESSION OPTIONS
+  -L,--list-active          list ACTIVE sessions and API reachability status
+  -l,--list-sessions[=ARG]  list last ARG sessions (default = 10)
+  -N,--session=ARG          show info for given session ID
+     --recover=[ARG]        recover application session, ARG=instance name
+
+displays schema version/status information if no options are given
+", ("prg": get_script_name(), "ver": OMQ::datamodel)));
+        exit(MISSING);
+    }
+
+    static string vsprintf2(string fmt, hash<auto> varg) {
+        string str;
+        list args = ();
+        for (int i=0; i < fmt.length(); i++) {
+            str += fmt[i];
+            if (fmt[i] == "%") {
+                if (fmt[i+1] == "(") {
+                    int j = fmt.find(")", i+2);
+                    if (j >= 0) {
+                        string name = fmt.substr(i+2, j-i-2);
+                        args += varg{name};
+                        i = j;
+                    }
+                }
+            }
+        }
+        return vsprintf (str, args);
+    }
+
+    static checkLine(auto d) {
+        if (d.typeCode() == NT_INT && d <= 0) {
+            stderr.printf("%d is an invalid line number; check command-line arguments and try again\n", d);
+            exit(OTHER);
+        }
+    }
+
+    commandLine() {
+        GetOpt g(opts);
+        o = g.parse(\ARGV);
+
+        if (o{"_ERRORS_"}) {
+            stderr.printf("%s\n", o{"_ERRORS_"}[0]);
+            exit(OTHER);
+        }
+
+        if (o.help) {
+            usage();
+            thread_exit;
+        }
+
+        # we ignore warnings by default
+        if (!o.ignorewarn) {
+            QorusClientAPI::ignoreWarnings(False);
+        }
+
+        if (ARGV && !o.ignorewarn) {
+            stderr.printf("warning: ignoring excess command-line arguments\n");
+        }
+
+        if (o.create && o.upgrade) {
+            stderr.printf("--create and --upgrade cannot be used together\n");
+            exit(OTHER);
+        }
+
+        if (o.verify && o.drop) {
+            stderr.printf("--align-schema and --drop-schema cannot be used together\n");
+            exit(OTHER);
+        }
+
+        if ((o.create || o.upgrade || o.verify || o.drop) && (o.type || o.code || o.newrel)) {
+            stderr.printf("--align-schema and --drop-schema cannot be used with --type, --code, or --new-release\n");
+            exit(OTHER);
+        }
+
+        schemaTool::checkLine(o.create);
+        schemaTool::checkLine(o.upgrade);
+
+        # check tablespace arguments
+        foreach auto arg in (o.data_ts) {
+            my (*string ds, *string ts) = (arg =~ x/(.*)=(.*)/);
+            if (!ts) {
+                stderr.printf("invalid option to --data-ts, expected <datasource>=<tablespace>, got %y\n", arg);
+                exit(MISSING);
+            }
+            if (ds == "omq")
+                omqdts = ts;
+            o.dts{ds} = ts;
+        }
+        foreach auto arg in (o.index_ts) {
+            my (*string ds, *string ts) = (arg =~ x/(.*)=(.*)/);
+            if (!ts) {
+                stderr.printf("invalid option to --index-ts, expected <datasource>=<tablespace>, got %y\n", arg);
+                exit(MISSING);
+            }
+            if (ds == "omq")
+                omqits = ts;
+            o.its{ds} = ts;
+        }
+
+        foreach auto ds in (o.ds) {
+            bool omq_redefined;
+            if (ds =~ /^omq=/) {
+                omqds = substr(ds, 4);
+                omq_redefined = True;
+            }
+            omqclient.setDatasourceFromText(ds);
+            if (omq_redefined) {
+                omq = omqclient.getDatasource("omq");
+            }
+        }
+
+        if (!o.maxh)
+            o.maxh = DEF_ORA_INDEX_MAX_HEIGHT;
+
+        if (!o.maxleaf)
+            o.maxleaf = DEF_ORA_INDEX_MAX_PCT_DEL_LEAF;
+    } # commandLine
+
+    constructor() {
+        # initialize Qorus client library
+        try {
+            QorusClient::initFast(True);
+            omqclient.initOmq();
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf("%s: %s\n", ex.err, ex.desc);
+            exit(NOINIT);
+        }
+
+        qoption = omqclient.getOptions();
+
+        commandLine();
+
+        HashIterator it(qoption."qorus-client");
+        while (it.next()) {
+            string dsn = it.getKey().split("-")[0];
+
+            if ((it.getKey() =~ /^.*-data-tablespace/) && !o.dts{dsn}) {
+                if (!o.data_ts) o.data_ts = ();
+                push o.data_ts, sprintf("%s=%s", dsn, it.getValue());
+                o.dts{dsn} = it.getValue();
+            } else if ((it.getKey() =~ /^.*-index-tablespace/) && !o.its{dsn}) {
+                if (!o.index_ts) o.index_ts = ();
+                push o.index_ts, sprintf("%s=%s", dsn, it.getValue());
+                o.its{dsn} = it.getValue();
+            }
+        }
+
+        if (o.arch) {
+            # automatically get archive schema name from system properties if no string argument given
+            if (o.arch === True) {
+                o.arch = getArchName();
+                if (!exists o.arch) {
+                    stderr.printf("ARCH-ERROR: no archive schema has been created yet; to create the archive schema, run: schema-tool -V -a=<datasource_name>\n");
+                    exit(OTHER);
+                }
+            } else if (o.arch == "omq") {
+                stderr.printf("ARCH-ERROR: the system \"omq\" schema cannot be used as the archive datasource\n");
+                exit(OTHER);
+            }
+
+            stdout.printf("INFO: Running in 'archive' mode (datasource: %y)\n", o.arch);
+            sysDs = omqclient.getDatasource(o.arch);
+            sysDsn = o.arch;
+        } else {
+            sysDs = omq;
+            sysDsn = "omq";
+        }
+
+        setConn();
+
+        if (o.type) {
+            stdout.printf("%s\n", sysDs.getDriverName());
+            thread_exit;
+        }
+
+        # check minimum db driver version for system schema access
+        {
+            string d = sysDs.getDriverName();
+            # minimum system schema driver version
+            auto min = OMQ::MinSystemDBDriverVersion{d};
+            # get driver info hash
+            *hash di = get_module_hash(){d};
+            if (Util::compare_version(min.toString(), di.version.toString()) > 0) {
+                stderr.printf("error: %s driver version %s is loaded from %y, however Qorus requires at least version %s to access the system schema; please install a compatible version of the %s driver and try again\n", d, di.version, di.filename, min, d);
+                exit(MISSING);
+            }
+        }
+
+        if (!qoption.qorus.lsb) {
+            if (!strlen(ENV.OMQ_DIR)) {
+                stderr.printf("error: OMQ_DIR environment variable is not set, aborting\n");
+                exit(MISSING);
+            }
+
+            if (!is_dir(ENV.OMQ_DIR)) {
+                stderr.printf("error: OMQ_DIR=%y system directory does not exist, aborting\n", ENV.OMQ_DIR);
+                exit(MISSING);
+            }
+        }
+
+        if (o.firsttime) {
+            doFirstTimeInstall();
+        }
+
+        if (o.newrel)
+            execLoadFile();
+
+        foreach string arg in (o.run) {
+            (*string dsn, *string file) = (arg =~ x/^([^=]+)=(.+)$/);
+            if (!exists dsn) {
+                stderr.printf("error: argument %y to --run-schema does not have format <datasource>=<filename>\n", arg);
+                exit(OTHER);
+            }
+            auto line;
+            # check for a starting line number
+            if (file =~ /:[0-9]+$/) {
+                # get the line number
+                line = int((file =~ x/:([0-9]+)$/)[0]);
+                # remove the line number from the file name
+                file =~ s/:[0-9]+$//;
+                if (!line)
+                    line = 1;
+            } else
+                line = 1;
+
+            if (line <= 0) {
+                stderr.printf("error: invalid line %d given to %s=%s\n", line, dsn, file);
+                exit(OTHER);
+            }
+
+            # open datasource
+            Datasource ds = omqclient.getDatasource(dsn);
+            ds.setAutoCommit(True);
+            runSchemaCmd(dsn, ds.getDriverName(), ds, file, line);
+        } # foreach
+
+        # exit if there are no other options to run
+        if ((o.newrel || elements o.run || o.firsttime)
+            && !exists o.frebuild && !exists o.rebuild && !exists o.analyze
+            && !exists o.sstats && !exists o.tstats && !exists o.bb
+            && !exists o.recover && !o.sessions && !o.lsess && !o.session
+            && !o.create && !o.upgrade && !o.current && !o.verify && !o.drop
+            && !exists o.snapshot && !exists o.reset_loggers)
+            return;
+
+        try {
+            sysDs.open();
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf("ST01 %s: %s\n", ex.err, ex.desc);
+            if (o.verbose)
+                rethrow;
+            exit(INVALID);
+        }
+
+        try {
+            if (exists o.frebuild) {
+                Datasource ds = o.frebuild === True ? sysDs : omqclient.getDatasource(o.frebuild);
+                exit(schemaTool::forceRebuildAll(ds));
+            }
+            if (exists o.rebuild) {
+                Datasource ds = o.rebuild === True ? sysDs : omqclient.getDatasource(o.rebuild);
+                analyze(ds, True);
+                exit(SUCCESS);
+            }
+            if (exists o.analyze) {
+                Datasource ds = o.analyze === True ? sysDs : omqclient.getDatasource(o.analyze);
+                analyze(ds);
+                exit(SUCCESS);
+            }
+            if (exists o.sstats) {
+                Datasource ds = o.sstats === True ? sysDs : omqclient.getDatasource(o.sstats);
+                exit(schemaTool::getSchemaStats(ds));
+            }
+            if (exists o.reset_loggers) {
+                load_module("QorusSchema");
+
+                Table loggers(omq, "loggers");
+
+                call_function("clear_logger_params", cast<AbstractDatasource>(omq), loggers, o.verbose);
+                call_function("set_logger_def_params", cast<AbstractDatasource>(omq), loggers, o.verbose);
+
+                printf("done\n");
+                exit(SUCCESS);
+            }
+            if (elements o.tstats) {
+                foreach string table in (o.tstats) {
+                    auto ds = sysDs;
+                    # if there is an equals sign, then get the datasource name
+                    if (table =~ /=/) {
+                        *string t;
+                        (ds, t) = (table =~ x/(.*)=(.*)/);
+                        if (!exists ds || !exists t) {
+                            stderr.printf("ERROR: cannot process table argument %y\n", table);
+                            exit(OTHER);
+                        }
+                        ds = omqclient.getDatasource(ds);
+                        stdout.printf("ds=%s/%s@%s\n", ds.getUserName(), ds.getPassword(), ds.getDBName());
+                        table = t;
+                    }
+                    schemaTool::getTableStats(ds, table);
+                }
+                return;
+            }
+
+            if (o.snapshot) {
+                exit(schemaTool::refreshSnapshots(o.dryrun));
+            }
+
+            if (o.bb) {
+                Datasource ds = o.bb ? sysDs : omqclient.getDatasource(o.bb);
+                exit(schemaTool::showBlockBufferHitRatio(ds));
+            }
+
+            if (o.sessions) {
+                exit(listOpenSessions());
+            }
+
+            if (o.lsess) {
+                exit(listSessions(o.lsess === True ? NOTHING : o.lsess));
+            }
+
+            if (o.session) {
+                exit(showSession(o.session));
+            }
+
+            try {
+                if (o.verify === True) {
+                    exit(verifySystem());
+                } else if (o.create) {
+                    exit(verifySystem());
+                } else if (o.upgrade) {
+                    exit(verifySystem());
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "DESERIALIZATION-ERROR") {
+                    printf("skipping schema validation as Qorus is currently up and running (WARNING: ZeroMQ "
+                        "check failed, but HTTP server is up: %s: %s\n", ex.err, ex.desc);
+                    exit(0);
+                }
+                rethrow;
+            }
+
+            if (o.verify) {
+                exit(alignUserSchema(o.verify));
+            }
+
+            if (o.drop) {
+                exit(o.drop === True ? dropSystemSchema() : dropUserSchema(o.drop));
+            }
+
+            if (o.recover) {
+                exit(recover(o.recover.typeCode() == NT_STRING ? o.recover : qoption.qorus."instance-key"));
+            }
+
+            if (o.current) {
+                stdout.printf("%s\n", OMQ::datamodel);
+                return;
+            }
+
+            string ver = checkVersion();
+            if (!o.verbose) {
+                stdout.printf("%s\n", ver);
+            } else {
+                *string arch = getArchName();
+                # try to get archive datasource
+                if (exists arch) {
+                    try {
+                        Datasource ads = omqclient.getDatasource(arch);
+                        arch = sprintf("(archive datasource %y: %s@%s (%s) version %s)", arch, ads.getUserName(),
+                            ads.getDBName(), ads.getDriverName(), checkVersion(ads));
+                    } catch (hash<ExceptionInfo> ex) {
+                        arch = sprintf("(archive datasource %y is invalid: %s: %s)", arch, ex.err, ex.desc);
+                    }
+                } else
+                    arch = "(no archive schema configured)";
+                stdout.printf("%s@%s (%s) version %s %s\n", sysDs.getUserName(), sysDs.getDBName(),
+                    sysDs.getDriverName(), ver, arch);
+            }
+            return;
+        } catch (hash<ExceptionInfo> ex) {
+            stderr.printf("ST02 %s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+            if (o.verbose) {
+                rethrow;
+            } else {
+                exit(OTHER);
+            }
+        }
+    } # constructor
+
+    setConn() {
+        conn = sprintf("%s:%s@%s", sysDs.getDriverName(), sysDs.getUserName(), sysDs.getDBName());
+        if (exists sysDs.getHostName())
+            conn += "%" + sysDs.getHostName();
+    }
+
+    static forceRebuildAll(Datasource ds) {
+        string driver = ds.getDriverName();
+
+        SqlUtil::Database db(ds);
+
+        switch (driver) {
+            case "oracle": {
+                # get a list of user indexes
+                hash q = ds.select("select index_name, tablespace_name
+                                   from user_indexes
+                                   where partitioned = 'NO' and index_type not in ('LOB', 'IOT - TOP')");
+                context (q) {
+                    if (o.verbose)
+                        stdout.printf("rebuilding: %s\n", %index_name);
+                    db.rebuildIndex(%index_name, {
+                        "tablespace": %tablespace_name,
+                        "parallel": exists o.parallel,
+                    });
+                }
+                stdout.printf("%d index(es) rebuilt\n", elements q.index_name);
+                stdout.sync();
+                break;
+            }
+            case "pgsql": {
+                list ixl = ds.select("select indexname from pg_indexes where schemaname = %v", "public").indexname;
+                map db.rebuildIndex($1), ixl;
+                stdout.printf("%d indexes rebuilt\n", ixl.size());
+                stdout.sync();
+                break;
+            }
+            case "mysql": {
+                db.reclaimSpace();
+                stdout.printf("indexes rebuilt on schema\n");
+                stdout.sync();
+                break;
+            }
+            default: {
+                throw "DB-ERROR", sprintf("don't know how to rebuild indexes with driver '%s'", driver);
+            }
+        } #switch
+    } # forceRebuildAll
+
+    analyze(Datasource ds, bool rebuild=False) {
+        string driver = ds.getDriverName();
+        if (driver != "oracle") {
+            stderr.printf("ERROR: don't know how to analyze indexes with driver %s, only oracle is supported\n", driver);
+            exit(OTHER);
+        }
+
+        Database db(ds);
+
+        # get a list of user indexes
+        hash q = ds.select("select index_name, tablespace_name
+                          from user_indexes
+                          where partitioned = 'NO' and index_type != 'LOB'");
+
+        # build index statistics
+        context (q) {
+            stdout.printf("analyzing %-30s: ", %index_name);
+            stdout.sync();
+
+            hash opts = ("tablespace" : %tablespace_name, "cond_rebuild" : True);
+
+            if (o.dryrun) {
+                stdout.printf("SqlUtil::Database::rebuildIndex(), args: %s, %y", %index_name, opts);
+            }
+            else if (!rebuild) {
+                if (db.rebuildIndexAnalyze(%index_name, o.maxh, o.maxleaf))
+                    stdout.printf("REBUILT candidate\n");
+                else
+                    stdout.printf("valid index\n");
+            }
+            else {
+                if (db.rebuildIndex(%index_name, opts))
+                    stdout.printf("REBUILT\n");
+                else
+                    stdout.printf("skipped\n");
+            }
+        } # context
+    } #analyze
+
+    static getSchemaStats(AbstractDatasource ds) {
+        string schema = ds.getUserName();
+        stdout.printf("gathering statistics for schema '%s': ", schema);
+
+        if (o.dryrun) {
+            stdout.printf("SqlUtil::Database::computeStatistics()\n",);
+        }
+        else {
+            my SqlUtil::Database db(ds);
+            db.computeStatistics();
+        }
+        stdout.printf("OK\n");
+    }
+
+    static getTableStats(AbstractDatasource ds, string table) {
+        string schema = ds.getUserName();
+        stdout.printf("gathering statistics for schema.table '%s.%s': ", schema, table);
+
+        hash opts = ( "tables" : table );
+        if (o.dryrun) {
+            stdout.printf("SqlUtil::Database::computeStatistics(), args: %y\n", opts);
+        } else {
+            my SqlUtil::Database db(ds);
+            db.computeStatistics(opts);
+        }
+        stdout.printf("OK\n");
+    }
+
+    static int refreshSnapshots(bool dryRun = False) {
+        if (dryRun) {
+            printf("No snapshot refreshing in dry run mode\n");
+            return 0;
+        }
+        try {
+            printf("Trying to contact Qorus server\n");
+            printf("%N\n", omqapi.callAPI("omq.system.schema.refresh-snapshots"));
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err == "SOCKET-CONNECT-ERROR") {
+                printf("Qorus server is unreachable, running directly in the system DB\n");
+                SQLInterface sqlif = omqclient.getSQLIF(sysDsn);
+                sqlif.refreshSnapshots();
+            } else {
+                rethrow;
+            }
+        }
+        return 0;
+    }
+
+    static showBlockBufferHitRatio(AbstractDatasource ds) {
+        string driver = ds.getDriverName();
+        if (driver != "oracle") {
+            stderr.printf("ERROR: don't know how get block buffer hit ratio with driver %s, only oracle is supported\n", driver);
+            exit(OTHER);
+        }
+
+        hash q = ds.select("select name, 100 - round ((physical_reads / (db_block_gets + consistent_gets)) * 100 , 2) as \"hitratio\" from vbuffer_pool_statistics");
+        context (q) {
+            stdout.printf("%s: %.3f\n", %name, %hitratio);
+        }
+    }
+
+    string checkVersion(Datasource ds, *reference driver, softbool continuev = False) {
+        driver = ds.getDriverName();
+        auto db_ver = ds.getServerVersion();
+        if (!exists db_ver) {
+            stderr.printf("ERROR: cannot determine version of %s server\n", driver);
+            exit(VERSION_ERROR);
+        }
+        if (driver != "jdbc" && driver != "odbc") {
+            string req_ver;
+            switch (driver) {
+                case "oracle": {
+                    req_ver = "8.0.0";
+                    break;
+                }
+                case "mysql": {
+                    req_ver = "5.0.20";
+                    break;
+                }
+                case "pgsql": {
+                    req_ver = "8.1.0";
+                    break;
+                }
+                default: {
+                    stderr.printf("ERROR: driver %y is not supported for Qorus system schemas\n", driver);
+                    exit(VERSION_ERROR);
+                }
+            } # switch
+            #printf("ver=%d, req=%d (str ver=%y, req=%y)\n", db_ver, req_ver, db_ver_str, req_ver_str);
+
+            if (Util::compare_version(db_ver.toString(), req_ver) < 0) {
+                stderr.printf("ERROR: %s server version %y is too old to support Qorus Integration Engine "
+                    "(minimum %s required)\n", driver, db_ver, req_ver);
+                exit(VERSION_ERROR);
+            }
+        }
+
+        *list<auto> ver;
+        try {
+            ver = ds.selectRows("select * from system_properties where domain = 'omq'");
+        } catch (hash<ExceptionInfo> ex) {
+            if (o.verbose)
+                stderr.printf("ST03 %s: %s\n", ex.err, ex.desc);
+            return "EMPTY";
+        }
+        foreach hash<auto> row in (ver) {
+            if (row.key == "schema-version" || row.key == "omq-schema-version"
+                || row.keyname == "schema-version" || row.keyname == "omq-schema-version") {
+                string str;
+                if (o.code) {
+                    my (*string major, *string minor, *string subv) = row.value =~ x/([0-9]+).([0-9]+).([0-9]+)/;
+                    str = sprintf("%02d%02d%02d", major, minor, subv);
+                } else
+                    str = row.value;
+                return str;
+            }
+        }
+
+        if (o.verbose)
+            stderr.printf("could not find schema version in system_properties omq domain: %y\n", ver);
+        if (!continuev) {
+            stdout.printf("INVALID\n");
+            exit(INVALID);
+        }
+        return "INVALID";
+    }
+
+    string checkVersion(*reference driver, softbool continuev = False) {
+        return checkVersion(sysDs, \driver, continuev);
+    } # checkVersion
+
+    *string checkTablespaces(string driver) {
+        if (driver == "mysql")
+            return;
+
+        # see if tablespaces exist
+        string dts = o.dts.omq ?? "omq_data";
+        string its = o.its.omq ?? "omq_index";
+
+        if (driver == "oracle") {
+            if (!sysDs.selectRow("select tablespace_name from user_tablespaces where tablespace_name = %v", toupper(dts)).tablespace_name)
+                return dts;
+            if (!sysDs.selectRow("select tablespace_name from user_tablespaces where tablespace_name = %v", toupper(its)).tablespace_name)
+                return its;
+            return;
+        }
+
+        # must be pgsql - PostgreSQL
+        if (!sysDs.selectRow("select spcname from pg_tablespace where spcname = %v", tolower(dts)).spcname)
+            return dts;
+        if (!sysDs.selectRow("select spcname from pg_tablespace where spcname = %v", tolower(its)).spcname)
+            return its;
+    } # checkTablespaces
+
+    dropUserSchema(string n) {
+        if (!qoption."qorus-client"."allow-drop-user-schema") {
+            printf("cannot drop user schema; qorus option qorus-client.allow-drop-user-schema is not set in %y\n", qoption.qorus."option-file");
+            return;
+        }
+
+        UserSchemaHelper schema(n);
+        schema.drop(o.force, o.verbose);
+    }
+
+    *int dropSystemSchema() {
+        if (!qoption."qorus-client"."allow-drop-schema") {
+            printf("cannot drop system schema; qorus option qorus-client.allow-drop-schema is not set in %y\n", qoption.qorus."option-file");
+            return;
+        }
+
+        SchemaHelper schema(sysDs);
+        schema.drop(o.force, o.verbose);
+    }
+
+    alignUserSchema(string n) {
+        UserSchemaHelper schema(n);
+
+        int cc = schema.align(o.force, o.verbose);
+        if (cc && o.verbose)
+            printf("%s: user schema %y is at version %s\n", schema.getDesc(), n, schema.getVersion());
+    }
+
+    private getOmqConfigItemValuesTable() {
+        if (omq_config_item_values) {
+            return;
+        }
+        omq_config_item_values = (new Table(omq, "config_item_values")).getTable();
+    }
+
+    # Qorus post-installation checks appear here; NOTE: more than just schema verification
+    verifySystem() {
+        # verify the system before the schema is checked
+        omqclient.preSchemaVerifySystem(True);
+
+        # do not run any schema verification actions if the system is running
+        if (isQorusRunning()) {
+            printf("skipping schema validation as Qorus is currently up and running\n");
+            return;
+        }
+
+        # align omq schema in any case
+        bool first_time_install = alignSystemSchemaIntern(omq, "omq", True);
+
+        # verify the system after the schema is checked
+        omqclient.postSchemaVerifySystem(True);
+
+        # check the archive schema
+        # here it *must* select from omq - we are comparing arch datasource from source OMQ instance
+        *string archProp = getArchName();
+
+        if (exists archProp) {
+            if (exists o.arch && archProp != o.arch) {
+                stderr.printf("ARCH-ERROR: Cannot create archive schema (%y) because it's already configured in the "
+                    "system.arch service (%y)", sysDsn, archProp);
+                exit(OTHER);
+            }
+            o.arch = archProp;
+        }
+
+        getOmqConfigItemValuesTable();
+
+        if (o.arch) {
+            if (!arch_serviceid) {
+                stderr.printf("ARCH-ERROR: Cannot create archive schema (%y) until the system.arch service has been "
+                    "loaded; please load system services by executing schema-tool -Vvf and retry this operation\n",
+                    sysDsn);
+                exit(OTHER);
+            }
+
+            Datasource ds = omqclient.getDatasource(o.arch);
+            alignSystemSchemaIntern(ds, o.arch, False);
+
+            # upsert the config items
+            SchemaHelper schema(omq);
+            on_success omq.commit();
+            on_error omq.rollback();
+
+            # write to config item for arch service
+            omq_config_item_values.upsert({
+                "level": "arch:" + arch_serviceid,
+                "name": "datasource",
+                "value": serialize_qorus_data(o.arch),
+            });
+            omq_config_item_values.upsert({
+                "level": "arch:" + arch_serviceid,
+                "name": "archive",
+                "value": serialize_qorus_data(True)},
+            );
+
+            handleArch(ds);
+        }
+
+        # check if exist some "sub-archive schemas" (shadow-datasources).
+        # It requires "forgetting" the o.arch because the arch.datasource
+        # flag has to be fixed only for o.arch (above)
+        stdout.printf("Checking for upgrade of system.arch shadow-datasources...\n");
+        *hash<auto> shadowProp = omq_config_item_values.selectRow({
+            "where": {
+                "level": "arch:" + arch_serviceid,
+                "name": "shadow-datasources",
+            },
+        });
+        if (!exists shadowProp || !exists shadowProp.value) {
+            stdout.printf("    none found\n");
+        } else {
+            *softlist<softstring> shadows = deserialize_qorus_data(shadowProp.value);
+            foreach string i in (shadows) {
+                stdout.printf("    system.arch shadow-datasource: %y\n", i);
+                Datasource ds = omqclient.getDatasource(i);
+                alignSystemSchemaIntern(ds, i, False);
+                handleArch(ds);
+            }
+        }
+
+        verifySystemServices();
+
+        # DB operations performed, sync arch service config items if possible
+        try {
+            qrest.put("system/metadata/reload/config_values");
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "SOCKET-CONNECT-ERROR"
+                && (ex.err != "QOREADDRINFO-GETINFO-ERROR")
+                && (ex.err != "API-CALL-ERROR" || ex.desc !~ /NO-SERVICE/)) {
+                rethrow;
+    	    }
+        }
+
+        if (first_time_install) {
+            doFirstTimeInstallDb();
+        }
+    }
+
+    bool isQorusRunning() {
+        return !system("qctl api qorus-core PING >/dev/null 2>/dev/null");
+    }
+
+    private doFirstTimeInstall() {
+        # do not run any schema verification actions if the system is running
+        if (isQorusRunning()) {
+            doFirstTimeInstallApi();
+        } else {
+            doFirstTimeInstallDb();
+        }
+    }
+
+    private doFirstTimeInstallApi() {
+        bool changes;
+        if (!qrest.get("services/arch/config/day-interval/is_set") ) {
+            qrest.put("services/arch/config/day-interval", {"value": 90});
+            stdout.printf("set config item arch.day-interval = 90\n");
+            changes = True;
+        }
+
+        if (!qrest.get("jobs/qorus-archiver/active") ) {
+            qrest.put("jobs/qorus-archiver/setActive", {"active": True});
+            stdout.printf("activated the qorus-archiver job\n");
+            if (!changes) {
+                changes = True;
+            }
+        }
+
+        if (!qrest.get("jobs/qorus-log-rotator/active") ) {
+            qrest.put("jobs/qorus-log-rotator/setActive", {"active": True});
+            stdout.printf("activated the qorus-log-rotator job\n");
+            if (!changes) {
+                changes = True;
+            }
+        }
+        reportChanges(changes);
+    }
+
+    private doFirstTimeInstallDb() {
+        stdout.printf("running first time install actions: enabling DB archiving and log rotation\n");
+        bool changes;
+        if (setServiceConfigItemValueIfUnset("arch", "day-interval", 90)) {
+            changes = True;
+        }
+        if (activateJob("qorus-archiver") && !changes) {
+            changes = True;
+        }
+        if (activateJob("qorus-log-rotator") && !changes) {
+            changes = True;
+        }
+        reportChanges(changes);
+    }
+
+    private reportChanges(*bool changes) {
+        if (changes) {
+            stdout.printf("changes made; DB archiving and log rotation are enabled\n");
+        } else {
+            stdout.printf("no changes necessary; Qorus is already configured for DB archiving and log rotation\n");
+        }
+    }
+
+    private int getServiceId(string name) {
+        return omq.selectRow("select serviceid from services where name = %v", name).serviceid;
+    }
+
+    private bool setServiceConfigItemValueIfUnset(string service, string item, auto val) {
+        string level = "service:" + getServiceId(service);
+        *hash<auto> row = omq.selectRow("select value from config_item_values where \"level\" = %v and name = %v",
+            level, item);
+        if (row) {
+            return False;
+        }
+        omq.exec("insert into config_item_values (name, \"level\", value) values (%v, %v, %v)", item, level,
+            make_yaml(val));
+        stdout.printf("set config item %s.%s = %s\n", service, item, val);
+        return True;
+    }
+
+    private bool activateJob(string job) {
+        int updated = omq.exec("update jobs set active = 1 where name = %v and active = 0", job);
+        if (!updated) {
+            return False;
+        }
+        stdout.printf("activated job %y\n", job);
+        return True;
+    }
+
+    # #1044: schema-tool should also verify that system services
+    # are loaded when performing schema verification (-V)
+    private verifySystemServices() {
+        AbstractTable t_omq_services = get_sql_table(omq, "services");
+        HashIterator it(MinSystemServiceVersion);
+        while (it.next()) {
+            hash<auto> sh = {
+                "columns": cop_as(cop_count(), "cnt"),
+                "where": {
+                    "service_type": "SYSTEM",
+                    "name": it.getKey(),
+                    "version": it.getValue(),
+                },
+            };
+            int sys_services_count = t_omq_services.selectRow(sh).cnt;
+            if (sys_services_count == 0) {
+                printf("WARNING: system service %s, version: %s is not found in the system schema\n",
+                       it.getKey(), it.getValue());
+            } else if (o.verbose) {
+                printf("system service OK: %s, version %s\n", it.getKey(), it.getValue());
+            }
+        }
+    }
+
+    #! Returns True if the schema was created for the first time
+    private bool alignSystemSchemaIntern(Datasource ds, string dsn, bool execFile) {
+        # issue #2309 - we should allow to use user defined tablespaces, not only omq setup.
+        #               But omq setup is used as a default.
+        SchemaHelper schema(ds, o.dts{dsn} ?? o.dts.omq, o.its{dsn} ?? o.its.omq);
+
+        hash<SchemaAlignmentInfo> schema_info = schema.alignWithInfo(o.force, o.verbose);
+        if (schema_info.num_changes) {
+            stdout.printf("%s: system schema %y is at version %s\n", conn, dsn, OMQ::datamodel);
+            if (execFile) {
+                execLoadFile();
+            }
+        }
+        return schema_info.created ?? False;
+    }
+
+    # setup "arch" system properties flag if it's required.
+    private handleArch(Datasource ds) {
+        on_success ds.commit();
+        on_error ds.rollback();
+
+        SqlUtil::Table t_sysprop(ds, "system_properties");
+        t_sysprop.upsert(("domain": "arch", "keyname": "archive", "value": serialize_qorus_data(True)));
+    }
+
+    # returns the name of the archive schema datasource, if any
+    *string getArchName() {
+        if (arch_checked) {
+            return arch_datasource_name;
+        }
+        # get arch serviceid
+        arch_serviceid = omq.selectRow("select serviceid from services where service_type = %v and name = %v",
+            "SYSTEM", "arch").serviceid;
+        if (!arch_serviceid) {
+            return;
+        }
+
+        # must use SqlUtil here to quote reserved words (ex: Oracle)
+        getOmqConfigItemValuesTable();
+        *string arch = omq_config_item_values.selectRow({
+            "columns": "value",
+            "where": {
+                "name": "datasource",
+                "level": "service:" + arch_serviceid,
+            },
+        }).value;
+        if (arch) {
+            arch_datasource_name = deserialize_qorus_data(arch);
+        }
+        return arch_datasource_name;
+    }
+
+    private string getOloadCmd() {
+        string str = "oload";
+        # add data tablespace info
+        if (omqdts)
+            str += sprintf(" --data-ts=omq=%s", omqdts);
+        # add index tablespace info
+        if (omqits)
+            str += sprintf(" --index-ts=omq=%s", omqits);
+        # add datasource connection info
+        if (omqds)
+            str += sprintf(" -Domq=%s", omqds);
+        return str;
+    }
+
+    *int execLoadFile() {
+
+        string file = sprintf("%s/releases/qorus-%s.qrf", omqclient.getAppDir(), OMQ::version);
+        if (!is_readable(file)) {
+            stderr.printf("can't find version %s system load file %s\n", OMQ::version, file);
+            exit(OTHER);
+        }
+
+        string cmd = sprintf("%s %s%s", getOloadCmd(), o.verbose ? "" : "-q ", file);
+
+        stdout.printf("running system release load script\n");
+        if (o.verbose)
+            stdout.printf("running %s\n", cmd);
+        chdir(omqclient.getAppDir());
+        int rc = system(cmd);
+        if (rc) {
+            stderr.printf("oload returned with error code %d\n", rc);
+            return OTHER;
+        }
+    }
+
+    static hash mysqlGetBlock(reference lines, reference ln, reference delim) {
+        auto rv;
+        auto start = ln;
+        while (True) {
+            if (!elements lines)
+                break;
+            auto line = shift lines;
+            ++ln;
+            # remove comments
+            line =~ s/--.*$//;
+
+            # remove \n
+            chomp line;
+
+            if (line =~ /delimiter/i) {
+                delim = (line =~ x/delimiter(.*)$/i)[0];
+                trim delim;
+                #printf("DEBUG: set delimiter pattern to %s\n", delim);
+                continue;
+            }
+
+            # if line is empty or only whitespace, then skip
+            if (!strlen(line) || line =~ /^[ \t]+$/)
+                continue;
+
+            # ignore exit or quit lines
+            if (line =~ /(exit|quit)( \t)*;?( \t)?$/i)
+                continue;
+
+            if (delim == ";") {
+                auto l = line;
+                # remove trailing semicolon and whitespace from line
+                l =~ s/;([ \t])*$//;
+                # add line to statement text
+                rv += sprintf("%s\n", l);
+                if (line =~ /;/)
+                    break;
+                continue;
+            }
+
+            if (bindex(line, delim) != -1)
+                break;
+
+            rv += sprintf("%s\n", line);
+        } # while
+        trim rv;
+        return ( "text"  : rv,
+                 "start" : start,
+                 "end"   : ln - 1 );
+    } # mysqlGetBlock
+
+    static hash pgsqlGetBlock(auto lines, auto ln) {
+        auto rv;
+        auto in_block;
+        auto start = ln;
+
+        while (True) {
+            if (!elements lines)
+                break;
+            auto line = shift lines;
+            ln++;
+            # remove comments
+            line =~ s/--.*$//;
+            auto b_start;
+
+            # remove \n
+            chomp line;
+
+            if (!strlen(line))
+                continue;
+
+            if (!in_block && line =~ /\$\$/) {
+                in_block = b_start = True;
+            }
+
+            # ignore exit or quit lines
+            if (line =~ /(exit|quit)( \t)*;?( \t)?$/i)
+                continue;
+
+            if (!in_block) {
+                auto l = line;
+                l =~ s/;([ \t])*$//;
+                rv += sprintf("%s\n", l);
+                if (line =~ /;/)
+                    break;
+                continue;
+            }
+
+            rv += sprintf("%s\n", line);
+
+            if (b_start)
+                continue;
+
+            if (in_block && line =~ /\$\$/)
+                break;
+        } #while
+        trim rv;
+        return ( "text"  : rv,
+                 "start" : start,
+                 "end"   : ln - 1 );
+    } # pgsqlGetBlock
+
+    static *string oraGetLine(auto lines, auto ln, bool isBlock) {
+        *string line;
+        do {
+            line = shift lines;
+            ++ln;
+
+            # remove comments
+            if (!isBlock)
+                line =~ s/--.*$//;
+
+            # remove \n or \r\n
+            chomp line;
+        } while ((!isBlock && !strlen(line)) && elements lines);
+
+        return line;
+    }
+
+    # features: forget the comments if it's not in pl/sql block
+    #           keep comments in pl/sql blocks
+    #           keep whitespaces and indentation in pl/sql blocks
+    # it's using execRaw now, so backquote raw ':' characters in stored procs and functions
+    # is not required now.
+    static hash oracleGetBlock(reference lines, reference ln) {
+        auto rv;
+        auto pattern = ";";
+        auto start = ln;
+        bool isBlock = False;
+
+        while (True) {
+            if (!elements lines)
+                break;
+            *string line = schemaTool::oraGetLine(\lines, \ln, isBlock);
+
+            if (line =~ /begin[^_a-z0-9]/i) {
+                pattern = "/";
+                isBlock = True;
+                # HACK to eol stuff after begin keyword wich is removed
+                # in oraGetLine
+                line += "\n";
+            }
+
+            # begin/i is here to allow to use anonymous pl/sql block in the sql script - pvanek
+            if (line =~ /create[ \t]+(or[ \t]+replace)$/i || line =~ /begin/i)
+                line += schemaTool::oraGetLine(\lines, \ln, True);
+
+            if (line =~ /create[ \t]+(or[ \t]+replace[ \t]+)?(package|function|type|trigger|procedure)/i) {
+                pattern = "/";
+                isBlock = True;
+            }
+
+            # ignore exit or quit lines
+            if (line =~ /(exit|quit)( \t)*;?( \t)?$/i)
+                continue;
+
+            if (pattern == ";") {
+                *string l = line;
+                l =~ s/;([ \t])*$//;
+                rv += sprintf("%s\n", l);
+                #printf("line;: %y l = %y\n", line =~ /\;/, l);
+                if (line =~ /\;/)
+                    break;
+                continue;
+            }
+
+            if (line =~ /^( \t)*\/( \t)*$/) {
+                isBlock = False;
+                break;
+            }
+
+            rv += sprintf("%s\n", line);
+        } #while
+        trim rv;
+        #printf("%04d - %04d: %s\n", start, ln - 1, rv);
+        return (
+            "text"  : rv,
+            "start" : start,
+            "end"   : ln - 1,
+            );
+    } # oracleGetBlock
+
+    hash runSchemaStatements(auto code, auto dsn, auto ds, auto file, auto blocks, auto sys) {
+        auto fn = basename(file);
+
+        my (auto ok, auto err);
+
+        auto dts = o.dts{dsn};
+        auto its = o.its{dsn};
+
+        while (elements blocks) {
+            auto block = shift blocks;
+
+            auto sql = block.text;
+
+            # substitute tablespace names
+            if (exists dts
+                && sql !~ /create[ \t]+(unique[ \t]+)?index/i
+                && sql !~ /index[ \t]+tablespace/i
+                && sql =~ /tablespace[ \t]+\w+/i) {
+                sql = regex_subst(sql, "tablespace[ \\t]+\\w+", "tablespace " + dts, RE_Caseless);
+            }
+            else if (exists its
+                     && (sql =~ /create[ \t]+(unique[ \t]+)?index/i || sql =~ /index[ \t]+tablespace/i)
+                     && sql =~ /tablespace[ \t]+\w+/i) {
+                sql = regex_subst(sql, "tablespace[ \\t]+\\w+", "tablespace " + its, RE_Caseless);
+            }
+            #printf("BLOCK:\n%N\n", block);
+            try {
+                if (o.verbose) {
+                    if (o.verbose > 1)
+                        stdout.printf("-- ");
+                    if (block.start != block.end)
+                        stdout.printf("%s:%d - %d", fn, block.start, block.end);
+                    else
+                        stdout.printf("%s:%d", fn, block.start);
+
+                    if (o.verbose > 1)
+                        stdout.printf("\n%s\n", sql);
+                    else
+                        stdout.print(": ");
+                }
+                else {
+                    stdout.print(".");
+                    stdout.sync();
+                }
+
+                if (!o.dryrun)
+                    ds.execRaw(sql);
+                else
+                    stdout.printf("%s\n", sql);
+
+                if (o.verbose == 1)
+                    stdout.print("OK\n");
+                ++ok;
+            }
+            catch (hash<ExceptionInfo> ex) {
+                ++err;
+                if (!o.verbose)
+                    stdout.print("\n");
+                if (o.verbose < 2)
+                    stderr.printf("ERROR SQL=%y\n", sql);
+
+                #printf("SQL=%s\n", sql);
+                printf("ST04%s: %s\n", ex.err, ex.desc);
+                if (o.ignore) {
+                    stderr.printf("ignoring error in schema script %s:%d\n", file, block.start);
+                    continue;
+                }
+                stderr.printf("stopped executing schema script %s at line %d\n", file, block.start);
+                stderr.printf("please correct the error and resume executing the script from the point where\n");
+                stderr.printf("the error occurred by executing:\n%s ", get_script_name());
+                if (sysDsn != "omq")
+                    stderr.printf("-a ");
+                if (!sys)
+                    stderr.printf("-r%s=%s:%d\n", dsn, file, block.start);
+                else if (o.create)
+                    stderr.printf("--create-old=%d\n", block.start);
+                else if (o.upgrade)
+                    stderr.printf("--upgrade-old=%d\n", block.start);
+                else if (o.drop)
+                    stderr.printf("--drop=%d\n", block.start);
+                exit(OTHER);
+            } #catch
+        } # while
+        if (!o.verbose)
+            stdout.print("\n");
+        return ( "ok" : ok, "err" : err );
+    }
+
+    runSchemaCmd(string dsn, string driver, Datasource ds, string file, *softint line, *softbool sys) {
+        string schema = sys ? sprintf("%s/sql/%s", omqclient.getAppDir(), file) : file;
+
+        if (!is_readable(schema)) {
+            stderr.printf("error: cannot open schema file %y: %s\n", schema, strerror(errno()));
+            exit(OTHER);
+        }
+
+        File f();
+        f.open2(schema);
+        # read in the entire file
+        auto lines = f.read(-1);
+
+        # detect EOL
+        string eol = lines =~ /\r\n/ ? "\r\n" : "\n";
+
+        # split it into component lines
+        lines = split(eol, lines);
+
+        if (o.verbose)
+            stdout.printf("%s: %d line%s in file\n", file, elements lines, elements lines == 1 ? "" : "s");
+
+        auto ln;
+        # remove lines to skip, if any
+        if (line > 1) {
+            auto sl = line - 1;
+            stdout.printf("skipping %d line%s\n", sl, sl == 1 ? "" : "s");
+            splice lines, 0, sl;
+            ln = line;
+        }
+        else
+            ln = 1;
+
+        auto code;
+        switch (driver) {
+            case "oracle": code = \schemaTool::oracleGetBlock(); break;
+            case "pgsql" : code = \schemaTool::pgsqlGetBlock(); break;
+            case "mysql" : {
+                # current mysql delimeter - used when processing mysql SQL files
+                # bind the local variable into the closure to track the delimeter state
+                string mdelim = ";";
+                code = hash sub (reference l, reference lin) {
+                    return schemaTool::mysqlGetBlock(\l, \lin, \mdelim);
+                };
+                break;
+            }
+            default: {
+                stderr.printf("error: do not know how to load SQL for driver %y\n", driver);
+                exit(OTHER);
+            }
+        }
+
+        # create list of SQL statements
+        list sl;
+        int total_lines = elements lines;
+        while (elements lines) {
+            auto block = code(\lines, \ln);
+            # skip empty blocks (should only happen at EOF)
+            if (strlen(block.text))
+                sl += block;
+        }
+
+        stdout.printf("loading %s: %d line%s, %d statement%s to load\n", file,
+                      total_lines, total_lines == 1 ? "" : "s",
+                      elements sl, elements sl == 1 ? "" : "s");
+
+        auto rv = runSchemaStatements(code, dsn, ds, schema, sl, sys);
+        auto tot = rv.ok + rv.err;
+        stdout.printf("%d statement%s executed, %d error%s encountered\n", tot, tot == 1 ? "" : "s", rv.err, rv.err == 1 ? "" : "s");
+    } # runSchemaCmd
+
+    private int showSession(int sid) {
+        Table t(sysDs, "sessions");
+
+        *hash h = t.selectRow(("where": ("sessionid": sid)));
+        if (!h) {
+            stdout.printf("sessionid %d does not exist\n", sid);
+            return 1;
+        }
+
+        stdout.printf("%-20s %-10s %-7s %-19s %-19s %s\n", "Instance", "Version", "Session", "Started", "Ended", "Status");
+        showSession(h);
+        return 0;
+    }
+
+    private static sessionHeader() {
+        stdout.printf("%-20s %-10s %-7s %-19s %-19s %s\n", "Instance", "Version", "Session", "Started", "Ended", "Status");
+    }
+
+    private showSession(hash h) {
+        string stat;
+        hash info;
+        if (h.sessionstatus != 'ACTIVE')
+            stat = h.sessionstatus;
+        else {
+            stat = Session::checkLastInstance(h.hostname, h.xmlrpc_server, \info) ? "running/OK" : "unreachable/crashed";
+            stat = sprintf("%s: ", info.url) + stat;
+        }
+
+        stdout.printf("%-20s %-10s %7d %s %19s %s\n", h.instancekey, (h.version ? h.version : "n/a"), h.sessionid, h.started.format("YYYY-MM-DD HH:mm:SS"), h.ended ? h.ended.format("YYYY-MM-DD HH:mm:SS") : NOTHING, stat);
+    }
+
+    private int listSessions(int num = 10) {
+        Table t(sysDs, "sessions");
+
+        *list l = t.selectRows(("limit": num, "orderby": "sessionid", "desc": True));
+        if (!l) {
+            stdout.printf("there are no sessions in the database yet\n");
+            return 1;
+        }
+
+        schemaTool::sessionHeader();
+        map showSession($1), l;
+        return 0;
+    }
+
+    private int listOpenSessions() {
+        *hash q = sysDs.select("select * from sessions where sessionstatus = 'ACTIVE' order by sessionid desc");
+        if (!q.sessionstatus) {
+            stdout.printf("no sessions are currently ACTIVE\n");
+            return 1;
+        }
+
+        context (q) {
+            hash info;
+            int stat = Session::checkLastInstance(%hostname, %xmlrpc_server, \info);
+            stdout.printf("%s sessionid %d started %y: API(%y) %s\n", %instancekey, %sessionid, %started, info.url, stat ? "running/OK" : "unreachable/crashed");
+        }
+        return 0;
+    }
+
+    # recover open session
+    private int recover(string ikey) {
+        int maxdb = qoption.qorus."db-max-threads" ? qoption.qorus."db-max-threads" : 5;
+        int stepsize = qoption.qorus."sql-default-blocksize" ? qoption.qorus."sql-default-blocksize" : OMQ::SQL_DEF_BLOCKSIZE;
+
+        try {
+            SQLInterface sqlif = omqclient.getSQLIF();
+            Session session(sqlif, ikey, maxdb, stepsize);
+            # discard audit messages
+            session.checkRecover(new Audit(sqlif, qoption.qorus.audit), "schema-tool", False);
+        }
+        catch (hash<ExceptionInfo> ex) {
+            stderr.printf("%s:%d: %s: %s\n", ex.file, ex.line, ex.err, ex.desc);
+            return -1;
+        }
+
+        return 0;
+    }
+
+} # class schemaTool
+
+class SchemaHelper {
+    private {
+        object o;
+        AbstractDatasource ds;
+        *bool ac;
+    }
+
+    constructor(AbstractDatasource n_ds, *string n_dts = "omq_data", *string n_its = "omq_index") {
+        ds = n_ds;
+        # load schema module
+        load_module("QorusSchema");
+
+        o = call_function("get_schema_object", ds, n_dts, n_its);
+
+        if (ds instanceof Datasource) {
+            bool n_ac = cast<Datasource>(ds).getAutoCommit();
+            if (n_ac) {
+                ac = n_ac;
+                cast<Datasource>(ds).setAutoCommit(False);
+            }
+        }
+    }
+
+    destructor() {
+        if (ac)
+            cast<Datasource>(ds).setAutoCommit(True);
+    }
+
+    auto methodGate(string m) {
+        return call_object_method_args(o, m, argv);
+    }
+}
+
+class UserSchemaHelper {
+    private {
+        object o;
+        string dsdesc;
+    }
+
+    constructor(string mn) {
+        # load module
+        Program pgm();
+        pgm.loadModule(mn);
+
+        # get datasource name
+        string dsn = pgm.callFunction("get_datasource_name");
+
+        # get datasource
+        Datasource ds = omqclient.getDatasource(dsn);
+
+        # assign description
+        dsdesc = AbstractSqlUtilBase::makeDatasourceDesc(ds);
+
+        # get schema object
+        o = pgm.callFunction("get_user_schema", ds, o.dts{dsn}, o.its{dsn});
+    }
+
+    string getDesc() {
+        return dsdesc;
+    }
+
+    auto methodGate(string m) {
+        return call_object_method_args(o, m, argv);
+    }
+}

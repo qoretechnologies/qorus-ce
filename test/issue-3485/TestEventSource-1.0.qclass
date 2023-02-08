@@ -1,0 +1,18 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class TestEventSource inherits DelayedObservable {
+    constructor() {
+    }
+
+    observersReady() {
+        # raise a single event
+        raiseEvent({"data": "constructor"});
+    }
+
+    raiseEvent(hash<auto> event_data) {
+        notifyObservers("TestEventSource::raiseEvent", event_data);
+    }
+}

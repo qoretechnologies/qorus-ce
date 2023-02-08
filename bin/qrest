@@ -1,0 +1,224 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+# minimum Qore version
+%requires qore >= 1.0
+
+# require type declarations
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+# require all variables to be declared before use
+%require-our
+
+# instantiate class as application
+%exec-class qrest
+
+# Qorus client module
+%requires QorusClientBase
+
+# do not use "$" for vars & members, assume local var scope
+%new-style
+
+# do not allow calls with argument mismatches
+%strict-args
+%enable-all-warnings
+
+%requires RestClient
+%requires Util
+
+class qrest {
+    public {
+        #! program options
+        const Opts = {
+            "proxy"   : "p,proxy-url=s",
+            "show"    : "W,show-url",
+            "to"      : "t,timeout=i",
+            "path"    : "P,path=s",
+            "lit"     : "l,literal:i+",
+            "reformat": "R,reformat",
+            "fullex"  : "E,full-exception",
+            "header"  : "H,header=s@",
+            "schema"  : "S,schema",
+            "testds"  : "T,test-ds",
+            "remote"  : "Q,remote=s",
+            "token"   : "k,token=s",
+            "help"    : "h,help",
+        };
+
+        #! recognized HTTP methods
+        const Methods = {
+            "GET": True,
+            "PUT": True,
+            "POST": True,
+            "DELETE": True,
+            "OPTIONS": True,
+        };
+    }
+
+    usage() {
+        printf("usage: %s [options] [get|put|post|delete] path|URL ['qore msg body']
+ -E,--full-exception  show full exception output
+ -H,--header=ARG      send header with request
+ -p,--proxy-url=ARG   set the proxy URL (ex: http://user:pass@proxy:port)
+ -l,--literal         show literal API calls (more l's, more info)
+ -P,--path=ARG        use alternate leading REST path in URL
+ -Q,--remote=ARG      use the given remote Qorus connection
+ -R,--reformat        reformat data with -l+ for better readability
+ -S,--schema          use the Swagger schema to communicate with Qorus
+ -t,--timeout=ARG     set HTTP timeout in seconds
+ -T,--test-ds         test DataStream support with Qorus server
+ -W,--show-url        show default Qorus system REST API URL (with path prefix) and exit
+ -k,--token=ARG       use the given token with HTTP requests to the Qorus server
+ -h,--help            this help text
+", get_script_name());
+        exit(1);
+    }
+
+    constructor() {
+        QorusClient::initFast();
+
+        GetOpt g(Opts);
+        hash<auto> opt = g.parse3(\ARGV);
+
+        if (opt.remote)
+            qrest = omqclient.getRemoteRest(opt.remote);
+
+        if (opt.schema) {
+            qrest.setSchema();
+        }
+
+        if (opt.show) {
+            if (qrest.getProxyURL())
+                printf("%s (through HTTP proxy: %s)\n", qrest.getURL(), qrest.getProxyURL());
+            else
+                printf("%s\n", qrest.getURL());
+            exit(0);
+        }
+
+        if (opt.help || (!ARGV[0] && !opt.testds))
+            usage();
+
+        if (opt.url)
+            qrest.setURL(opt.url);
+        if (opt.proxy)
+            qrest.setProxyURL(opt.proxy);
+
+        if (opt.to) {
+            int to = opt.to * 1000;
+            qrest.setConnectTimeout(to);
+            qrest.setTimeout(to);
+        }
+
+        *string meth = shift ARGV;
+        if (!meth && !opt.testds)
+            usage();
+
+        *string url = shift ARGV;
+        auto body;
+        if (!opt.testds) {
+            if (!Methods{meth.upr()}) {
+                body = url;
+                url = meth;
+                meth = "GET";
+            }
+            else {
+                meth = meth.upr();
+                body = shift ARGV;
+            }
+
+            if (!url) {
+                stderr.printf("ERROR: missing path or URL for REST call\n");
+                usage();
+            }
+        }
+
+        hash<string, string> hdr;
+        foreach string h in (opt.header) {
+            (*string k, *string v) = (h =~ x/([^:]+):(.+)$/); #/);
+            trim k;
+            trim v;
+            if (!k || !v) {
+                stderr.printf("invalid header %y; expecting \"key: value\" format\n", h);
+                exit(1);
+            }
+            hdr{k} = v;
+        }
+
+        if (opt.path)
+            qrest.setBasePath(opt.path);
+
+        # see if the url is a URL or a path
+        if (url =~ /^[a-z]+:\/\//i) {
+            qrest.setURL(url);
+            url = "";
+        }
+
+        if (opt.testds) {
+            int rc = testDataStream();
+            exit(rc);
+        }
+
+        if (exists body) {
+            body = QorusClientAPI::parseToQoreValue(body);
+        }
+        #printf("url: %y qrest.url: %y body: %y\n", url, qrest.getURL(), body);
+        hash<auto> info;
+        try {
+            auto ans = qrest.restDo(meth, url, body, hdr, opt, \info);
+            if (!opt.lit)
+                printf("%N\n", ans);
+        } catch (hash<ExceptionInfo> ex) {
+            bool rv_set;
+            if (opt.fullex) {
+                stderr.printf("%s\n", Util::get_exception_string(ex));
+            } else {
+                if (qrest.outputRestErrorMessage(ex, info ?? {})) {
+                    set_return_value(1);
+                    rv_set = True;
+                }
+            }
+            if (!rv_set) {
+                set_return_value(2);
+            }
+        }
+    }
+
+    private string getLetter(int i) {
+        return chr(ord("a") + ((rand() % 8) * (i + 1)));
+    }
+
+    private hash getRow() {
+        hash h;
+        for (int i = 0; i < 3; ++i) {
+            h{getLetter(i)} = rand() % 100000;
+        }
+        return h;
+    }
+
+    int testDataStream() {
+        srand(clock_getmicros());
+        list l = ();
+        for (int i = 0; i < 10; ++i)
+            l += getRow();
+        softlist al = qrest.put("system?action=stream;stream=EchoDataStream", l);
+        if (al != l)
+            stderr.printf("ERROR:\nl: %y\na: %y\n", l, al);
+        else
+            printf("send and recv DataStream: OK\n");
+        return 0;
+    }
+}

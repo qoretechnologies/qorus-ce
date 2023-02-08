@@ -1,0 +1,38 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$queues."ref-test"."desc" = "asynchronous test queue for REF-TEST workflow";
+
+const ref_test_array_1  = ("name": "r1:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_2  = ("name": "r2:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_3  = ("name": "r3:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_4  = ("name": "r4:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_5  = ("name": "r5:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_6  = ("name": "r6:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_7  = ("name": "r7:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_8  = ("name": "r8:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_9  = ("name": "r9:1.0",  "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_10 = ("name": "r10:1.0", "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_11 = ("name": "r11:1.0", "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_array_12 = ("name": "r12:1.0", "funcname": "ref_test_1:1.0", "arrayname": "ref_test_array:1.0");
+const ref_test_async = ("name": "ref_test_async:1.0", "arrayname": "ref_test_array:1.0", "endname": "ref_test_end:1.0", "queue": "ref-test");
+const ref_test_final    = ("name": "ref_test_swf:1.0", "subworkflow": True);
+
+$parallel = ( "ref_test_1:1.0", ref_test_array_1, ref_test_array_2, ref_test_array_3, ref_test_array_4, ref_test_array_5, ref_test_array_6, ref_test_array_7, ref_test_array_8, ref_test_array_9, ref_test_array_10, ref_test_array_11, ref_test_array_12, ref_test_async );
+
+$simple = ( $parallel, ref_test_final );
+
+$workflows."REF-TEST"."1.0" = 
+    ( "desc"         : "ref-test test workflow",
+      "author"       : "Qore Technologies, sro",
+      "steps"	     : $simple,
+      "groups"       : ("test"),
+      #"options"      : $options,
+      #"attach"       : "ref-test_attach:1.0",
+      );
+

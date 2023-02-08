@@ -1,0 +1,213 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QorusInterfaceTest
+
+%exec-class Test
+
+class Test inherits QorusWorkflowTest {
+    private {
+        # temporary connection name
+        const LoopbackConnectionName = "mapper-test-2";
+
+        # SOAP connection name
+        const SoapConnectionName = "soap-simple";
+
+        # workflow name to test
+        const WorkflowName = "MAPPER-TEST";
+    }
+
+    constructor() : QorusWorkflowTest(WorkflowName, "1.0", \ARGV, Opts) {
+        addTestCase("check connection", \checkConnection());
+        addTestCase("nested mapper test", \nestedMapperTest());
+        addTestCase("mapper context test", \mapperContextTest());
+        addTestCase("custom field test", \customFieldTest());
+        if (checkDatasource()) {
+            addTestCase(WorkflowName, \loopbackTest());
+            addTestCase("request-response test", \requestResponseTest());
+        }
+
+        set_return_value(main());
+    }
+
+    private bool checkDatasource() {
+        # load schema and add test if the omquser datasource exists
+        try {
+            qrest.get("remote/datasources/omquser/up");
+            return True;
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REST-CLASS-ERROR" && ex.err != "DATASTREAM-CLIENT-RECEIVE-ERROR") {
+                rethrow;
+            }
+            printf("no omquser datasource; skipping tests\n");
+        }
+        return False;
+    }
+
+    private globalSetUp() {
+        qrest.put("services/simple/load");
+        createLoopbackConnection();
+        createSoapConnection();
+    }
+
+    private createSoapConnection() {
+        # create local SOAP connection
+        string url = UserApi::qorusGetLocalUrl();
+        # connect to localhost and use our new admin user
+        url = regex_subst(url, "http(s?)://[^:]+:(.+)/?", "soap$1://localhost:$2/SOAP/CompanyInfoService?wsdl");
+        string target_url = url;
+        target_url =~ s/^soap/http/;
+        target_url =~ s/\?wsdl$//;
+
+        hash<auto> msg = {
+            "name": SoapConnectionName,
+            "desc": "simple SOAP connection",
+            "url": url,
+            "options": {
+                "target_url": target_url,
+            },
+        };
+        try {
+            # update the connection
+            qrest.put("remote/user/" + SoapConnectionName, msg{"url", "options"});
+            printf("updated URL: %y\n", url);
+            return;
+        } catch (hash<ExceptionInfo> ex) {
+            #printf("U: %s\n", get_exception_string(ex));
+        }
+
+        qrest.post("remote/user", msg);
+    }
+
+    private createLoopbackConnection() {
+        # create loopback remote connection
+        string url = UserApi::qorusGetLocalUrl();
+        hash<auto> msg = {
+            "name": LoopbackConnectionName,
+            "desc": "temporary loopback connection",
+            "url": url,
+        };
+        try {
+            qrest.post("remote/qorus", msg);
+        } catch (hash<ExceptionInfo> ex) {
+            if (ex.err != "REMOTE-ERROR" || ex.desc !~ /already/) {
+                rethrow;
+            }
+        }
+    }
+
+    private globalTearDown() {
+        qrest.put("services/simple/unload");
+        # delete temporary connection if it exists
+        try {
+            qrest.del("remote/qorus/" + LoopbackConnectionName);
+        } catch (hash<ExceptionInfo> ex) {
+            # ignore exceptions
+        }
+    }
+
+    checkConnection() {
+        # verify that the remote connection works
+        hash<auto> h = qrest.get("remote/qorus/" + LoopbackConnectionName + "/provider");
+        assertEq(LoopbackConnectionName, h.name);
+        assertTrue(h.supports_children);
+    }
+
+    nestedMapperTest() {
+        on_exit qrest.put("services/MapperTest1/unload");
+        hash<auto> sh = qrest.get("services/MapperTest1");
+        if (!sh.remote) {
+            qrest.put("services/MapperTest1/setRemote", {"remote": True});
+        }
+        testNestedMapper();
+        qrest.put("services/MapperTest1/setRemote", {"remote": False});
+        testNestedMapper();
+    }
+
+    private testNestedMapper() {
+        hash<auto> input_rec = {
+            "id": 1,
+            "name": "parent-1",
+            "child_recs": (
+                {
+                    "parent": 1,
+                    "name": "child-1-1",
+                },
+                {
+                    "parent": 1,
+                    "name": "child-1-2",
+                },
+            ),
+        };
+        hash<auto> rec = qrest.put("services/MapperTest1/doNestedTest/call", {"args": input_rec});
+        assertEq({
+            "parent_id": input_rec.id,
+            "parent_name": input_rec.name,
+            "children": (
+                {
+                    "parent_id": input_rec.child_recs[0].parent,
+                    "child_name": input_rec.child_recs[0].name,
+                },
+                {
+                    "parent_id": input_rec.child_recs[1].parent,
+                    "child_name": input_rec.child_recs[1].name,
+                },
+            ),
+        }, rec);
+    }
+
+    mapperContextTest() {
+        assertEq("key", qrest.get("mappers/mapper-wf-ctx-test/options/context/staticdata/fields/key/name"));
+    }
+
+    customFieldTest() {
+        assertEq(True, qrest.get("mappers/issue-3444/valid"));
+        assertEq("value", qrest.get("mappers/issue-3444/options/input/rec/type/fields/subrec/type/fields/value/name"));
+        assertEq("value", qrest.get("mappers/issue-3444/options/output/rec/type/fields/subrec/type/fields/value/name"));
+        assertEq(4, parse_yaml(qrest.get("mappers/issue-3444/option_source/mapper-input")).size());
+        assertEq(4, parse_yaml(qrest.get("mappers/issue-3444/option_source/mapper-output")).size());
+        assertEq(4, qrest.get("mappers/issue-3444/options/mapper-input").size());
+        assertEq(4, qrest.get("mappers/issue-3444/options/mapper-output").size());
+    }
+
+    loopbackTest() {
+        # reset mapper now that we have the connection
+        qrest.put("mappers/mapper-test-2/reload");
+
+        # set remote = true
+        if (!qrest.get("workflows/" + WorkflowName + "/remote")) {
+            qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": True});
+        }
+        exec(new ExecSynchronousOrder({
+            "name": WorkflowName,
+            "staticdata": {
+                "connection": LoopbackConnectionName,
+                "options": m_options,
+            },
+        }));
+
+        qrest.put("workflows/" + WorkflowName + "/setRemote", {"remote": False});
+        exec(new ExecSynchronousOrder({
+            "name": WorkflowName,
+            "staticdata": {
+                "connection": LoopbackConnectionName,
+                "options": m_options,
+            },
+        }));
+    }
+
+    requestResponseTest() {
+        on_exit qrest.put("services/MapperTest1/unload");
+        assertEq("loaded", qrest.get("services/simple/status"));
+        assertEq(99.9, omqservice.user."MapperTest1".get("QOR").body.result);
+        assertEq("user.MapperTest1 v1.0", omqservice.user."MapperTest1".exprTest("qexp"));
+        auto v = omqservice.user."MapperTest1".exprTest("date1");
+        assertEq(Type::String, v.type());
+        v = omqservice.user."MapperTest1".exprTest("date2");
+        assertEq(Type::String, v.type());
+    }
+}

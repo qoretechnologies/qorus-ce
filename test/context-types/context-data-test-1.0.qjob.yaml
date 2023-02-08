@@ -1,0 +1,22 @@
+# This is a generated file, don't edit!
+type: job
+name: context-data-test
+desc: context data test job
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: ContextDataTest
+groups:
+  - regression
+  - test
+lang: qore
+remote: false
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: "1.0"
+code: context-data-test-1.0.qjob

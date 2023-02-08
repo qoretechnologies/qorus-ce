@@ -1,0 +1,14 @@
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class WfStaticDataTestStep inherits QorusNormalStep {
+    primary() {
+        logInfo("static data: %y", getStaticData());
+
+        AbstractDataProviderType type = getQorusType("qoretechnologies/qorus-api/workflows/context");
+        type.acceptsValue(getWorkflowInstanceData() + {"step": getStepInfo()});
+        logInfo("context type OK");
+    }
+}

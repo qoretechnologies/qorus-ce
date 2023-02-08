@@ -1,0 +1,75 @@
+# This is a generated file, don't edit!
+type: fsm
+name: fsm-flow-test-3
+desc: FSM flow test 3
+groups:
+  - regression
+  - test
+states:
+    '2':
+        block-config:
+            loop:
+                type: string
+                value: '$transient:loop'
+        block-type: foreach
+        id: block1
+        name: block1
+        position:
+            x: 335.125
+            'y': 59.17578125
+        type: block
+        initial: false
+        states:
+            '1':
+                action:
+                    type: connector
+                    value:
+                        class: FsmDepTest
+                        connector: writeValue
+                id: block1_state1
+                initial: true
+                name: block1.state1
+                position:
+                    x: 96.125
+                    'y': 50.17578125
+                type: state
+                execution_order: 1
+                config-items:
+                  - name: fsm-connector-test-write-value
+                    value:
+                        '$pstate:{state.block1\.state1}': true
+                        '$transient:cnt': '$qore-expr:{$transient:cnt + 1}'
+                        '$pstate:{cnt}': '$qore-expr:{$transient:cnt + 1}'
+                    parent:
+                        interface-name: FsmDepTest
+                        interface-type: class
+                        interface-version: "1.0"
+    '1':
+        action:
+            type: connector
+            value:
+                class: FsmDepTest
+                connector: writeValue
+        id: state1
+        initial: true
+        name: state1
+        position:
+            x: 71.125
+            'y': 60.17578125
+        transitions:
+            -
+                state: '2'
+        execution_order: 1
+        type: state
+        config-items:
+          - name: fsm-connector-test-write-value
+            value:
+                '$pstate:{state.fsm-flow-test-3.state1}': true
+                '$transient:loop':
+                    - 1
+                    - 2
+                '$transient:cnt': 0
+            parent:
+                interface-type: class
+                interface-name: FsmDepTest
+                interface-version: "1.0"

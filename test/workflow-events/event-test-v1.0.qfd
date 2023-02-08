@@ -1,0 +1,74 @@
+# -*- mode: perl; indent-tabs-mode: nil -*-
+# Qorus example/test function library
+
+# type: STEP
+# version: 1.0
+# name: eventtest
+# desc: test event step function
+# author: Qore Technologies, sro
+sub do_event_test() {
+    # see if all events should be bound to a given key
+    my *string $e = UserApi::getOption("event-key");
+
+    # if the "fast-exec" option is enabled, or 1/5 chance of skipping the step
+    if (UserApi::getOption("fast-exec") || (!exists $e && !(rand() % 5))) {
+        WorkflowApi::skipEvent();
+        return;
+    }
+
+    # get an event from the event test helper service
+    my string $event = exists $e ? $e : $omqservice.user.eventhelper.get();
+    WorkflowApi::bindEvent($event);
+}
+
+sub eventtest() {
+    do_event_test();
+}
+# END
+
+# type: STEP
+# version: 1.0
+# desc: test array step function
+# author: Qore Technologies, sro
+sub array_eventtest(any $element) {
+    do_event_test();
+}
+# END
+
+# type: ARRAY
+# version: 1.0
+# desc: array function test
+# author: Qore Technologies, sro
+sub array_eventtest_array() {
+    if (UserApi::getOption("fast-exec"))
+        return True;
+
+    # 1 out of 10 times throw an error
+    if (!UserApi::getOption("no-errors")) {
+        if (!(rand() % 10))
+            WorkflowApi::stepError("RETRY-ERROR");
+
+        # another chance: 1/10 return NOTHING
+        if (!(rand() % 10))
+            return;
+    }
+
+    # otherwise get array from stepname
+    my $key = WorkflowApi::getStepInfo().name;
+    my $array = WorkflowApi::getDynamicData($key);
+
+    if (!exists $array) {
+        my int $r = (rand() % 10);
+
+        for (my int $i = 0; $i < $r; $i++)
+            $array[$i] = ( "key1" : rand() % 20,
+                           "key2" : "this is key2",
+                           "index" : $i );
+        my $h.$key = $array;
+        WorkflowApi::updateDynamicData($h);
+    }
+
+    #UserApi::logInfo("array function returning %n", $array);
+    return $array;
+}
+# END

@@ -1,0 +1,14 @@
+type: global-config-item-values
+global-config-item-values:
+  - name: issue-3384-config-item-1
+    value: test_value
+  - name: issue-3384-config-item-2
+    value: 213
+  - name: issue-3384-config-item-3
+    value:
+      test: 2315
+  - name: issue-3384-config-item-4
+    value:
+      - 1
+      - 2
+      - 3

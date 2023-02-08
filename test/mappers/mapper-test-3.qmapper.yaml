@@ -1,0 +1,32 @@
+type: mapper
+mappertype: Mapper
+name: mapper-test-3
+version: "1.0"
+desc: mapper code test
+author:
+  - Qore Technologies, s.r.o.
+parse-options:
+  - PO_NEW_STYLE
+  - PO_REQUIRE_TYPES
+  - PO_STRICT_ARGS
+
+options:
+  mapper-input:
+    type: connection
+    subtype: response
+    name: soap-simple
+    path: /getCompanyInfo
+
+  mapper-output:
+    type: datasource
+    name: omquser
+    path: /table_2
+  output_provider_bulk: true
+
+fields:
+  output_1:
+    name: body.result
+  output_2:
+    name: body.docs
+  output_3:
+    constant: 123

@@ -1,0 +1,3344 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# @file QorusClientBase.qm Qorus Integration System core client module
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+%requires qore >= 1.0
+
+module QorusClientBase {
+    version = "5.1";
+    desc = "Qorus client base module";
+    author = "Qore Technologies <info@qoretechnologies.com>";
+    url = "http://www.qoretechnologies.com";
+}
+
+%allow-injection
+
+%requires(reexport) QorusVersion
+%requires(reexport) xml
+%requires(reexport) json
+%requires(reexport) yaml
+%requires(reexport) Util
+%requires(reexport) RestClient
+%requires(reexport) DataStreamClient
+%requires(reexport) Swagger
+%requires(reexport) YamlRpcClient
+%requires(reexport) Logger
+%requires(reexport) SqlUtil
+%requires(reexport) Mapper
+%requires(reexport) TableMapper
+%requires(reexport) Qorize
+%requires(reexport) FileLocationHandler
+%requires zmq
+
+# client define
+%define QorusClient
+
+# common code to the client and the server
+%include Classes/QorusSystemRestHelperBase.qc
+%include Classes/QorusSystemAPIHelperBase.qc
+%include Classes/QorusMethodGateHelper.qc
+%include Classes/QorusServiceHelper.qc
+%include Classes/CommonInterfaceBase.qc
+%include Classes/ObserverPattern.qc
+%include Classes/SQLInterface.qc
+%include Classes/Audit.qc
+%include Classes/UserApi.qc
+%include Classes/Mappers.qc
+%include Classes/ThreadLocalData.qc
+%include Classes/QorusClientServer.qc
+%include Classes/Connections.qc
+%include Classes/DatasourceConnection.qc
+%include Classes/Streams.qc
+%include Classes/QorusDataProviderTypeHelper.qc
+%include Classes/QorusCommonLib.qc
+%include Classes/NetworkKeyHelper.qc
+%include Classes/QorusRestartableTransaction.qc
+%include lib/qorus.ql
+%include lib/misc.ql
+%include lib/qorus-common-master-core-client.ql
+%include lib/cpc-api.ql
+%include lib/cpc-core-api.ql
+
+# do not use "$" signs for vars & methods, etc, assume local var scope
+%new-style
+
+/** @page qorusclientbase_module QorusClientBase Module
+
+    @tableofcontents
+
+    @section qorusclientbaseintro Introduction to the QorusClientBase Module
+
+    This module is the base client module; see @ref clientintro for more information.
+*/
+
+#! main Qorus namespace
+public namespace OMQ {
+    #! directory separator character
+    public const DirSep = (PlatformOS != "Windows" ? "/" : "\\");
+
+    #! global qorus system schema datasource
+    public our Qore::SQL::Datasource omq;
+
+    #! global qorus user schema datasource
+    public our Qore::SQL::Datasource omquser;
+
+    #! global client API variable; initialized in QorusClient::initFast()
+    public our OMQ::QorusClientAPI omqclient;
+
+    #! global object for accessing the Qorus network API through lightweight web service calls; initialized in QorusClient::initFast()
+    public our OMQ::Client::QorusSystemAPIHelper omqapi;
+
+    #! global object for making service calls using @ref OMQ::omqapi "omqapi"; initialized in QorusClient::initFast()
+    public our OMQ::Client::QorusClientRemoteServiceHelper omqservice;
+
+    #! global object for accessing the Qorus REST API; initialized in QorusClient::initFast()
+    public our OMQ::Client::QorusSystemRestHelper qrest;
+
+    #! compares complex versions by breaking down strings into component parts
+    /** @par Example:
+        @code{.py}
+int result = compare_version("2.11.1", "2.2");
+        @endcode
+
+        Each element is compared separately, so that <tt>compare_version("2.11.1", "2.2")</tt> returns \c 1
+        (a regular string comparison would give the opposite result)
+
+        @param lv left-hand version
+        @param rv right-hand version
+
+        @return -1 if lv < rv, 0 if equal, and 1 if lv > rv
+
+        @note reexported from the @ref utilintro "Util" module from @ref Util::compare_version()
+    */
+    public int sub compare_version(string lv, string rv) {
+        return Util::compare_version(lv, rv);
+    }
+
+    #! returns a platform-specific normalized path name (starting from /, eliminates \c ".", \c "..", and \c "//")
+    /** @par Example:
+        @code{.py}
+string dir = normalize_dir(dir);
+        @endcode
+
+        Currently only Windows and UNIX-style directories are supported; this function calls either:
+        - @ref Util::normalize_dir_unix() or
+        - @ref Util::normalize_dir_windows()
+
+        @param dir the directory name to normalize
+        @param cwd the current working directory for normalizing relative paths
+
+        @return a normalized path name for the current platform
+
+        @note reexported from the @ref utilintro "Util" module from @ref Util::normalize_dir()
+    */
+    public string sub normalize_dir(string dir, string cwd = getcwd()) {
+        return Util::normalize_dir(dir, cwd);
+    }
+
+    #! returns @ref Qore::True "True" if the argument is an absolute path, @ref Qore::False "False" if not
+    /** @par Example:
+        @code{.py}
+bool abs = absolute_path(path);
+        @endcode
+
+        @param path the path to check
+
+        @return @ref Qore::True "True" if the argument is an absolute path, @ref Qore::False "False" if not
+
+        @note reexported from the @ref utilintro "Util" module for backwards-compatibility from @ref Util::absolute_path()
+     */
+    public bool sub absolute_path(string path) {
+        return Util::absolute_path(path);
+    }
+
+    #! returns a string giving a local URL for the current Qorus instance
+    public string sub qorus_get_local_url() {
+        hash<auto> qc = qorus_parse_options("qorus-client");
+        return qc."client-url";
+    }
+
+    #! returns a string giving a local URL for the current Qorus instance with a specific username and password for the connection
+    /** @since Qorus 5.0
+    */
+    public string sub qorus_get_local_url(*string username, *string password) {
+        *hash<auto> options = qorus_get_system_options();
+        *list<auto> opt = options."http-secure-server";
+
+        *string qorus_core_address = try_get_qorus_core_address();
+        return opt
+            ? get_url_from_option("https", opt[0], username, password, qorus_core_address)
+            : get_url_from_option("http", options."http-server"[0], username, password,
+                qorus_core_address);
+    }
+
+    public *string sub try_get_qorus_core_address() {
+        *hash<auto> options = qorus_get_system_options();
+        if (!options.systemdb) {
+            return;
+        }
+
+        # make sure and set it from the qorus-core hostname if possible
+        omqclient.initOmq(True);
+        if (!omq) {
+            return;
+        }
+        return try_get_qorus_core_address_intern();
+    }
+
+    #! returns the constant string \c "system"
+    public string sub qorus_get_source() {
+        return "system";
+    }
+
+    #! outputs a formatted alert string on stdout
+    public sub alert_exception(string type, string alert, hash ex, int id = -1) {
+        printf("ALERT: %s %s: %s: %s: %s\n", type, alert, get_ex_pos(ex), ex.err, ex.desc);
+    }
+
+    #! encrypts order data by calling @ref OMQ::QorusClientAPI::encryptOrderData()
+    /** @since Qorus 3.1.1
+    */
+    public hash sub encrypt_order_data(softint wfiid, string skey, string svalue, hash info, *hash meta) {
+        return omqclient.encryptOrderData(wfiid, skey, svalue, info, meta);
+    }
+
+    public namespace Snapshots {
+    # oload validation dummy class implementation. Keep in sync with SchemaSnapshots.qc
+    public class SnapshotsInfoHelper {
+        static *hash getReportWfs(date in_date, *softlist wfids, bool with_deprecated = True, bool system_overview = False) {
+        } # getReportWfs
+        static *hash getReportJobs(date in_date, *softlist jobids) {
+        } # getReportJobs
+    } # class SnapshotsInfoHelper
+    }
+
+    #! objects that are also present in the server with the same names are created under the OMQ::Client namespace
+    public namespace Client {
+        const QSS_ERROR = -1;
+
+        #! this class provides an easy way to call service methods on a Qorus server; will redirect system property APIs to local DB-based functions in case Qorus is down
+        public class ClientPropServiceMethodGateHelper inherits ServiceMethodGateHelper {
+            #! creates the object
+            constructor(QorusSystemAPIHelperBase n_omqapi) : ServiceMethodGateHelper(n_omqapi, "system", "prop") {
+            }
+
+            #! tries to retrieve properties from the server, if that fails, then tries local DB-based APIs
+            auto get() {
+                try {
+                    return omqapi.callAPIArgs("omq.system.service.prop.get", argv);
+                } catch (hash<ExceptionInfo> ex) {
+                    return call_function_args(\prop_get(), argv);
+                }
+            }
+
+            #! redirects requests to the appropriate service method
+            auto methodGate(string m) {
+                string api = sprintf("omq.system.service.prop.%s", m);
+                return omqapi.callAPIArgs(api, argv);
+            }
+
+            #! redirects requests to the appropriate service method
+            code memberGate(string m) {
+                string api = sprintf("omq.system.service.prop.%s", m);
+                return auto sub () { return omqapi.callAPIArgs(api, argv); };
+            }
+        }
+
+        #! mid-level class in the client for transparently redirecting calls to services; will redirect system property APIs to local DB-based functions in case Qorus is down
+        public class QorusClientSystemServiceHelper inherits QorusServiceHelper {
+            #! creates the object
+            constructor(QorusSystemAPIHelperBase n_omqapi) : QorusServiceHelper(n_omqapi, "system") {
+            }
+
+            #! redirects calls to the appropriate ServiceMethodGateHelper member object
+            synchronized ServiceMethodGateHelper memberGate(string m) {
+                return self{m} = m == "prop" ? new ClientPropServiceMethodGateHelper(omqapi) : new ServiceMethodGateHelper(omqapi, type, m);
+            }
+        }
+
+        # class for redirecting system property access in case Qorus is down
+        public class QorusClientRemoteServiceHelper {
+            public {
+                #! QorusServiceHelper object for system services
+                QorusClientSystemServiceHelper system;
+                #! QorusServiceHelper object for user services
+                QorusServiceHelper user;
+            }
+
+            #! creates the object with QorusServiceHelper members for \c "system" and \c "user" services
+            constructor(QorusSystemAPIHelperBase omqapi) {
+                system = new QorusClientSystemServiceHelper(omqapi);
+                user = new QorusServiceHelper(omqapi, "user");
+            }
+        }
+
+        #! class to call the system REST API from the client library
+        public class QorusSystemRestHelper inherits QorusSystemRestHelperBase {
+            #! Creates the object with the given options
+            /** A connection is automatically made unless the \a do_not_connect argument is @ref Qore::False "False"
+
+                @param opts options as follows:
+                - \c api_version: the REST API version (defaults to the latest version)
+                - \c connect_timeout: the connect timeout value in milliseconds
+                - \c timeout: the socket I/O timeout value in milliseconds
+                - \c url: the target URL
+                @param do_not_connect if @ref Qore::True "True", then the object will be created in an unconnected
+                state
+
+                @since Qorus 3.1.1 added the \a api_version option
+            */
+            constructor(*hash<auto> opts, *softbool do_not_connect)
+                    : QorusSystemRestHelperBase(opts, do_not_connect) {
+            }
+
+            #! creates the object from the given @ref remoteconn "remote connection name"
+            /** A connection is automatically made unless the \a do_not_connect argument is @ref Qore::False "False"
+
+                @param name the @ref remoteconn "remote connection name" to use for the connection
+                @param do_not_connect if @ref Qore::True "True", then the object will be created in an unconnected
+                state
+            */
+            constructor(string name, *softbool do_not_connect)
+                    : QorusSystemRestHelperBase(
+                        QorusSystemRestHelperBase::toConfig(omqclient.getRemoteConfig(name, True)
+                    ), do_not_connect) {
+            }
+
+            #! creates the object pointing to the first local listener for the current instance using the given user and password for connecting
+            /** @param user the username for the connection
+                @param pwd the password for the connection
+
+                @since Qorus 5.0 added this to the client version of this class
+            */
+            constructor(string user, string pwd)
+                    : QorusSystemRestHelperBase({"url": qorus_get_local_url(user, pwd)}, True) {
+            }
+
+            #! sets the URL automatically
+            /**
+            */
+            private autoSetUrl(*hash<auto> opts) {
+                hash<auto> qc = qorus_parse_options("qorus-client");
+
+                if (!opts.proxy && qc."proxy-url") {
+                    setProxyURL(qc."proxy-url");
+                }
+
+                setInternalUrl(qc."client-url");
+            }
+
+            #! Sets internal authentication info
+            private setInternalUrl(string url) {
+                setURL(url);
+            }
+
+            #! prints a warning on the console
+            private warning(string fmt) {
+                vprintf(fmt + "\n", argv);
+            }
+
+            #! sets the base path for REST requests
+            setBasePath(string p) {
+                if (p && p[0] != "/")
+                    p = "/" + p;
+
+                hash<auto> qc = qorus_parse_options("qorus-client");
+                setInternalUrl(qc."client-url" + p);
+            }
+
+            #! get the literal HTTP body from the info hash
+            private string getBody(hash<auto> info) {
+                switch (info.headers."Content-Encoding") {
+                    case "deflate":
+                    case "x-deflate":
+                        info."request-body" = uncompress_to_string(info."request-body");
+                        break;
+                    case "gzip":
+                    case "x-gzip":
+                        info."request-body" = gunzip_to_string(info."request-body");
+                        break;
+                    case "bzip2":
+                    case "x-bzip2":
+                        info."request-body" = bunzip2_to_string(info."request-body");
+                        break;
+                    case "identity":
+                        info."request-body" = binary_to_string(info."request-body");
+                        break;
+                    case NOTHING:
+                        break;
+                    default:
+                        throw "UNKNOWN-CONTENT-ENCODING", sprintf("unknown Content-Encoding %y used to send message",
+                            info.headers."Content-Encoding");
+                }
+                return trim(info."request-body");
+            }
+
+            #! outpus the REST request
+            private showRestRequest(hash<auto> info, auto args, *hash<auto> opt) {
+                printf("> %s\n", info."request-uri");
+                if (opt.lit > 1)
+                    printf("> %N\n", info.headers);
+                if (info."request-body") {
+                    *string str;
+                    if (opt.reformat) {
+                        switch (info."request-serialization") {
+                            case "xml": str = make_xmlrpc_value(args, XGF_ADD_FORMATTING); break;
+                            case "json": str = make_json(args, JGF_ADD_FORMATTING); break;
+                            case "yaml": str = trim(make_yaml(args, YAML::BlockStyle)); break;
+                            default: str = getBody(info); break;
+                        }
+                    } else
+                        str = getBody(info);
+                    printf("> %s\n", str);
+                }
+            }
+
+            #! outpus the REST response
+            private showRestResponse(hash<auto> info, auto rv, *hash<auto> opt) {
+                if (!info."response-uri")
+                    return;
+                printf("< %s\n", info."response-uri");
+                if (opt.lit > 1)
+                    printf("< %N\n", info."response-headers" - "body");
+                if (info."response-body") {
+                    string str;
+                    if (opt.reformat) {
+                        switch (info."response-serialization") {
+                            case "xml": str = make_xmlrpc_value(rv, XGF_ADD_FORMATTING); break;
+                            case "json": str = make_json(rv, JGF_ADD_FORMATTING); break;
+                            case "yaml": str = trim(make_yaml(rv, YAML::BlockStyle)); break;
+                            default: str = trim(info."response-body"); break;
+                        }
+                    } else
+                        str = trim(info."response-body");
+                    printf("< %s\n", str);
+                }
+            }
+
+            #! makes the REST response and returns the deserialized body
+            /** @param m the HTTP method for the request (ex: \c "GET")
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+                @param hdr a hash of optional HTTP header info to add to the request
+                @param opt output options:
+                - \c lit: if @ref Qore::True "True", outputs the literal response
+                - \c reformat: if @ref Qore::True "True", outputs a reformatted response with verbose formatting
+                  (easier to read complex data structures)
+                @param info an optional reference to a hash that will be used as an output variable giving a hash of
+                request headers and other information about the HTTP request; if present the hash will contain the
+                following keys:
+                - \c headers: a hash of outgoing HTTP request headers
+                - \c request-uri: the request URI string sent (ex: \c "GET /services/async/38.0/job HTTP/1.1")
+                - \c body-content-type: the outgoing message body Mime \c Content-Type value
+                - \c response-headers: a hash of incoming HTTP headers in the response
+                - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+                - \c response-code: the HTTP response code
+                - \c response-body: the raw message body in the response (after any content decoding)
+                - \c response-serialization: the type of message serialization in the response; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+                - \c request-body: the raw message body in the request (before any content encoding)
+                - \c request-serialization: the type of message serialization in the request; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+
+                @return the deserialized response body
+
+                @since Qorus 3.1.0.p11 added the \a info argument
+            */
+            auto restDo(string m, string path, auto args, *hash<auto> hdr, *hash<auto> opt,
+                    *reference<hash<auto>> info) {
+                auto rv;
+                on_exit if (opt.lit) {
+                    showRestRequest(info, args, opt);
+                    showRestResponse(info, rv.body, opt);
+                }
+
+                rv = doRequest(m, path, args, \info, True, hdr);
+                return rv.body;
+            }
+
+            #! issues an HTTP \c GET REST request against the server and returns the deserialized response
+            /** @param opt output options:
+                - \c lit: if @ref Qore::True "True", outputs the literal response
+                - \c reformat: if @ref Qore::True "True", outputs a reformatted response with verbose formatting
+                  (easier to read complex data structures)
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+                @param hdr a hash of optional HTTP header info to add to the request
+                @param info an optional reference to a hash that will be used as an output variable giving a hash of
+                request headers and other information about the HTTP request; if present the hash will contain the
+                following keys:
+                - \c headers: a hash of outgoing HTTP request headers
+                - \c request-uri: the request URI string sent (ex: \c "GET /services/async/38.0/job HTTP/1.1")
+                - \c body-content-type: the outgoing message body Mime \c Content-Type value
+                - \c response-headers: a hash of incoming HTTP headers in the response
+                - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+                - \c response-code: the HTTP response code
+                - \c response-body: the raw message body in the response (after any content decoding)
+                - \c response-serialization: the type of message serialization in the response; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+                - \c request-body: the raw message body in the request (before any content encoding)
+                - \c request-serialization: the type of message serialization in the request; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+
+                @return the deserialized response body
+
+                @since Qorus 3.1.0.p11 added the \a info argument
+            */
+            auto get(*hash<auto> opt, string path, auto args, *hash<auto> hdr, *reference<hash<auto>> info) {
+                return restDo("GET", path, args, hdr, opt, \info);
+            }
+
+            #! issues an HTTP \c PUT REST request against the server and returns the deserialized response
+            /** @param opt output options:
+                - \c lit: if @ref Qore::True "True", outputs the literal response
+                - \c reformat: if @ref Qore::True "True", outputs a reformatted response with verbose formatting
+                  (easier to read complex data structures)
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+                @param hdr a hash of optional HTTP header info to add to the request
+                @param info an optional reference to a hash that will be used as an output variable giving a hash of
+                request headers and other information about the HTTP request; if present the hash will contain the
+                following keys:
+                - \c headers: a hash of outgoing HTTP request headers
+                - \c request-uri: the request URI string sent (ex: \c "GET /services/async/38.0/job HTTP/1.1")
+                - \c body-content-type: the outgoing message body Mime \c Content-Type value
+                - \c response-headers: a hash of incoming HTTP headers in the response
+                - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+                - \c response-code: the HTTP response code
+                - \c response-body: the raw message body in the response (after any content decoding)
+                - \c response-serialization: the type of message serialization in the response; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+                - \c request-body: the raw message body in the request (before any content encoding)
+                - \c request-serialization: the type of message serialization in the request; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+
+                @return the deserialized response body
+
+                @since Qorus 3.1.0.p11 added the \a info argument
+            */
+            auto put(*hash<auto> opt, string path, auto args, *hash<auto> hdr, *reference<hash<auto>> info) {
+                return restDo("PUT", path, args, hdr, opt, \info);
+            }
+
+            #! issues an HTTP \c POST REST request against the server and returns the deserialized response
+            /** @param opt output options:
+                - \c lit: if @ref Qore::True "True", outputs the literal response
+                - \c reformat: if @ref Qore::True "True", outputs a reformatted response with verbose formatting
+                  (easier to read complex data structures)
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+                @param hdr a hash of optional HTTP header info to add to the request
+                @param info an optional reference to a hash that will be used as an output variable giving a hash of
+                request headers and other information about the HTTP request; if present the hash will contain the
+                following keys:
+                - \c headers: a hash of outgoing HTTP request headers
+                - \c request-uri: the request URI string sent (ex: \c "GET /services/async/38.0/job HTTP/1.1")
+                - \c body-content-type: the outgoing message body Mime \c Content-Type value
+                - \c response-headers: a hash of incoming HTTP headers in the response
+                - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+                - \c response-code: the HTTP response code
+                - \c response-body: the raw message body in the response (after any content decoding)
+                - \c response-serialization: the type of message serialization in the response; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+                - \c request-body: the raw message body in the request (before any content encoding)
+                - \c request-serialization: the type of message serialization in the request; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+
+                @return the deserialized response body
+
+                @since Qorus 3.1.0.p11 added the \a info argument
+            */
+            auto post(*hash<auto> opt, string path, auto args, *hash<auto> hdr, *reference<hash<auto>> info) {
+                return restDo("POST", path, args, hdr, opt, \info);
+            }
+
+            #! issues an HTTP \c DELETE REST request against the server and returns the deserialized response
+            /** @param opt output options:
+                - \c lit: if @ref Qore::True "True", outputs the literal response
+                - \c reformat: if @ref Qore::True "True", outputs a reformatted response with verbose formatting
+                  (easier to read complex data structures)
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+                @param hdr a hash of optional HTTP header info to add to the request
+                @param info an optional reference to a hash that will be used as an output variable giving a hash of
+                request headers and other information about the HTTP request; if present the hash will contain the
+                following keys:
+                - \c headers: a hash of outgoing HTTP request headers
+                - \c request-uri: the request URI string sent (ex: \c "GET /services/async/38.0/job HTTP/1.1")
+                - \c body-content-type: the outgoing message body Mime \c Content-Type value
+                - \c response-headers: a hash of incoming HTTP headers in the response
+                - \c chunked: set to @ref Qore::True "True" if the response was received with chunked transfer encoding
+                - \c response-code: the HTTP response code
+                - \c response-body: the raw message body in the response (after any content decoding)
+                - \c response-serialization: the type of message serialization in the response; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+                - \c request-body: the raw message body in the request (before any content encoding)
+                - \c request-serialization: the type of message serialization in the request; see
+                  @ref RestClient::RestClient::DataSerializationOptions for possible values
+
+                @return the deserialized response body
+
+                @since Qorus 3.1.0.p11 added the \a info argument
+            */
+            auto del(*hash<auto> opt, string path, auto args, *hash<auto> hdr, *reference<hash<auto>> info) {
+                return restDo("DELETE", path, args, hdr, opt, \info);
+            }
+
+            #! returns a user-friendly error message when errors occur with REST messaging
+            /** @param ex an exception hash
+                @param info an output hash from a REST call
+
+                @return a user-friendly error string corresponding to the REST error
+
+                @since Qorus 3.1.0.p11
+             */
+            string getRestErrorMessage(hash<auto> ex, hash<auto> info, *reference<bool> down) {
+                if (ex.err == "SOCKET-CONNECT-ERROR") {
+                    down = True;
+                    return sprintf("ERROR: Qorus server at %y is down", getURL());
+                }
+                down = False;
+                if (ex.err == "DESERIALIZATION-ERROR" && info."response-headers"."content-type" =~ /text\/html/) {
+                    return sprintf("ERROR: %y received from %y", info."response-uri", getURL());
+                } else {
+                    string str = sprintf("%s: %s: %s", get_ex_pos(ex), ex.err, ex.desc);
+                    if (ex.arg) {
+                        str += ": ";
+                        if (ex.arg.body.typeCode() == NT_STRING) {
+                            trim ex.arg.body;
+                            str += ex.arg.body;
+                        } else {
+                            if (ex.arg.typeCode() == NT_STRING) {
+                                trim ex.arg;
+                                str += sprintf("%y", ex.arg);
+                            } else if (!ex.arg.ex) {
+                                str += sprintf("%y", ex.arg);
+                            }
+                        }
+                    }
+                    return str;
+                }
+            }
+
+            #! outputs a user-friendly error string when errors occur with REST messaging
+            /** @param ex an exception hash
+                @param info an output hash from a REST call
+
+                @return True if the system is down, False if up
+
+                @since
+                - Qorus 3.1.0.p11
+                - Qorus 6.0 added a return value
+            */
+            bool outputRestErrorMessage(hash<auto> ex, hash<auto> info) {
+                bool down;
+                stderr.print(getRestErrorMessage(ex, info, \down) + "\n");
+                return down;
+            }
+        }
+
+        #! class for local REST API calls
+        /** @since Qorus 4.1
+        */
+        public class QorusLocalRestHelper inherits private QorusSystemRestHelper {
+            #! makes the REST response and returns the deserialized body
+            /** @param m the HTTP method for the request (ex: \c "GET")
+                @param path the URI path for the request
+                @param args any arguments to the REST request
+
+                @return the deserialized response body
+            */
+            auto doRequest(string m, string path, *hash<auto> args) {
+                return QorusSystemRestHelper::doRequest(m, path, args).body;
+            }
+
+            #! issues an HTTP \c GET REST request against the server and returns the deserialized response
+            /** @param path the URI path for the request
+                @param args any arguments to the REST request
+
+                @return the deserialized response body
+            */
+            auto get(string path, *hash<auto> args) {
+                return doRequest("GET", path, args);
+            }
+
+            #! issues an HTTP \c PUT REST request against the server and returns the deserialized response
+            /** @param path the URI path for the request
+                @param args any arguments to the REST request
+
+                @return the deserialized response body
+            */
+            auto put(string path, *hash<auto> args) {
+                return doRequest("PUT", path, args);
+            }
+
+            #! issues an HTTP \c POST REST request against the server and returns the deserialized response
+            /** @param path the URI path for the request
+                @param args any arguments to the REST request
+
+                @return the deserialized response body
+
+            */
+            auto post(string path, *hash<auto> args) {
+                return doRequest("POST", path, args);
+            }
+
+            #! issues an HTTP \c DELETE REST request against the server and returns the deserialized response
+            /** @param path the URI path for the request
+                @param args any arguments to the REST request
+
+                @return the deserialized response body
+            */
+            auto del(string path, *hash<auto> args) {
+                return doRequest("DELETE", path, args);
+            }
+
+            #! sets the socket encoding
+            setEncoding(string enc) {
+                QorusSystemRestHelper::setEncoding(enc);
+            }
+        }
+
+        #! class to call the system API from the client library
+        public class QorusSystemAPIHelper inherits OMQ::QorusSystemAPIHelperBase {
+            #! creates the object based on the options passed
+            /** @param opts optional hash with the following keys:
+                - \c timeout
+                - \c connect_timeout
+                - \c http_version
+                - \c url
+                - \c max_redirects
+                - \c proxy \n
+                the url and proxy settings are first taken from the options file as parsed by qorus_parse_options(), then overridden by the values given to the constructor
+                @see OMQ::ValidClientAPIOpts
+            */
+            constructor(*hash<auto> opts) {
+                if (!exists opts.connect_timeout)
+                    opts.connect_timeout = 20s;
+                setOptions(opts);
+            }
+
+            #! creates the object based on the connection information for the given remote connection
+            constructor(string name) {
+                omqclient.setRemoteParams(self, name);
+            }
+
+            private setDefaultOptions(*string proxy) {
+                hash<auto> qc = qorus_parse_options("qorus-client");
+
+                ws_opts.url = qc."client-url";
+
+                ws_opts.proxy = proxy ? proxy : qc."proxy-url";
+            }
+
+            #! redirects object method calls to a server method call
+            auto methodGate(string api) {
+                return doCallIntern(api, argv);
+            }
+
+            #! redirects object member references to a server method call
+            auto memberGate(string api) {
+                return doCallIntern(api, argv);
+            }
+        }
+
+        #! Qorus client library class to handle USER connections
+        public class UserConnections inherits OMQ::Connections {
+            constructor(AbstractDatasource ds)
+                : Connections(new Table(ds, "connections").getTable(), new Table(ds, "connection_tags").getTable(),
+                    \UserConnections::logNull(), qorus_get_system_option("connection-modules")) {
+                reload();
+            }
+
+            AbstractDataProvider getDataProvider(string name) {
+                QorusClientServer::init();
+                return getConnection(name).getDataProvider();
+            }
+
+            string getConnectionDbType() {
+                return "USER";
+            }
+
+            string getErrorCode() {
+                return "CONNECTION-ERROR";
+            }
+
+            logInfo(string msg) {
+                stdout.vprintf(msg + "\n", argv);
+            }
+
+            logDebug(string msg) {
+                delete argv;
+            }
+
+            static logNull(string msg) {
+                delete argv;
+            }
+
+            private nothing setupIntern(*list cml) {
+                # add external connection handlers
+                foreach string mod in (cml) {
+                    try {
+                        addConnectionProvider(mod);
+                    } catch (hash<ExceptionInfo> ex) {
+                        if (!QorusClientAPI::ignore_warnings) {
+                            logInfo("WARNING: failed to load user connection provider module %y: %s: %s", mod,
+                                ex.err, ex.desc);
+                        }
+                    }
+                }
+            }
+        }
+
+        #! Qorus client library class used to handle REMOTE connections
+        public class RemoteConnections inherits OMQ::Connections {
+            constructor(AbstractDatasource ds)
+                : OMQ::Connections(new Table(ds, "connections").getTable(),
+                    new Table(ds, "connection_tags").getTable(), \UserConnections::logNull()) {
+                reload();
+            }
+
+            AbstractDataProvider getDataProvider(string name) {
+                QorusClientServer::init();
+                return create_object("QorusRemoteConnectionDataProvider", name);
+            }
+
+            string getConnectionDbType() {
+                return "REMOTE";
+            }
+
+            string getErrorCode() {
+                return "REMOTE-ERROR";
+            }
+
+            logInfo(string msg) {
+                stdout.vprintf(msg + "\n", argv);
+            }
+
+            logDebug(string msg) {
+                delete argv;
+            }
+
+            #! sets connection parameters in the given object based on the connection name given; if the connection does not exist, an exception is thrown
+            /** @param omqapi the object to set connection parameters on
+                @param conn the name of the remote connection
+
+                @throw CONNECTION-ERROR the given remote connection is not defined
+            */
+            setParams(OMQ::QorusSystemAPIHelperBase omqapi, string conn) {
+                if (!connection_map{conn})
+                    throw "CONNECTION-ERROR", sprintf("connection %y is not defined; known connections: %y", conn, connection_map.keys());
+
+                omqapi.setURL(connection_map{conn}.url);
+
+                if (connection_map{conn}.opts.proxy)
+                    omqapi.setProxyURL(connection_map{conn}.opts.proxy);
+
+                if (connection_map{conn}.opts.timeout)
+                    omqapi.setTimeout(connection_map{conn}.opts.timeout * 1000);
+
+                if (connection_map{conn}.opts.connect_timeout)
+                    omqapi.setConnectTimeout(connection_map{conn}.opts.connect_timeout * 1000);
+            }
+        }
+
+        #! Qorus client library class used to handle DATASOURCE connections
+        public class DatasourceConnections inherits OMQ::Connections {
+            private {
+                hash ds_map;
+                hash dsp_map;
+            }
+
+            constructor(AbstractDatasource ds)
+                : OMQ::Connections(new Table(ds, "connections").getTable(),
+                    new Table(ds, "connection_tags").getTable(), \UserConnections::logNull()) {
+                reload();
+            }
+
+            logInfo(string msg) {
+                stdout.vprintf(msg + "\n", argv);
+            }
+
+            logDebug(string msg) {
+                delete argv;
+            }
+
+            string getConnectionDbType() {
+                return "DATASOURCE";
+            }
+
+            string getErrorCode() {
+                return "DATASOURCE-ERROR";
+            }
+
+            bool hasDatasource(string name) {
+                return connection_map.hasKey(name);
+            }
+
+            AbstractDataProvider getDataProvider(string name) {
+                load_module("DbDataProvider");
+                return create_object("DbDataProvider", getDatasource(name));
+            }
+
+            private:internal checkMap(string name) {
+                if (!hasDatasource(name)) {
+                    throw "INVALID-DATASOURCE",
+                            sprintf("There is no datasource '%s' defined in the system DB", name);
+                }
+            }
+
+            private:internal checkDatasource(string name) {
+                # check for invalid connection
+                if (!(connection_map{name} instanceof DatasourceConnection)) {
+                    throw "INVALID-DATASOURCE", sprintf("datasource %y is invalid; known datasources: %y", name,
+                        keys connection_map);
+                }
+            }
+
+            AbstractDatasource getDatasource(string name) {
+                checkMap(name);
+                if (!ds_map.hasKey(name)) {
+                    # check for invalid connection
+                    checkDatasource(name);
+                    ds_map{name} = new Datasource(getConnectionHash(name));
+                }
+                return ds_map{name};
+            }
+
+            AbstractDatasource getNewDatasource(string name) {
+                checkMap(name);
+                # check for invalid connection
+                checkDatasource(name);
+                return new Datasource(getConnectionHash(name));
+            }
+
+            AbstractDatasource getDatasourcePool(string name, int min, int max) {
+                checkMap(name);
+                if (!dsp_map.hasKey(name)) {
+                    # check for invalid connection
+                    checkDatasource(name);
+                    dsp_map{name} = new DatasourcePool(getConnectionHash(name, min, max));
+                }
+                return dsp_map{name};
+            }
+
+            AbstractDatasource getNewDatasourcePool(string name, int min, int max) {
+                checkMap(name);
+                # check for invalid connection
+                checkDatasource(name);
+                return new DatasourcePool(getConnectionHash(name, min, max));
+            }
+
+            *hash<string, string> getDatasourceConnectionsAsHash() {
+                # https://github.com/qorelanguage/qore/issues/3331
+                hash<auto> rv = map {$1.key: $1.value.url}, connection_map.pairIterator();
+                # add / override omq connection
+                if (*string systemdb = omqclient.getOptions("qorus").systemdb) {
+                    rv.omq = "db://" + systemdb;
+                }
+                return rv ? cast<hash<string, string>>(rv) : NOTHING;
+            }
+
+            hash<auto> getConnectionHash(string name, *int min, *int max) {
+                checkMap(name);
+                hash<auto> urlh;
+                # add / override omq connection
+                if (name == "omq" && (*string systemdb = omqclient.getOptions("qorus").systemdb)) {
+                    urlh += parse_datasource(systemdb);
+                } else {
+                    # += allows us to use "hash<auto>"
+                    urlh += cast<DatasourceConnection>(connection_map{name}).ds_urlh;
+                }
+                if (min > 0) {
+                    urlh.min = min;
+                }
+                if (max > 0) {
+                    urlh.max = max;
+                }
+                return urlh;
+            }
+
+            string getConnectionString(string name) {
+                checkMap(name);
+                # add / override omq connection
+                if (name == "omq" && (*string systemdb = omqclient.getOptions("qorus").systemdb)) {
+                    return systemdb;
+                }
+                return get_ds_desc(connection_map{name}.urlh + {"options": connection_map{name}.opts},
+                    DD_WITH_PASSWORD);
+            }
+
+            synchronized setDatasourceFromText(string name, string params) {
+                delete ds_map{name};
+                delete dsp_map{name};
+                connection_map{name} = new DatasourceConnection(name, "client connection", params);
+                switch (name) {
+                    case "omq": {
+                        omqclient.setOption("qorus", "systemdb", params);
+                        remove omq;
+                        omqclient.resetSystemDatasource();
+                        break;
+                    }
+                    case "omquser": {
+                        remove omquser;
+                        omqclient.initOmqUser();
+                        break;
+                    }
+                }
+            }
+        }
+
+        #! Returns a new @ref OMQ::Client::QorusSystemRestHelper "QorusSystemRestHelper" object corresponding to a defined @ref remoteconn "Qorus remote connection"
+        /**
+            @param name the name of the @ref remoteconn "connection"
+            @param connect unused in client code; it is here for server-side API compatibility.
+            @param register_dependency unused in client code; it is here for server-side API compatibility.
+
+            @return a new @ref OMQ::Client::QorusSystemRestHelper "QorusSystemRestHelper" object
+
+            @throw GET-REMOTE-ERROR The given connection is not known
+
+            @see get_remote_rpc_connection()
+
+            @note This function initializes the client library implicitly
+
+            @since Qorus 3.1
+        */
+        public OMQ::Client::QorusSystemRestHelper sub get_remote_rest_connection(string name, bool connect = True,
+                bool register_dependency = True) {
+            QorusClient::init();
+            return omqclient.getRemoteRest(name, connect);
+        }
+
+        #! Returns a new @ref OMQ::Client::QorusSystemAPIHelper "QorusSystemAPIHelper" object corresponding to a defined @ref remoteconn "Qorus remote connection"
+        /**
+            @param name the name of the @ref remoteconn "connection"
+            @param connect unused in client code; it is here for server-side API compatibility.
+            @param register_dependency unused in client code; it is here for server-side API compatibility.
+
+            @return a new @ref OMQ::Client::QorusSystemAPIHelper "QorusSystemAPIHelper" object
+
+            @throw GET-REMOTE-ERROR The given connection is not known
+
+            @see get_remote_rest_connection()
+
+            @note This function initializes the client library implicitly
+
+            @since Qorus 3.1
+        */
+        public OMQ::Client::QorusSystemAPIHelper sub get_remote_rpc_connection(string name, bool connect = True, bool register_dependency = True) {
+            QorusClient::init();
+            return omqclient.getRemote(name);
+        }
+
+        #! returns a @ref Qore::SQL::DatasourcePool "DatasourcePool" object for the given datasource name
+        /** @param name the name of the datasource
+            @param register_dependency unused in client code; it is here for server-side API compatibility.
+
+            @return a @ref Qore::SQL::DatasourcePool "DatasourcePool" object
+
+            @throw DATASOURCE-ERROR unknown or system datasource
+
+            @note This function initializes the client library implicitly
+
+            @see get_datasource_dedicated()
+
+            @since Qorus 3.1
+        */
+        public Qore::SQL::DatasourcePool sub get_datasource_pool(string name, bool register_dependency = True) {
+            QorusClient::init();
+            return omqclient.getDatasourcePool(name);
+        }
+
+        #! returns a new, dedicated @ref Qore::SQL::Datasource "Datasource" object, suitable for transaction management for long-running transactions
+        /** @param name the name of the datasource
+            @param register_dependency unused in client code; it is here for server-side API compatibility.
+
+            @return a new, dedicated @ref Qore::SQL::Datasource "Datasource" object, suitable for transaction management for long-running transactions
+
+            @throw DATASOURCE-ERROR The given connection is not known or is a system datasource
+
+            @note This function initializes the client library implicitly
+
+            @see get_datasource_pool()
+
+            @since Qorus 3.1
+        */
+        public Qore::SQL::Datasource sub get_datasource_dedicated(string name, bool register_dependency = True) {
+            QorusClient::init();
+            return omqclient.getDatasource(name);
+        }
+
+        #! creates and returns a table object; there is no cache implementation in the client; this function is here for compatibility with server code and convenience in the client library
+        /** @par Example:
+            @code{.py}
+SqlUtil::AbstractTable t = get_sql_table(ds_name, "my_table");
+            @endcode
+
+            @param datasource a string with a name of a @ref dsconn
+            @param table_name the name of the table to be acquired; the handling of this parameter is identical to that in @ref SqlUtil::Table::constructor()
+
+            @return an @ref SqlUtil::AbstractTable object corresponding to the parameters
+
+            @throw INVALID-DATASOURCE this exception is thrown if the \a datasource argument cannot be matched to a known @ref dsconn "Qorus datasource”
+
+            @note other exceptions can be thrown when acquiring the table, for example if the given table is not accessible or if there are technical errors communicating with the database server, etc
+
+            @since Qorus 3.1.0
+        */
+        public SqlUtil::AbstractTable sub get_sql_table(string datasource, string table_name) {
+            return (new Table(get_datasource_dedicated(datasource), table_name)).getTable();
+        }
+
+        #! creates and returns a table object; there is no cache implementation in the client; this function is here for compatibility with server code and convenience in the client library
+        /** @par Example:
+            @code{.py}
+SqlUtil::AbstractTable t = get_sql_table(ds, "my_table");
+            @endcode
+
+            @param ds a @ref Qore::SQL::AbstractDatasource object
+            @param table_name the name of the table to be acquired; the handling of this parameter is identical to that in @ref SqlUtil::Table::constructor()
+
+            @return an @ref SqlUtil::AbstractTable object corresponding to the parameters
+
+            @note other exceptions can be thrown when acquiring the table, for example if the given table is not accessible or if there are technical errors communicating with the database server, etc
+
+            @since Qorus 3.1.0
+        */
+        public SqlUtil::AbstractTable sub get_sql_table(AbstractDatasource ds, string table_name) {
+            return (new Table(ds, table_name)).getTable();
+        }
+
+        #! in the client library equal to get_sql_table(string, string)
+        /** @par Example:
+            @code{.py}
+SqlUtil::AbstractTable t = get_sql_table("my-datasource", "my_table");
+            @endcode
+
+            @param datasource the name of a valid Qorus @ref dsconn "datasource"
+            @param table_name the name of the table to be acquired; the handling of this parameter is identical to that in @ref SqlUtil::Table::constructor()
+
+            @return an @ref SqlUtil::AbstractTable object corresponding to the parameters
+
+            @note other exceptions can be thrown when acquiring the table, for example if the given table is not accessible or if there are technical errors communicating with the database server, etc
+
+            @since Qorus 3.1.0
+        */
+        public SqlUtil::AbstractTable sub get_sql_table_system(string datasource, string table_name) {
+            return get_sql_table(datasource, table_name);
+        }
+
+        #! in the client library equal to get_sql_table(AbstractDatasource, string)
+        /** @since Qorus 3.1.0
+        */
+        public SqlUtil::AbstractTable sub get_sql_table_system(AbstractDatasource ds, string table_name) {
+            return get_sql_table(ds, table_name);
+        }
+
+        #! Returns an object corresponding to a defined @ref userconn "user connection"
+        /** @param name the name of the @ref userconn "connection"
+            @param connect if @ref Qore::False "False" an unconnected object will be returned, otherwise the object is already connected
+            @param register_dependency unused in client code; it is here for server-side API compatibility
+            @param rtopts any runtime options accepted by the connection
+
+            @return the object representing the connection
+
+            @throw CONNECTION-ERROR The given connection is not known
+
+            @see QorusClientAPI::getUserConnection()
+
+            @since Qorus 3.1.0
+        */
+        public object sub get_user_connection(string name, bool connect = True, bool register_dependency = True, *hash rtopts) {
+            QorusClient::init();
+            return omqclient.getUserConnection(name, connect, rtopts);
+        }
+
+        #! returns a hash of all system properties in all domains
+        /** @par Example:
+            @code{.py}
+hash h = prop_get();
+            @endcode
+
+            @return a hash of all system properties in all domains; the top-level keys are domain keys which have as values hashes with all key-value pairs set in the domain
+
+            @since Qorus 3.1.0
+         */
+        public hash<auto> sub prop_get() {
+            QorusClient::init();
+            hash<auto> props;
+            context (omq.select("select * from system_properties")) {
+                # issue #2854: system properties in the "omq" domain must always be read as strings
+                props.%domain.%keyname = %domain == "omq" ? %value : parse_yaml(%value);
+            }
+            return props;
+        }
+
+        #! returns a hash of all key-value pairs in the given domain or @ref nothing if the system property domain does not exist
+        /** @par Example:
+            @code{.py}
+*hash h = prop_get(domain);
+            @endcode
+
+            @return a hash of all key-value pairs in the given domain or @ref nothing if the system property domain does not exist
+
+            @since Qorus 3.1.0
+         */
+        public *hash<auto> sub prop_get(string domain) {
+            QorusClient::init();
+            *hash<auto> props;
+            context (omq.select("select * from system_properties where domain = %v", domain)) {
+                # issue #2854: system properties in the "omq" domain must always be read as strings
+                props.%keyname = domain == "omq" ? %value : parse_yaml(%value);
+            }
+            return props;
+        }
+
+        #! returns the value of the given system property key in the given domain or @ref nothing if the system property does not exist
+        /** @par Example:
+            @code{.py}
+auto val = prop_get(domain, key);
+            @endcode
+
+            @return the value of the given system property key in the given domain
+
+            @since Qorus 3.1.0
+         */
+        public auto sub prop_get(string domain, string key) {
+            QorusClient::init();
+            *string str = omq.selectRow("select value from system_properties where domain = %v and keyname = %v", domain, key).value;
+            # issue #2854: system properties in the "omq" domain must always be read as strings
+            return str.val()
+                ? (domain == "omq" ? str : parse_yaml(str))
+                : NOTHING;
+        }
+
+        #! the client initialization function where any errors cause an error message to be displayed and exit() is called
+        /** Actually implemented by QorusClient::init()
+
+            @see
+            - QorusClient::init()
+            - QorusClient::init2()
+         */
+        public sub qorus_client_init() {
+            QorusClient::init();
+        }
+
+        #! the main client initialization function; other functions call this one to initialize the client library
+        /** Actually implemented by QorusClient::init2()
+
+            @see
+            - QorusClient::init()
+            - QorusClient::init2()
+         */
+        public sub qorus_client_init2() {
+            QorusClient::init2();
+        }
+
+        #! option-parsing function: parses the option file
+        /** Actually implemented by @ref QorusClient::parseOptions()
+
+            This function calls @ref QorusClient::init() to ensure the client library is initialized
+
+            @return a hash of the options in the given domain
+         */
+        public hash sub qorus_parse_options(string domain) {
+            return QorusClient::parseOptions(domain);
+        }
+
+        #! option-parsing function: parses the option file
+        /** Actually implemented by @ref QorusClient::parseOptions()
+
+            This function calls @ref QorusClient::init() to ensure the client library is initialized
+
+            @return a hash of hashes; the first level hash key represents the domain, the second level is the option=value within that option domain
+         */
+        public hash sub qorus_parse_options() {
+            return QorusClient::parseOptions();
+        }
+
+        #! returns the value of the given Qorus system option (in the \c "qorus" domain)
+        /**
+            This function calls @ref QorusClient::init() to ensure the client library is initialized
+
+            @return the value of the given Qorus system option (in the \c "qorus" domain) or @ref nothing if the option is not set or is unknown
+
+            @since Qorus 3.1.0
+        */
+        public auto sub qorus_get_system_option(string opt) {
+            return QorusClient::parseOptions("qorus"){opt};
+        }
+
+        #! returns the value of all Qorus system options (in the \c "qorus" domain)
+        /**
+            This function calls @ref QorusClient::init() to ensure the client library is initialized
+
+            @return a hash of all system options in the \c "qorus" domain
+
+            @since Qorus 3.1.0
+        */
+        public hash sub qorus_get_system_options() {
+            return QorusClient::parseOptions("qorus");
+        }
+
+        # FIXME we should decide whether or not to use QoreDebug for debugging Qorus?!
+        # I believe QoreDebug should completely vanish from Qorus sources.
+        # see https://bugs.qoretechnologies.com/issues/1421
+%ifdef QorusDebugInternals
+        public sub ASSERT(softbool b = False) {
+            if (!b) throw "ASSERT", sprintf("stack: %y", get_stack());
+        }
+%else
+%ifdef QoreDebug
+        public sub ASSERT(softbool b = False) {
+            if (!b) throw "ASSERT", sprintf("stack: %y", get_stack());
+        }
+%else
+        public sub ASSERT(softbool b = False) {
+        }
+%endif
+%endif
+    }
+
+    #! This class implements static methods in the client API
+    public class QorusClient {
+        public {
+            const EtcOptions = DirSep + "etc" + DirSep + "options";
+        }
+
+        #! the client initialization function where any errors cause an error message to be displayed and exit() is called
+        /** creates global objects; throws exceptions on errors
+
+            @param ignore_warnings if @ref True then warnings will be suppressed
+
+            @see
+            - QorusClient::initFast()
+            - QorusClient::init2()
+            - qorus_client_init2()
+         */
+        static init(*bool ignore_warnings) {
+            try {
+                QorusClient::init2(ignore_warnings);
+            } catch (hash<ExceptionInfo> ex) {
+                printf("%s\n", get_exception_string(ex));
+                #printf("%s: %s: %s\n", get_ex_pos(ex), ex.err, ex.desc);
+                exit(1);
+            }
+        }
+
+        #! the main client initialization method; other functions call this one to initialize the client library
+        /** creates global objects; throws exceptions on errors
+
+            @param ignore_warnings if @ref True then warnings will be suppressed
+
+            @see
+            - QorusClient::init()
+            - QorusClient::initFast()
+            - qorus_client_init2()
+         */
+        static synchronized init2(*bool ignore_warnings) {
+            QorusClient::initFast(ignore_warnings);
+            omqclient.initSystemDatasources();
+        }
+
+        #! fast client initialization method; other functions call this one to initialize the client library
+        /** creates global objects; throws exceptions on errors
+
+            does not initializes system datasources
+
+            @param ignore_warnings if @ref True then warnings will be suppressed
+
+            @see
+            - QorusClient::init()
+            - QorusClient::init2()
+         */
+        static synchronized initFast(*bool ignore_warnings) {
+            if (exists ignore_warnings) {
+                QorusClientAPI::ignore_warnings = ignore_warnings;
+            }
+
+            if (omqclient)
+                return;
+
+            # check OMQ_DIR environment variable
+            if (ENV.OMQ_DIR != "LSB") {
+                if (exists ENV.OMQ_DIR && !absolute_path(ENV.OMQ_DIR)) {
+                    if (is_readable(ENV.OMQ_DIR) && is_dir(ENV.OMQ_DIR)) {
+                        string nd = normalize_dir(ENV.OMQ_DIR);
+                        if (!QorusClientAPI::ignore_warnings) {
+                            stderr.printf("WARNING: OMQ_DIR=%n is relative, normalizing to %n\n", ENV.OMQ_DIR, nd);
+                        }
+                        ENV.OMQ_DIR = nd;
+                    } else {
+                        if (!QorusClientAPI::ignore_warnings) {
+                            stderr.printf("WARNING: OMQ_DIR=%n is invalid\n", ENV.OMQ_DIR);
+                        }
+                        ENV.OMQ_DIR = NOTHING;
+                    }
+                }
+                if (!exists ENV.OMQ_DIR || !is_readable(ENV.OMQ_DIR)) {
+                    if (is_readable("/etc/qorus/options")) {
+                        if (!QorusClientAPI::ignore_warnings) {
+                            stderr.printf("WARNING: assuming LSB directory structure\n");
+                        }
+                        ENV.OMQ_DIR = "LSB";
+                    } else if (is_readable("/opt/qorus/etc/options")) {
+                        if (!QorusClientAPI::ignore_warnings) {
+                            stderr.printf("WARNING: assuming OMQ_DIR='/opt/qorus'\n");
+                        }
+                        ENV.OMQ_DIR = "/opt/qorus";
+                    } else {
+                        string dir = normalize_dir(get_script_dir() + (PlatformOS != "Windows" ? "/.." : "\\.."));
+                        if (is_readable(dir + EtcOptions)) {
+                            if (!QorusClientAPI::ignore_warnings) {
+                                stderr.printf("WARNING: assuming OMQ_DIR='%s'\n", dir);
+                            }
+                            ENV.OMQ_DIR = dir;
+                        } else {
+                            if (!QorusClientAPI::ignore_warnings) {
+                                stderr.printf("WARNING: cannot find Qorus installation directory\n");
+                            }
+                            delete ENV.OMQ_DIR;
+                        }
+                    }
+                }
+            }
+
+            # global client API object
+            omqclient = new OMQ::QorusClientAPI();
+
+            # global object for accessing the Qorus network API through lightweight web service calls
+            omqapi = new OMQ::Client::QorusSystemAPIHelper();
+
+            # global object for transparently making service calls to a remote server using omqapi
+            omqservice = new OMQ::Client::QorusClientRemoteServiceHelper(omqapi);
+
+            # global object for access the Qorus REST API
+            qrest = new OMQ::Client::QorusSystemRestHelper(NOTHING, True);
+        }
+
+        #! option-parsing function: parses the option file
+        /** this function calls qorus_client_init() to ensure the client library is initialized
+            @return a hash of the options in the given domain
+         */
+        static hash<auto> parseOptions(string domain) {
+            QorusClient::initFast();
+            return omqclient.getOptions(domain);
+        }
+
+        #! option-parsing function: parses the option file
+        /** @return a hash of hashes; the first level hash key represents the domain, the second level is the option=value within that option domain
+         */
+        static hash<auto> parseOptions() {
+            QorusClient::initFast();
+            return omqclient.getOptions();
+        }
+
+        #! set config items in the server
+        /** @param config a hash keyed by REST path to the object to be configured, values are hashes
+            keyed by config item name; values are the config item values
+            @param silent if @ref True no output will be printed to stdout
+            @param exit_on_error if @ref True and an error occurs, @ref thread_exit is called, otherwise -1 is returned
+
+            @return 0 = OK, -1 = error occurred
+        */
+        static int configureInterfaces(hash<auto> config, *bool silent, bool exit_on_error = True) {
+            hash<auto> info;
+            try {
+                # configure config items
+                foreach hash<auto> i in (config.pairIterator()) {
+                    if (!silent) {
+                        printf("%y: ", i.key);
+                        flush();
+                    }
+                    map qrest.put(i.key + "/config/" + $1.key, {
+                            "value": $1.value,
+                        }, \info), i.value.pairIterator();
+                    if (!silent) {
+                        printf("configured %d item%s\n", i.value.size(), i.value.size() == 1 ? "" : "s");
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                qrest.outputRestErrorMessage(ex, info);
+                if (exit_on_error) {
+                    thread_exit;
+                }
+                return -1;
+            }
+            return 0;
+        }
+
+        #! Sends a REST GET request to the Qorus server and returns the HTTP status code
+        /** @param uri_path the URI path to send
+            @param exit_if_down if @ref True and Qorus is down, @ref thread_exit is called, otherwise -1 is returned
+
+            @return the HTTP status code returned from the rest request or -1 if Qorus is down and \a exit_if_down
+            is not @ref True
+
+            @since Qorus 4.1
+        */
+        static int restGetCode(string uri_path, bool exit_if_down = True) {
+            hash<auto> info;
+            try {
+                qrest.get(uri_path, NOTHING, \info);
+                return info."response-code";
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "SOCKET-CONNECT-ERROR") {
+                    if (exit_if_down) {
+                        stderr.printf("Qorus is down: %s: %s; exiting\n", ex.err, ex.desc);
+                        thread_exit;
+                    } else {
+                        return -1;
+                    }
+                }
+                if (!ex.arg.status_code) {
+                    rethrow;
+                }
+                return ex.arg.status_code;
+            }
+        }
+
+        #! Creates a user connection if the connection does not exist
+        /** @note
+            - Changes are made with REST API calls; if Qorus is down, no action is performed
+            - If the global error already exists, no changes are made
+
+            @since Qorus 4.1
+        */
+        static createUserConnection(string name, string desc, string url, *hash<auto> options, *bool silent) {
+            hash<auto> info;
+            try {
+                if (QorusClient::restGetCode("remote/user/" + name) == 404) {
+                    qrest.post("remote/user", {
+                        "name": name,
+                        "desc": desc,
+                        "url": url,
+                        "options": options,
+                    });
+                    if (!silent) {
+                        printf("connection %y: created\n", name);
+                    }
+                } else {
+                    printf("connection %y: already exists\n", name);
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                qrest.outputRestErrorMessage(ex, info);
+                thread_exit;
+            }
+        }
+
+        #! Creates the given global error configuration if it does not already exist
+        /** @note
+            - Changes are made with REST API calls; if Qorus is down, no update is performed
+            - If the global error already exists, no changes are made
+
+            @since Qorus 4.1
+        */
+        static createGlobalError(string error, string desc, string status, *int retry_delay_secs, *bool silent) {
+            hash<auto> info;
+            try {
+                if (QorusClient::restGetCode("errors/global/" + error) == 404) {
+                    qrest.post("errors", {
+                        "error": error,
+                        "desc": desc,
+                        "status": status,
+                        "retry_delay_secs": retry_delay_secs,
+                    });
+                    if (!silent) {
+                        printf("global error %y: created\n", error);
+                    }
+                } else {
+                    if (!silent) {
+                        printf("global error %y: already exists\n", error);
+                    }
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                qrest.outputRestErrorMessage(ex, info);
+                thread_exit;
+            }
+        }
+
+        #! Aligns the given workflow error configuration according to the arguments
+        /** @note Updates are made with REST API calls; if Qorus is down, no update is performed
+
+            @since Qorus 4.1
+        */
+        static createOrUpdateWorkflowError(string workflow, string error, string desc, string status, *int retry_delay_secs, *bool silent) {
+            hash<auto> info;
+            try {
+                qrest.post("errors/workflow/" + workflow + "/createOrUpdate", {
+                    "error": error,
+                    "desc": desc,
+                    "status": status,
+                    "retry_delay_secs": retry_delay_secs,
+                }, \info);
+                if (!silent) {
+                    printf("workflow error %y: aligned\n", error);
+                }
+            } catch (hash<ExceptionInfo> ex) {
+                qrest.outputRestErrorMessage(ex, info);
+                thread_exit;
+            }
+        }
+
+        #! Adds the given module to the \c dataprovider-modules system option
+        /** @param mod the module name to add to the option value
+
+            If the options file is updated, then a backup is made and appropriate messages are output
+
+            @note Qorus must be restarted for module option changes to take effect
+
+            @since Qorus 4.1
+        */
+        static addDataProviderModuleOption(string mod) {
+            QorusClient::addModuleOption("dataprovider-modules", mod);
+        }
+
+        #! Adds the given module to the \c connection-modules system option
+        /** @param mod the module name to add to the option value
+
+            If the options file is updated, then a backup is made and appropriate messages are output
+
+            @note Qorus must be restarted for module option changes to take effect
+
+            @since Qorus 4.1.1
+        */
+        static addConnectionModuleOption(string mod) {
+            QorusClient::addModuleOption("connection-modules", mod);
+        }
+
+        #! Adds the given module to the given module option
+        /** @param option a Qorus module option
+            @param mod the module name to add to the option value
+
+            If the options file is updated, then a backup is made and appropriate messages are output
+
+            @note Qorus must be restarted for module option changes to take effect
+
+            @since Qorus 4.1
+        */
+        static addModuleOption(string option, string mod) {
+            hash<auto> options = QorusClient::parseOptions("qorus");
+            #printf("%y: %y\n", option, options{option});
+            *hash<string, bool> mod_hash = map {$1: True}, options{option};
+            # if the module is already there, then return
+            if (mod_hash{mod}) {
+                return;
+            }
+            mod_hash{mod} = True;
+            string option_name = sprintf("qorus.%s", option);
+            string opt_str = sprintf("%s: %s", option_name, (foldl $1 + ", " + $2, keys mod_hash));
+            string option_file_name = options."option-file";
+            omqclient.updateConfigFile(option_file_name, option_name, opt_str, "MODULE-SETUP");
+            QorusClientAPI::clientWarning("MODULE-SETUP", option_name, "%s: added option \"%s\" to options file", option_file_name,
+                opt_str);
+            # issue #3760: ensure that this value is maintained if multiple values are added to the option
+            omqclient.updateOptionValue("qorus", option, keys mod_hash);
+        }
+    }
+
+    #! This class implements the client interface to a Qorus server
+    /** This class is in charge of parsing the options and providing other
+        client-related services based on these files.
+        This class is normally used from the @ref OMQ::omqclient "omqclient" object, a global variable initialized
+        by calling qorus_client_init() (or qorus_client_init2()).\n\n
+        For example, retrieving Datasource or DatasourcePool objects:
+        @code{.py}
+qorus_client_init();
+Datasource app2 = omqclient.getDatasource("app2");
+DatasourcePool app2p = omqclient.getDatasourcePool("app2");
+        @endcode
+    */
+    public class QorusClientAPI inherits QorusClient, CryptoKeyHelper {
+        private:internal {
+            #! internal options
+            hash options;
+            hash file_options;
+            bool LSB = False;
+            string option_file_name;
+
+            SQLInterface sqlif;
+            DatasourcePool omqp;
+            hash wfc;
+            hash wfnc;
+            Mutex lck();
+            string config_dir;
+            # remoteconnection file parsed flag
+            bool remote_done = False;
+            # remote connection manager
+            OMQ::Client::RemoteConnections remote;
+            # user connection manager
+            OMQ::Client::UserConnections userconn;
+            # datasource connection manager
+            OMQ::Client::DatasourceConnections datasource_conn;
+
+            # hash of files backed up
+            hash bh;
+
+            # has the object been initialized?
+            bool init_flag = False;
+
+            # local address for zmq messaging
+            string local_address;
+
+            # local node name
+            string node;
+
+            # ZeroMQ messaging context
+            ZContext zctx;
+
+            # stdout logger
+            Logger logger;
+        }
+
+        public {
+            # ignore warnings
+            static bool ignore_warnings = False;
+        }
+
+        #! creates the object and parses the options file
+        /** uses the OMQ_DIR environment variable if set, otherwise tries to find the Qorus installation
+        */
+        constructor() {
+            # read in and parse all Qorus options
+            parseOptionsFileIntern();
+
+            # migration of omq datasource. It just injects systemdb until schema-tool makes real upgrade
+            if (!options.qorus.systemdb) {
+                if (!hstat(config_dir + "/etc/dbparams")) {
+                    throw "CONFIG-ERROR", sprintf("no system schema configured; set the \"systemdb\" option in "
+                        "options file %y, and try again", option_file_name);
+                }
+                options.qorus.systemdb = (ReadOnlyFile::readTextFile(config_dir + "/etc/dbparams") =~ x/^omq=(.*)$/m)[0];
+            }
+        }
+
+        #! Returns a client "stdout" logger
+        /** If the client logger has already been created before, then it is returned, and the \a level argument is
+            ignored
+
+            @param level the level for the logger, if it is created with this call
+
+            @return a client "stdout" logger
+
+            @since Qorus 6.0
+        */
+        Logger getClientLogger(Logger::LoggerLevel level = LoggerLevel::getLevelError()) {
+            if (logger) {
+                return logger;
+            }
+
+            lck.lock();
+            on_exit lck.unlock();
+
+            # must check again in the lock
+            if (logger) {
+                return logger;
+            }
+
+            logger = new Logger("client", level);
+            logger.addAppender(new StdoutAppender());
+            return logger;
+        }
+
+        #! Returns a client "stdout" logger
+        /** If the client logger has already been created before, then it is returned, and the \a level argument is
+            ignored
+
+            @param level the level for the logger, if it is created with this call
+
+            @return a client "stdout" logger
+
+            @since Qorus 6.0
+        */
+        Logger getClientLogger(int level = LoggerLevel::ERROR) {
+            return getClientLogger(LoggerLevel::getLevel(level, LoggerLevel::getLevel(LoggerLevel::ERROR)));
+        }
+
+        #! returns the connection provider object
+        /** @param type one of \c remote, \c connection, or \c datasource
+
+            @return the connection provider object corresponding to the argument
+
+            @throw INVALID-CONNECTION-PROVIDER invalid connection provider type
+
+            @since Qorus 4.1.1
+        */
+        Connections getConnectionProvider(string type) {
+            switch (type) {
+                case "connection":
+                    initUserConnectionsIntern();
+                    return userconn;
+
+                case "datasource":
+                    initDatasourceConnectionsIntern();
+                    return datasource_conn;
+
+                case "remote":
+                    initRemoteConnectionsIntern();
+                    return remote;
+
+                default:
+                    throw "INVALID-CONNECTION-PROVIDER", sprintf("connection provider %y is unknown; expecting one "
+                        "of %y", type, ("remote", "connection", "datasource"));
+            }
+        }
+
+        #! returns True if the installation is an LSB installation, False if not
+        /** @return True if the installation is an LSB installation, False if not
+        */
+        bool isLSB() {
+            return LSB;
+        }
+
+        #! returns the options file name
+        /** @return the options file name
+        */
+        string getOptionFileName() {
+            return option_file_name;
+        }
+
+        #! sets a flag to ignore warnings
+        static ignoreWarnings(bool ignore_warnings = True) {
+            QorusClientAPI::ignore_warnings = ignore_warnings;
+        }
+
+        #! ensures that user connections have been initialized
+        synchronized private initUserConnectionsIntern() {
+            if (!userconn) {
+                init();
+                userconn = new UserConnections(omq);
+            }
+        }
+
+        synchronized private initRemoteConnectionsIntern() {
+            if (!remote) {
+                init();
+                remote = new RemoteConnections(omq);
+            }
+        }
+
+        synchronized private initDatasourceConnectionsIntern() {
+            if (!datasource_conn) {
+                init();
+                datasource_conn = new DatasourceConnections(omq);
+            }
+        }
+
+        #! Returns a hash describing all defined @ref userconn "user connections" or @ref nothing if no user connections are defined
+        /** @par Example:
+            @code{.py}
+            *hash<string, AbstractConnection> h = omqclient.getUserConnections();
+            @endcode
+
+            @return a hash of all defined @ref userconn "user connections" or @ref nothing if no user connections are defined; keys are user connection names; values @ref ConnectionProvider::AbstractConnection "AbstractConnection" objects
+
+            @note connection-specific exceptions could be thrown initializing connections
+
+            @since Qorus 3.1.1.p4
+        */
+        *hash<string, AbstractConnection> getUserConnections() {
+            initUserConnectionsIntern();
+            return userconn.getConnections();
+        }
+
+        #! Returns a hash describing all defined @ref userconn "user connections" or @ref nothing if no user connections are defined
+        /** @par Example:
+            @code{.py}
+            *hash<auto> h = omqclient.getUserConnectionInfo();
+            @endcode
+
+            @return a hash describing all defined @ref userconn "user connections" or @ref nothing if no user connections are defined; keys are user connection names; hash values correspond to the return value of @ref ConnectionProvider::AbstractConnection::getInfo()
+
+            @note connection-specific exceptions could be thrown initializing connections
+
+            @since Qorus 3.1.1
+        */
+        *hash<auto> getUserConnectionInfo() {
+            initUserConnectionsIntern();
+            return userconn.getInfo();
+        }
+
+        #! Returns a @ref ConnectionProvider::AbstractConnection object corresponding to a defined @ref userconn "user connection"
+        /** @par Example:
+            @code{.py}
+            ConnectionProvider::AbstractConnection conn = omqclient.getUserConnectionObject(name);
+            @endcode
+
+            @param name the name of the @ref userconn "connection"
+
+            @return the @ref ConnectionProvider::AbstractConnection object representing the connection
+
+            @throw CONNECTION-ERROR The given connection is not known
+
+            @since Qorus 3.1.1
+        */
+        ConnectionProvider::AbstractConnection getUserConnectionObject(string name) {
+            initUserConnectionsIntern();
+            return userconn.getConnection(name);
+        }
+
+        #! Returns a hash describing the given @ref userconn "user connection"
+        /** @par Example:
+            @code{.py}
+            hash h = omqclient.getUserConnectionInfo(name);
+            @endcode
+
+            @param name the name of the @ref userconn "connection"
+
+            @return a hash describing the given @ref userconn "user connections"; the return value corresponds to the return value of @ref ConnectionProvider::AbstractConnection::getInfo(); if the connection is invalid or unknown an exception is thrown
+
+            @throw CONNECTION-ERROR The given connection is invalid or unknown
+
+            @note connection-specific exceptions could be thrown initializing connections
+
+            @since Qorus 3.1.1
+        */
+        synchronized hash getUserConnectionInfo(string name) {
+            return getUserConnectionObject(name).getInfo({"with_passwords": True});
+        }
+
+        #! Returns the URL corresponding to a defined @ref userconn "user connection"
+        /** @par Example:
+            @code{.py}
+            string url = omqclient.getUserConnectionUrl(name);
+            @endcode
+
+            @param name the name of the @ref userconn "connection"
+
+            @return the URL string for the connection
+
+            @throw CONNECTION-ERROR The given connection is invalid or unknown
+
+            @note other connection-specific exceptions could be thrown initializing connections
+
+            @since Qorus 3.1.1
+        */
+        string getUserConnectionUrl(string name) {
+            return getUserConnectionObject(name).url;
+        }
+
+        #! Returns an object corresponding to a defined @ref userconn "user connection"
+        /** @par Example:
+            @code{.py}
+            FtpClient ftp = omqclient.getUserConnection(name, False);
+            @endcode
+
+            @param name the name of the @ref userconn "connection"
+            @param connect if @ref Qore::False "False" an unconnected object will be returned, otherwise the object is already connected
+            @param rtopts any runtime options accepted by the connection
+
+            @return the object representing the connection
+
+            @throw CONNECTION-ERROR The given connection is not known
+
+            @see OMQ::Client::get_user_connection()
+
+            @since Qorus 3.1.0
+        */
+        object getUserConnection(string name, bool connect = True, *hash rtopts) {
+            return getUserConnectionObject(name).get(connect, rtopts);
+        }
+
+        #! reloads user connections from the DB on the next request for a user connection
+        /** @since Qorus 3.1.1.p11
+        */
+        reloadUserConnections() {
+            remove userconn;
+        }
+
+        #! returns a Datasource object for the given string if defined in @ref dsconn
+        /** @par Example:
+            @code{.py}
+            Datasource app2 = omqclient.getDatasource("app2");
+            @endcode
+
+            An exception is thrown if the datasource is not known.  The same Datasource object will always be returned from this method.
+
+            @param name the name of the datasource to retrieve
+
+            @return the Datasource object for the given string
+
+            @throw INVALID-DATASOURCE unknown datasource
+
+            @see QorusClientAPI::getNewDatasource()
+        */
+        synchronized Datasource getDatasource(string name) {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getDatasource(name);
+        }
+
+        #! returns a new Datasource object for the given string if defined in @ref dsconn
+        /** @par Example:
+            @code{.py}
+            Datasource app2 = omqclient.getNewDatasource("app2");
+            @endcode
+
+            An exception is thrown if the datasource is not known
+
+            @param name the name of the datasource to retrieve
+
+            @return the Datasource object for the given string
+
+            @throw INVALID-DATASOURCE unknown datasource
+
+            @see QorusClientAPI::getDatasource()
+        */
+        Datasource getNewDatasource(string name) {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getNewDatasource(name);
+        }
+
+        #! returns the datasource connection string for the given datasource if defined in @ref dsconn
+        /** @par Example:
+            @code{.py}
+            string connstr = omqclient.getDatasourceConnectionString("app2");
+            @endcode
+
+            An exception is thrown if the datasource is not known
+
+            @param name the name of the datasource to retrieve
+
+            @return the datasource connection string for the given datasource
+
+            @throw INVALID-DATASOURCE unknown datasource
+
+            @see QorusClientAPI::getDatasource()
+
+            @since Qorus 3.1.1
+        */
+        string getDatasourceConnectionString(string name) {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getConnectionString(name);
+        }
+
+        #! returns a hash of datasource connections; keys are datasource names, values are connection strings
+        /** @return a hash of datasource connections; keys are datasource names, values are connection strings
+
+            @since Qorus 4.1
+        */
+        *hash<string, string> getDatasourceConnectionsAsHash() {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getDatasourceConnectionsAsHash();
+        }
+
+        #! returns the path to the configuration directory for this instance of Qorus
+        /** @return the path to the configuration directory for this instance of Qorus
+        */
+        string getConfigDir() {
+            return config_dir;
+        }
+
+        #! returns the path to the application root directory
+        /** for LSB instances, always returns "/var/opt/qorus"
+            @return the path to the application root directory
+        */
+        string getAppDir() {
+            return LSB ? "/var/opt/qorus" : ENV.OMQ_DIR;
+        }
+
+        #! returns a DatasourcePool object for the given string if defined in @ref dsconn
+        /** An exception is thrown if the datasource is not known.  The same DatasourcePool object will always be returned from this method.
+
+            @param name the name of the datasource to use as a basis for creating the DatasourcePool object
+            @param min override the minimum connection setting
+            @param max override the maximum connection setting
+
+            @return the DatasourcePool object for the given string
+
+            @see QorusClientAPI::getNewDatasourcePool()
+
+            @par Example:
+            @code{.py}
+DatasourcePool app2p = omqclient.getDatasourcePool("app2");
+            @endcode
+        */
+        synchronized DatasourcePool getDatasourcePool(string name, int min = 0, int max = 0) {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getDatasourcePool(name, min, max);
+        }
+
+        #! returns a new DatasourcePool object for the given string if defined in @ref dsconn
+        /** an exception is thrown if the datasource is not known
+
+            @param name the name of the datasource to use as a basis for creating the DatasourcePool object
+            @param min the minumum number of connections to open when the object is created
+            @param max the maximum number of connections to manage; not more than these connections will be opened
+
+            @return the Datasource object for the given string
+
+            @see QorusClientAPI::getDatasourcePool()
+
+            @par Example:
+            @code{.py}
+DatasourcePool app2p = omqclient.getNewDatasourcePool("app2");
+            @endcode
+        */
+        DatasourcePool getNewDatasourcePool(string name, softint min = 0, softint max = 0) {
+            initDatasourceConnectionsIntern();
+            return datasource_conn.getNewDatasourcePool(name, min, max);
+        }
+
+        #! returns a hash of @ref remoteconn "remote connections" keyed by remote connection name or @ref nothing if no @ref remoteconn "remote connections" are defined
+        /** @par Example:
+            @code{.py}
+*hash h = omqclient.getRemoteInfo();
+            @endcode
+
+            @return a hash of @ref remoteconn "remote connections" keyed by remote connection name or @ref nothing if no @ref remoteconn "remote connections" are defined; hash values correspond to the return value of @ref ConnectionProvider::AbstractConnection::getInfo()
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn config file or malformed syntax
+
+            @since Qorus 3.1.1
+        */
+        *hash<auto> getRemoteInfo() {
+            initRemoteConnectionsIntern();
+            return remote.getInfo({"with_passwords": True});
+        }
+
+        #! returns a @ref ConnectionProvider::AbstractConnection object for the given @ref remoteconn "remote connection"
+        /** @par Example:
+            @code{.py}
+ConnectionProvider::AbstractConnection conn = omqclient.getRemoteConnectionObject(conn);
+            @endcode
+
+            @param name the name of the @ref remoteconn "remote connection"
+
+            @return a @ref ConnectionProvider::AbstractConnection object for the given @ref remoteconn "remote connection"; if the connection is invalid or unknown, an exception is thrown
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn config file or malformed syntax
+            @throw GET-REMOTE-ERROR requested connection is not defined
+
+            @since Qorus 3.1.1
+        */
+        ConnectionProvider::AbstractConnection getRemoteConnectionObject(string name) {
+            initRemoteConnectionsIntern();
+            return remote.getConnection(name);
+        }
+
+        #! returns a hash of the given @ref remoteconn "remote connection"
+        /** @par Example:
+            @code{.py}
+hash h = omqclient.getRemoteInfo(conn);
+            @endcode
+
+            @param name the name of the @ref remoteconn "remote connection"
+
+            @return a hash of the given @ref remoteconn "remote connection"; the return value corresponds to the return value of @ref ConnectionProvider::AbstractConnection::getInfo(); if the connection is invalid or unknown, an exception is thrown
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw GET-REMOTE-ERROR requested connection is not defined
+
+            @since Qorus 3.1.1
+        */
+        hash getRemoteInfo(string name) {
+            return getRemoteConnectionObject(name).getInfo({"with_passwords": True});
+        }
+
+        #! returns the URL for a Qorus @ref remoteconn "remote connection" from the connection name
+        /** @par Example:
+            @code{.py}
+string url = omqclient.getRemoteUrl(conn);
+            @endcode
+
+            @param name the name of the @ref remoteconn "remote connection"
+
+            @return the URL for the connection
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw GET-REMOTE-ERROR requested connection is not defined
+
+            @since Qorus 3.1.1
+        */
+        string getRemoteUrl(string name) {
+            return getRemoteConnectionObject(name).url;
+        }
+
+        #! gets a remote connection based on connection parameters parsed in the @ref remoteconn
+        /**
+            @param name a string key/name of the remote instance
+
+            @return OMQ::Client::QorusSystemAPIHelper instance; see @ref OMQ::QorusSystemAPIHelperBase for the full API
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw GET-REMOTE-ERROR requested connection is not defined
+        */
+        OMQ::Client::QorusSystemAPIHelper getRemote(string name) {
+            initRemoteConnectionsIntern();
+            OMQ::Client::QorusSystemAPIHelper ret();
+            remote.setParams(ret, name);
+            return ret;
+        }
+
+        #! returns a connection for RESTful communication with a remote Qorus server based on connection parameters parsed in the @ref remoteconn
+        /**
+            @param name a string key/name of the remote instance
+            @param connect if @ref Qore::False "False", then the object will be created in an unconnected state
+
+            @return OMQ::Client::QorusSystemRestHelper instance; see @ref OMQ::QorusSystemRestHelperBase for the full API
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw GET-REMOTE-ERROR requested connection is not defined
+        */
+        OMQ::Client::QorusSystemRestHelper getRemoteRest(string name, bool connect = True) {
+            return new OMQ::Client::QorusSystemRestHelper(name, !connect);
+        }
+
+        #! returns a hash with connection parameters for a remote Qorus server based on connection parameters parsed in the @ref remoteconn
+        /**
+            @param name a string key/name of the remote instance
+            @param with_password if @ref True then the password is also returned
+
+            @return a hash with connection parameters
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw CONNECTION-ERROR requested connection is not defined
+        */
+        hash<auto> getRemoteConfig(string name, bool with_password = True) {
+            return getRemoteConfig(name, {"with_passwords": with_password});
+        }
+
+        #! returns a hash with connection parameters for a remote Qorus server based on connection parameters parsed in the @ref remoteconn
+        /**
+            @param name a string key/name of the remote instance
+            @param opts connection information options; options are connection-specific; the only universal option is
+            \c with_passwords: if @ref True, then passwords are returned in the info hash
+
+            @return a hash with connection parameters
+
+            @throw REMOTE-LOAD-ERROR Missing @ref remoteconn configuration or malformed syntax
+            @throw CONNECTION-ERROR requested connection is not defined
+        */
+        hash<auto> getRemoteConfig(string name, hash<auto> opts) {
+            initRemoteConnectionsIntern();
+            return remote.getInfoEx(name, opts);
+        }
+
+        #! Update internal option value
+        /** To be used when the option file itself is updated
+        */
+        updateOptionValue(string domain, string option, auto value) {
+            options{domain}{option} = value;
+        }
+
+        #! sets up a QorusSystemAPIHelper to communicate with the given remote Qorus instance
+        setRemoteParams(OMQ::Client::QorusSystemAPIHelper ret, string name) {
+            initRemoteConnectionsIntern();
+            remote.setParams(ret, name);
+        }
+
+        #! returns a complete path for the configuration file given as an argument or an exception is thrown if the file does not exist
+        /** @param name the config file name without any directory component
+            @param opt the name of the option giving the file location (default: name + "-file")
+            @return a complete path for the configuration file given as an argument
+            @throw MISSING-FILE the given file cannot be located
+        */
+        string getConfigFile(string name, *string opt) {
+            if (!exists opt)
+                opt = name + "-file";
+            *string fn = options.qorus{opt};
+
+            if (!exists fn) {
+                fn = config_dir + DirSep + name;
+
+                if (!is_readable(fn)) {
+                    fn = DirSep + "etc" + DirSep + "qorus" + DirSep + name;
+
+                    if (!is_readable(fn)) {
+                        fn = normalize_dir(get_script_dir() + DirSep + ".." + DirSep + "etc") + DirSep + name;
+                        if (!is_readable(fn))
+                            throw "MISING-FILE", sprintf("cannot find Qorus configuration file %y and qorus.%s option is not set", name, opt);
+                    }
+                }
+            }
+
+            return fn;
+        }
+
+        #! returns the options from the given domain as a hash
+        /** an empty hash is returned for domains not present in the options file
+            @param domain the option domain to return
+            @return the options from the given domain as a hash
+        */
+        hash<auto> getOptions(string domain) {
+            return exists options{domain} ? options{domain} : {};
+        }
+
+        #! returns the options from all domains as a hash of hashes
+        /** the top-level hash keys are the domain names
+            @return the options from all domains as a hash of hashes
+        */
+        hash<auto> getOptions() {
+            return options;
+        }
+
+        #! Allows an option value to be set temporarily
+        setOption(string domain, string key, auto value) {
+            options{domain}{key} = value;
+        }
+
+        #! returns an SQLInterface object using the system DatasourcePool object
+        /** @return an SQLInterface object using the system DatasourcePool object for the system schema \c "omq" datasource
+         */
+        SQLInterface getSQLIF() {
+            initInternalDb();
+            return sqlif;
+        }
+
+        #! returns an SQLInterface object using a DatasourcePool object for the datasource given as an argument
+        /** @param dsn the name of the datasource to use for the SQLInteterface object
+
+            @return an SQLInterface object using the system DatasourcePool object for the given datasource
+         */
+        SQLInterface getSQLIF(string dsn) {
+            return dsn == "omq" ? getSQLIF() : getSQLIF(getDatasourcePool(dsn, 1));
+        }
+
+        #! returns an SQLInterface object using the DatasourcePool object given as an argument
+        /** @param dsp the DatasourcePool to use for the SQLInteterface object
+
+            @return an SQLInterface object using the given DatasourcePool object
+         */
+        SQLInterface getSQLIF(DatasourcePool dsp) {
+            # init SQL Interface
+            switch (dsp.getDriverRealName()) {
+                case "oracle":
+                    return new OracleSQLInterface(dsp);
+                case "pgsql":
+                case /^postgres/i:
+                    return new PostgreSQLInterface(dsp);
+                case "mysql":
+                    return new MySQLInterface(dsp);
+            }
+            throw "DATASOURCE-ERROR", sprintf("driver %y is not supported as a Qorus datasource", dsp.getDriverName());
+        }
+
+        #! Resets the system datasource
+        resetSystemDatasource() {
+            remove omq;
+            remove omqp;
+            remove sqlif;
+            initOmq();
+            getSQLIF();
+        }
+
+        #! initializes the system Datasource and DatasourcePool objects
+        /** This method is automatically called from other methods of this class when needed.
+            This method is safe to call multiple times (also from multiple threads); if the
+            system Datasource objects have already been initialized, then the method returns immediately
+        */
+        initSystemDatasources() {
+            initOmq();
+            initOmqUser();
+        }
+
+        #! initializes the \a omq variable
+        synchronized initOmq(*bool ignore_errors) {
+            if (omq)
+                return;
+
+            if (!options."qorus".hasKey("systemdb")) {
+                if (ignore_errors) {
+                    return;
+                }
+                stderr.printf("ERROR: no definition provided for system datasource ('systemdb') in options file, aborting.\n");
+                exit(1);
+            }
+
+            initOmqIntern(ignore_errors);
+        }
+
+        private initOmqIntern(*bool ignore_errors) {
+            # set global system datasource variables
+            try {
+                omq = new Datasource(options."qorus"."systemdb");
+            } catch (hash<ExceptionInfo> ex) {
+                if (ignore_errors) {
+                    return;
+                }
+                stderr.printf("ERROR: cannot open system schema: %s; check the 'systemdb' option in $OMQ_DIR/options "
+                    "and try again\n", ex.desc);
+                exit(1);
+            }
+
+            omq.setAutoCommit(True);
+        }
+
+        #! initializes the \a omquser variable
+        synchronized initOmqUser() {
+            if (omquser) {
+                return;
+
+            }
+            try {
+                omquser = getDatasource("omquser");
+            } catch (hash<ExceptionInfo> ex) {
+                # do not exit here - omquser is not mandatory. Also in the Qorus
+                # initial setup (empty schema) there is no connection for omquser at all.
+                # exit(1);
+            }
+        }
+
+        #! this method allows a datasource to be created or redefined from the text passed
+        /** @par Example:
+            @code{.py}
+            omqclient.setDatasourceFromText("omq=driver:user/pass@db%host:port");
+            @endcode
+
+            @param line the datasource text to use to create or redefine a datasource (ex: dsname=driver:user/pass@@dbname%host:port)
+        */
+        setDatasourceFromText(string line) {
+            (*string name, *string params) = (line =~ x/([^=]+)=(.*)/);
+            if (!exists params)
+                throw "DATASOURCE-PARSE-EXCEPTION",
+                sprintf("can't parse datasource argument %n (missing '=': expecting format 'name=driver:user/pass@db'", line);
+
+            initDatasourceConnectionsIntern();
+            datasource_conn.setDatasourceFromText(name, params);
+        }
+
+        #! returns a hash of information about the given workflow based on the workflowid passed
+        /** an exception is thrown if the workflowid is invalid
+            @param wfid the workflowid of the workflow
+            @return a hash of workflow information including "keylist": a list of valid workflow keys
+            @see QorusClientAPI::getWorkflowInfoName()
+        */
+        hash<auto> getWorkflowInfoID(softint wfid) {
+            if (!wfid)
+                throw "WORKFLOW-ERROR", "missing workflowid";
+
+            init();
+
+            lck.lock();
+            on_exit lck.unlock();
+
+            if (!exists wfc{wfid}) {
+                *hash wfi = omqp.selectRow("select * from workflows where workflowid = %v", wfid);
+                if (!wfi)
+                    throw "WORKFLOW-ID-ERROR", sprintf("workflowid %d is not defined in the system database", wfid);
+
+                # get any order keys
+                wfi.keylist = omqp.select("select keyname from workflow_keys where workflowid = %d", wfid).keyname;
+
+                wfc{wfid} = wfi;
+
+                wfnc.(wfi.name).(wfi.version) = wfi;
+            }
+            return wfc{wfid};
+        }
+
+        #! returns a hash of information about the given workflow based on the workflow name and version passed
+        /** an exception is thrown if the workflow name and version are invalid
+
+            @param name the name the workflow
+            @param version the name the workflow
+
+            @return a hash of workflow information including "keylist": a list of valid workflow keys
+
+            @see QorusClientAPI::getWorkflowInfoID()
+        */
+        hash<auto> getWorkflowInfoName(string name, string version) {
+            init();
+
+            lck.lock();
+            on_exit lck.unlock();
+
+            if (!exists wfc{name}{version}) {
+                *hash<auto> wfi = omqp.selectRow("select * from workflows where name = %v and version = %v", name, version);
+                if (!wfi)
+                    throw "WORKFLOW-ERROR", sprintf("workflow %s %s is not defined in the system database", name, version);
+
+                # get any order keys
+                wfi.keylist = omqp.select("select keyname from workflow_keys where workflowid = %d", wfi.workflowid).keyname;
+
+                wfc.(wfi.workflowid) = wfi;
+
+                wfnc{name}{version} = wfi;
+            }
+            return wfnc{name}{version};
+        }
+
+        # returns True = error or already set, False = OK
+        private bool setOptionFileName() {
+            if (option_file_name.val())
+                return True;
+
+            if (ENV.OMQ_DIR == "LSB") {
+                LSB = True;
+                option_file_name = "/etc/qorus/options";
+                config_dir = "/etc/qorus";
+                return False;
+            }
+
+            if (ENV.OMQ_DIR) {
+                option_file_name = ENV.OMQ_DIR + EtcOptions;
+                config_dir = ENV.OMQ_DIR + DirSep + "etc";
+                return False;
+            }
+
+            # ENV.OMQ_DIR not set, try to find options file
+
+            string dir = normalize_dir(get_script_dir());
+            if (dir == "/usr/bin" || is_readable("/etc/qorus/options")) {
+                LSB = True;
+                #stderr.printf("WARNING: assuming LSB directory structure\n");
+                ENV.OMQ_DIR = "LSB";
+                option_file_name = "/etc/qorus/options";
+                config_dir = "/etc/qorus";
+                return False;
+            }
+
+            if (dir =~ /\/bin$/) {
+                dir = substr(dir, 0, -4);
+                #stderr.printf("WARNING: assuming OMQ_DIR=%n\n", dir);
+                ENV.OMQ_DIR = dir;
+                option_file_name = dir + EtcOptions;
+                config_dir = dir + "/etc";
+                return False;
+            }
+
+            foreach string d in ("/opt/qorus", "/usr/local/qorus") {
+                if (is_readable(d + "/etc/options")) {
+                    #stderr.printf("WARNING: assuming OMQ_DIR=%s\n", dir);
+                    ENV.OMQ_DIR = d;
+                    option_file_name = d + "/etc/options";
+                    config_dir = d + "/etc";
+                    return False;
+                }
+            }
+
+            if (!QorusClientAPI::ignore_warnings) {
+                stderr.printf("WARNING: cannot determine location of Qorus options file; set the OMQ_DIR environment variable to the base directory of the Qorus installation\n");
+            }
+            return True;
+        }
+
+        #! returns a hash of options originally read form the options file
+        hash getOriginalOptionHash() {
+            return file_options;
+        }
+
+        # use getOptions() externally
+        private parseOptionsFileIntern() {
+            # set Qorus option file name
+            if (setOptionFileName())
+                return;
+
+            try {
+                file_options = QorusClientAPI::parseOptionsFile(option_file_name);
+                options = file_options;
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err == "OPTION-ERROR") {
+                    map stderr.printf("%s\n", $1), ex.arg;
+                    throw "OPTION-ERROR", "please correct the errors in the options file and try again";
+                }
+                rethrow;
+            }
+
+            options.qorus.lsb = boolean(LSB);
+            options.qorus."option-file" = option_file_name;
+
+            # set qorus.logdir option if not already set
+            if (!exists options.qorus.logdir) {
+                if (exists ENV.OMQ_LOG_DIR)
+                    options.qorus.logdir = ENV.OMQ_LOG_DIR;
+                else {
+                    if (LSB)
+                        options.qorus.logdir = "/var/qorus/log";
+                    else
+                        options.qorus.logdir = ENV.OMQ_DIR + "/log";
+                }
+            }
+
+            if (exists options.qorus."client-url") {
+                if (exists options."qorus-client"."client-url") {
+                    if (!QorusClientAPI::ignore_warnings) {
+                        stderr.printf("WARNING: both qorus.client-url and qorus-client.client-url set, ignoring "
+                            "qorus.client-url value\n");
+                    }
+                } else {
+                    options."qorus-client"."client-url" = options.qorus."client-url";
+                }
+                delete options.qorus."client-url";
+            }
+
+            # ensure client-url is set to the server's url if not already set
+            if (!exists options."qorus-client"."client-url") {
+                # get qorus-core hostname from running instance if possible
+                initOmqIntern(True);
+                *string qorus_core_address = omq ? try_get_qorus_core_address_intern() : NOTHING;
+                if (elements options.qorus."http-secure-server") {
+                    options."qorus-client"."client-url" = QorusClientAPI::getURLFromOption("https",
+                        options.qorus."http-secure-server"[0], qorus_core_address);
+                } else if (elements options.qorus."http-server") {
+                    options."qorus-client"."client-url" = QorusClientAPI::getURLFromOption("http",
+                        options.qorus."http-server"[0], qorus_core_address);
+                }
+            }
+
+            # bug 978: remove any path component from the client-url value provided
+            if (exists options."qorus-client"."client-url") {
+                hash uh = parse_url(options."qorus-client"."client-url");
+                if (uh.path) {
+                    if (uh.path != "/" && uh.path !~ /^\/api/) {
+                        if (!QorusClientAPI::ignore_warnings) {
+                            stderr.printf("WARNING: ignoring URI path %y in qorus-client.client-url: %y\n", uh.path,
+                                options."qorus-client"."client-url");
+                        }
+                    }
+                    splice options."qorus-client"."client-url", -uh.path.size();
+                }
+            }
+
+            # set default server options
+            map options.qorus.$1 = OMQ::option_defaults.$1, keys OMQ::option_defaults, !exists options.qorus.$1;
+
+            # set client-pool-minimum and client-pool-maximum from system values if not explicitly set
+            if (!options."qorus-client"."client-pool-minimum")
+                options."qorus-client"."client-pool-minimum" = options.qorus."system-pool-minimum";
+            if (!options."qorus-client"."client-pool-maximum")
+                options."qorus-client"."client-pool-maximum" = options.qorus."system-pool-maximum";
+
+            # set default client options
+            map options."qorus-client".$1 = OMQ::client_defaults.$1, keys OMQ::client_defaults,
+                !exists options."qorus-client".$1;
+        }
+
+        # for CryptoKeyHelper
+        *string getKeyOption(string opt) {
+            return options.qorus{opt};
+        }
+
+        #! actions to verify the state of an installed Qorus installation before the schema has potentially been created
+        preSchemaVerifySystem(bool quiet = False) {
+            generateKeys(quiet);
+            checkNodeOption(quiet);
+        }
+
+        #! actions to verify the state of an installed Qorus installation after the schema has been verified
+        postSchemaVerifySystem(bool quiet = False) {
+        }
+
+        #! create a "node" entry in @ref options if not already present
+        checkNodeOption(bool quiet = False) {
+            *hash nh = options.qorus.node;
+
+            list<hash<NetIfInfo>> ix_list = get_netif_list();
+            if (nh) {
+                # get inverted hash
+                hash<auto> ih;
+                foreach hash<auto> i in (nh.pairIterator()) {
+                    map ih{$1} = True, i.value;
+                }
+
+                bool ok;
+                # issue #3640: verify that all node entries are OK
+                foreach hash<auto> ah in (ix_list) {
+                    if (ih{ah.address}) {
+                        ok = True;
+                        break;
+                    }
+                }
+
+                if (ok) {
+                    if (!quiet) {
+                        clientWarning("CLUSTER-SETUP", "node option set; skipping");
+                    }
+                    return;
+                }
+
+                if (nh.size() == 1) {
+                    clientWarning("CLUSTER-SETUP", "qorus.node option = %y is invalid for this node; ignoring", nh);
+                } else {
+                    clientWarning("CLUSTER-SETUP", "qorus.node option = %y is invalid for this node; ignoring", nh);
+                }
+            }
+
+            /*
+            # get interface
+            string ix;
+            {
+                # link local
+                string ll;
+                # loopback
+                string lo;
+                foreach hash<NetIfInfo> ah in (ix_list) {
+                    switch (ah.family) {
+                        case AF_INET:
+                            if (ah.address =~ /^127/) {
+                                if (!ll && !lo)
+                                    lo = ah.address;
+                                continue;
+                            }
+                            ix = ah.address;
+                            break;
+
+                        case AF_INET6:
+                            if (ah.address == "::1" || ah.address =~ /^fe80::1$/i) {
+                                if (!ll && !lo)
+                                    lo = ah.address;
+                                continue;
+                            }
+                            if (ah.address =~ /^fe80:/i) {
+                                if (!ll)
+                                    ll = ah.address;
+                                continue;
+                            }
+                            ix = ah.address;
+                            break;
+                    }
+                    if (ix)
+                        break;
+                }
+                if (!ix) {
+                    if (!ll && !lo)
+                        clientError("NODE-ERROR", "CLUSTER-SETUP: no network interfaces were detected on this "
+                            "machine, not even a loopback interface; cluster setup cannot be completed");
+                    ix = ll ?? lo;
+                }
+            }
+
+            # create system option
+            string ofn = options.qorus."option-file";
+            string opt;
+            if (nh.size() < 2) {
+                opt = sprintf("qorus.node: node1=%s", ix);
+            } else {
+                int i = 1;
+                while (nh{"node" + i}) {
+                    ++i;
+                }
+                string cnode = foldl $1 + "," + $2,
+                    (map sprintf("%s=%s", $1.key, $1.value.typeCode() == NT_LIST ? $1.value.join(",") : $1.value),
+                    nh.pairIterator());
+                opt = sprintf("qorus.node: %s,node%d=%s", cnode, i, ix);
+            }
+            updateConfigFile(ofn, "qorus.node", opt);
+            clientWarning("CLUSTER-SETUP", "%s: added option \"%s\" to options file", ofn, opt);
+            */
+        }
+
+        #! create encryption key files if they don't exist and sets system options
+        /** If system options are changed, backs up the @ref options
+        */
+        generateKeys(bool quiet = False) {
+            # generate random encryption keys for sensitive data
+            genKey(quiet, "sensitive", "data", 32, True);
+            genKey(quiet, "sensitive", "value", 56, True);
+            # generate a random key for network data encryption
+            genKey(quiet, "network", NOTHING, 32, False);
+        }
+
+        private:internal genKey(bool quiet, string prefix, *string type, int len, bool sensitive_data) {
+            string opt = type ? sprintf("%s-%s-key", prefix, type) : sprintf("%s-key", prefix);
+            string label = type ? sprintf("%s %s", prefix, type) : prefix;
+
+            bool file_exists;
+            bool opt_exists;
+
+            # get file name
+            string fn;
+            {
+                string bn = type ? sprintf("%s_%s.key", prefix, type) : sprintf("%s.key", prefix);
+                *string tfn = options.qorus{opt};
+                if (!tfn) {
+                    fn = sprintf("%s/%s", ENV.OMQ_DIR == "LSB" ? "/var/opt/qorus" : ENV.OMQ_DIR + "/etc", bn);
+                    file_exists = checkKeyFile(fn, label, len);
+                } else {
+                    fn = tfn;
+                    opt_exists = True;
+                    if (checkKeyFile(fn, label, len)) {
+                        if (!quiet)
+                            clientWarning("CRYPTO-SETUP", "%s: %s key file option set and file already exists; skipping", fn, label);
+                        return;
+                    }
+                }
+            }
+
+            if (!file_exists) {
+                File f();
+                f.open2(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+                f.write(get_random_bytes(len));
+
+                string warn = sprintf("%s: created %s key file with a %d byte (%d bit) random key", fn, label, len, len * 8);
+                if (sensitive_data) {
+                    warn += "; NOTE: keep this key safe; if it is lost, you will lose access to all sensitive data";
+                }
+                clientWarning("CRYPTO-SETUP", warn);
+            }
+
+            if (opt_exists) {
+                clientWarning("CRYPTO-SETUP", "%s: option %y already set", fn, opt);
+                return;
+            }
+
+            # create system option
+            string ofn = options.qorus."option-file";
+            string option_name = sprintf("qorus.%s", opt);
+            updateConfigFile(ofn, option_name, sprintf("%s: %s", option_name, fn));
+            clientWarning("CRYPTO-SETUP", "%s: added option \"qorus.%s: %s\" to options file", ofn, opt, fn);
+        }
+
+        updateConfigFile(string ofn, string option_name, string text, string setup_msg = "CRYPTO-SETUP") {
+            string ostr;
+            int mode;
+            try {
+                ostr = ReadOnlyFile::readTextFile(ofn);
+                mode = hstat(ofn).mode;
+                QorusClientAPI::doBackup(ofn, ostr, mode, setup_msg);
+                # append option
+                if (ostr !~ /\n$/)
+                    ostr += "\n\n";
+                else if (ostr !~ /\n\n$/)
+                    ostr += "\n";
+            } catch (hash<ExceptionInfo> ex) {
+                # ignore the error when the file already exists
+                if (ex.err != "FILE-OPEN2-ERROR")
+                    rethrow;
+                mode = 0640;
+                # register as already backed up since it's a new file;
+                # we don't want to back it up again when the second key is created
+                bh{ofn} = True;
+            }
+
+            # issue #3351: comment out any existing line for the given option
+            ostr = regex_subst(ostr, "^(" + option_name + ")", "#$1", RE_Global | RE_MultiLine);
+
+            text = sprintf("# added on %s by the Qorus client library\n", now().format("YYYY-MM-DD HH:mm:SS")) + text;
+            if (text !~ /\n$/)
+                text += "\n";
+            ostr += text;
+
+            File f();
+            f.open2(ofn, O_WRONLY | O_CREAT | O_TRUNC, mode);
+            f.write(ostr);
+        }
+
+        doBackup(string fn, string str, int mode, string setup_msg = "CRYPTO-SETUP") {
+            if (bh{fn})
+                return;
+
+            bh{fn} = True;
+            string bn = sprintf("%s.%s", fn, now_us().format("YYYYMMDDHHmmSS"));
+            File f();
+            f.open2(bn, O_WRONLY | O_CREAT | O_TRUNC, mode);
+            f.write(str);
+
+            clientWarning(setup_msg, "%s: created backup of option file as %y", fn, bn);
+        }
+
+        #! Returns True if the process is running, False if not
+        static bool checkPid(int pid, string process_type) {
+            switch (Platform.OS) {
+                case "Linux":
+                case "SunOS":
+                case "FreeBSD":
+                    # issue #2619: do not show "unreachable" if the process name does not match
+                    string name = process_type == "qorus-master" ? "qorus" : process_type;
+                    # do not read the "exe" link, as when the executable is deleted, the link is no longer valid
+                    # instead read the cmdline to get the original process name
+                    if (is_dir("/proc/" + pid)) {
+                        try {
+                            # read the first line of the command line to get the process name
+                            InputStreamLineIterator i(new FileInputStream("/proc/" + pid + "/cmdline"));
+                            if (!i.next()) {
+                                return False;
+                            }
+                            # if the program has the expected name, then return True
+                            return basename(i.getValue()) == name;
+                        } catch () {
+                            # ignore any exceptions and return False
+                        }
+                    }
+                    return False;
+                case "Darwin":
+                    return !kill(pid, 0);
+                default:
+                    throw "NOT-IMPLEMENTED", "error";
+            }
+        }
+
+        private:internal bool checkKeyFile(string fn, string label, int len) {
+            *hash<StatInfo> h = hstat(fn);
+            if (!h)
+                return False;
+
+            # check size
+            if (h.size != len)
+                clientError("KEY-FILE-ERROR", "CRYPTO-SETUP: %s: %s key file has size %d, however size %d is "
+                    "expected; please delete this file and run \"%s -K\" again to recreate the %s key file", fn,
+                    label, h.size, len, get_script_name(), label);
+
+%ifdef Unix
+            # check file permissions on UNIX
+            if (h.mode & 022) {
+                # try to change the file's mode
+                if (chmod(fn, 0600))
+                    clientError("KEY-FILE-ERROR", "CRYPTO-SETUP: %s: %s key file has too permissive permissions %y "
+                        "(0%o), and the mode could not be changed: %s", fn, label, h.perm, h.mode, strerror());
+                clientWarning("CRYPTO-SETUP", "%s: updated %s key file permissions to 0660 from %y (0%o)", fn, label,
+                    h.perm, h.mode);
+            }
+%endif
+            return True;
+        }
+
+        static private string getURLFromOption(string prot, softstring opt, string host = "localhost") {
+            # remove any cert,key options, etc
+            opt =~ s/{.*}$//;
+            if (opt =~ /:/) {
+                # convert "0.0.0.0", "::", and "[::]" to host
+                opt = regex_subst(opt, "^(0.0.0.0|::|\\[::\\]):", host + ":");
+                opt =~ s/^(0.0.0.0|::|\[::\]):/localhost:/;
+                return sprintf("%s://%s", prot, opt);
+            }
+            return sprintf("%s://%s:%d", prot, host, opt);
+        }
+
+        private string createWorkflowInstanceIntern(hash wf, *string ext_order_id,
+                softint priority = OMQ::DefaultOrderPriority, *hash sdata, *hash ddata, *hash orderkeys,
+                *softint pwfiid) {
+            init();
+
+            if (!exists ext_order_id && !exists sdata)
+                throw "CREATE-ORDER-ERROR", sprintf("missing static data and external_order_instanceid arguments; at "
+                    "least one of these must be present for the workflow order to be created");
+
+            softstring wfiid;
+            while (True) {
+                try {
+                    # roll back the transaction if there is an error
+                    on_error omqp.rollback();
+                    # commit the transaction on success
+                    on_success omqp.commit();
+
+                    wfiid = sqlif.createWorkflowInstance(wf.workflowid, 0, pwfiid, False, sdata, ddata, NOTHING,
+                        ext_order_id, priority);
+
+                    # save the order keys
+                    foreach string key in (keys orderkeys) {
+                        if (!inlist(key, wf.keylist))
+                            throw "WORKFLOW-KEY-ERROR", sprintf("key %y is not valid for workflowid %d (%s:%s), "
+                                "valid keys: %y", key, wf.workflowid, wf.name, wf.version, wf.keylist);
+
+                        sqlif.insertOrderKey(wf.workflowid, wfiid, key, string(orderkeys{key}), False);
+                    }
+                } catch (hash<ExceptionInfo> ex) {
+                    # restart the transaction if necessary
+                    if (sqlif.restartTransaction(ex))
+                        continue;
+                    rethrow;
+                }
+                break;
+            }
+
+            # return the new workflow instance ID
+            return wfiid;
+        }
+
+        #! creates a workflow order data instance from the workflowid and order parameters and returns the workflow_instanceid
+        /** @param wfid the workflow ID of the workflow order to create
+            @param ext_order_id the optional external_order_instanceid of the workflow order to create
+            @param sdata the static data for the order
+            @param ddata the dynamic data for the order
+            @param orderkeys a hash giving the order keys for the order (key=value)
+            @param priority gives the order priority (default @ref OMQ::DefaultOrderPriority)
+            @param pwfiid the loosely-coupled parent workflow instance ID
+
+            @return a string giving the new workflow_instanceid for the workflow order created
+
+            @throw CREATE-ORDER-ERROR missing both static data and external order instance ID arguments
+            */
+        string createWorkflowInstanceID(softint wfid, *softstring ext_order_id, *hash sdata, *hash ddata, *hash orderkeys, softint priority = OMQ::DefaultOrderPriority, *softint pwfiid) {
+            return createWorkflowInstanceIntern(getWorkflowInfoID(wfid), ext_order_id, priority, sdata, ddata, orderkeys, pwfiid);
+        }
+
+        #! creates a workflow order data instance from the workflow and version and order parameters and returns the workflow_instanceid
+        /** @param name the name of the workflow for the order to create
+            @param version the version of the workflow for the order to create
+            @param ext_order_id the optional external_order_instanceid of the workflow order to create
+            @param sdata the static data for the order
+            @param ddata the dynamic data for the order
+            @param orderkeys a hash giving the order keys for the order (key=value)
+            @param priority gives the order priority (default @ref OMQ::DefaultOrderPriority)
+            @param pwfiid the loosely-coupled parent workflow instance ID
+
+            @return a string giving the new workflow_instanceid for the workflow order created
+
+            @throw CREATE-ORDER-ERROR missing both static data and external order instance ID arguments
+        */
+        string createWorkflowInstanceName(string name, string version, *softstring ext_order_id, *hash sdata, *hash ddata, *hash orderkeys, softint priority = OMQ::DefaultOrderPriority, *softint pwfiid) {
+            return createWorkflowInstanceIntern(getWorkflowInfoName(name, version), ext_order_id, priority, sdata, ddata, orderkeys, pwfiid);
+        }
+
+        #! saves the hash given as the options file
+        static saveOptionsFile(string fn, hash options, string hdr = "", string trl = "") {
+            File f();
+
+            if (f.open(fn, O_WRONLY | O_CREAT | O_TRUNC))
+                QorusClientAPI::clientError("FILE-ERROR", "cannot create %s: %s", fn, strerror());
+
+            f.printf(hdr);
+
+            foreach string dom in (keys options) {
+                foreach string opt in (keys options{dom}) {
+                    auto val = options{dom}{opt};
+                    switch (val.typeCode()) {
+                        case NT_LIST: {
+                            string str;
+                            foreach auto e in (val) {
+                                str += sprintf("%s,", e);
+                            }
+                            splice str, -1;
+                            val = str;
+                            break;
+                        }
+                        case NT_HASH: {
+                            string str;
+                            foreach string k in (keys val) {
+                                str += sprintf("%s=%s,", k, val{k});
+                            }
+                            splice str, -1;
+                            val = str;
+                            break;
+                        }
+                    }
+                    f.printf("%s.%s: %s\n", dom, opt, val);
+                }
+            }
+            f.printf("\n");
+
+            if (strlen(trl))
+                f.printf(trl);
+        }
+
+        #! throws an exception with the given parameters
+        static clientError(string msg, string desc) {
+            throw msg, vsprintf(desc, argv);
+        }
+
+        #! prints out a warning with the given parameters
+        static clientWarning(string err, string msg) {
+            if (!ignore_warnings) {
+                stderr.printf("WARNING: %s: %s\n", err, vsprintf(msg, argv));
+            }
+        }
+
+        private static checkDomain(string fn, int ln, reference dom) {
+            string nd;
+
+            # substitute deprecated domain names
+            if (dom == "omq")
+                nd = "qorus";
+            else if (dom == "omquser")
+                nd = "qorususer";
+            else if (dom == "omq-client")
+                nd = "qorus-client";
+
+            if (nd) {
+                if (!ignore_warnings) {
+                    stderr.printf("WARNING: %s:%d: refers to deprecated domain %y; using %y\n", fn, ln, dom, nd);
+                }
+                dom = nd;
+            }
+        }
+
+        #! parses the given file as a Qorus option file and returns a hash
+        /** returns a hash of the option information, keyed by "domain" (i.e. qorus, qorus-client); the return hash only has the option data that is set in the file; no options are derived or automatically set by this function
+            @param fn the file name of the options file to parse
+            @return a hash of the options keyed by "domain" (i.e. qorus, qorus-client)
+        */
+        static hash parseOptionsFile(string fn) {
+            File f();
+            # fix for BUG 312: installation fails if the options file does not exist or is empty
+            try {
+                f.open2(fn);
+            } catch (hash<ExceptionInfo> ex) {
+                if (!ignore_warnings) {
+                    stderr.printf("WARNING: %s\n", ex.desc);
+                }
+                return {};
+            }
+
+            # line counter
+            int lc;
+
+            # fix for BUG 312: installation fails if the options file does not exist or is empty
+            hash options = {};
+
+            list errors; # list of errors
+
+            while (exists (*string line = f.readLine())) {
+                lc++;
+
+                # skip commented-out lines
+                if (line[0] == "#")
+                    continue;
+
+                # remove eol marker and preceding and trailing spaces
+                trim line;
+                # skip blank lines
+                if (!line)
+                    continue;
+
+                *string dom;
+                *string opt;
+                *string value;
+
+                # get line line: domain.option:value
+                if (line =~ /^([^\.:=]+)\.([^\.:=]+)[=:](.*)/) {
+                    list l = (line =~ x/^([^\.:=]+)\.([^\.:=]+)[=:](.*)/);
+                    trim l;
+                    (dom, opt, value) = l;
+                    QorusClientAPI::checkDomain(fn, lc, \dom);
+                }
+                # check for format: dom.subdom.key: value lines
+                else if (line =~ /^([^\.:=]+)\.([^\.:=]+)\.([^\.:=]+)[=:](.*)/) {
+                    list l = (line =~ x/^([^\.:=]+)\.([^\.:=]+)\.([^\.:=]+)[=:](.*)/);
+                    trim l;
+                    *string sdom;
+                    (dom, sdom, opt, value) = l;
+                    QorusClientAPI::checkDomain(fn, lc, \dom);
+                    options{dom}{sdom}{opt} = value;
+
+                    continue;
+                } else {
+                    errors += sprintf("%s:%d: %n does not have 'domain.option: value' format\n", fn, lc, line);
+                    continue;
+                }
+
+                # substitute aliases
+                opt = OMQ::get_option_name(dom, opt);
+
+                # warn if option already set
+                if (exists options{dom}{opt} && dom != "qorus" && !(OMQ::omq_option_hash{opt}.list || OMQ::omq_option_hash{opt}.arg =~ /^hash/)) {
+                    if (!ignore_warnings) {
+                        stderr.printf("WARNING: option %s.%s appears multiple times in %s\n", dom, opt, fn);
+                    }
+                }
+
+                # set option value
+                *hash opthash;
+                if (dom == "qorus")
+                    opthash = OMQ::omq_option_hash;
+                else if (dom == "qorus-client")
+                    opthash = OMQ::client_option_hash;
+                *hash oi;
+                if (opthash)
+                    oi = opthash{opt};
+                if (oi) {
+                    auto v = OMQ::process_option_value(opt, value, opthash, dom);
+
+                    code log_warning = sub (string str) {
+                        if (!ignore_warnings) {
+                            stderr.print(str + "\n");
+                        }
+                    };
+
+                    check_deprecated_option(\opthash{opt}, opt, v, log_warning);
+
+                    # process qorus options according to their type
+                    if (oi.list && exists v) {
+                        if (!exists options{dom}{opt})
+                            options{dom}{opt} = ();
+                        options{dom}{opt} += v;
+                    } else if (oi.arg =~ /^hash/)
+                        options{dom}{opt} += v;
+                    else
+                        options{dom}{opt} = v;
+                } else
+                    options{dom}{opt} = value;
+            }
+            f.close();
+
+            if (elements errors)
+                throw "OPTION-ERROR", "errors in option file", errors;
+
+            return options;
+        }
+
+        #! parses a datasource string and returns the hash
+        /** an exception will be thrown if no driver name is given
+        */
+        static hash<auto> parse_ds(string str) {
+            hash<auto> h = parse_datasource(str);
+
+            if (!exists h.type)
+                throw "PARSE-DATASOURCE-ERROR", sprintf("missing datasource driver name (i.e. 'driver:') in datasource string: %n", str);
+
+            return h;
+        }
+
+        #! returns a random salt from /dev/urandom (on UNIX) as a binary, arg: size in bytes
+        static binary getRandomSalt(int size) {
+            if (PlatformOS == "Windows") {
+                binary b;
+                int start = (clock_getmicros() * 7621 + 1);
+                for (int i = 0; i < size; ++i) {
+                    int v = start;
+                    if (i)
+                        v += rand();
+                    b += chr(v % 256);
+                }
+                return b;
+            }
+
+            File f();
+            # throw an exception if /dev/urandom cannot be opened for reading
+            if (f.open("/dev/urandom"))
+                QorusClientAPI::clientError("OPEN-ERROR", "error opening /dev/urandom: ", strerror());
+
+            return f.readBinary(size);
+        }
+
+        #! returns the next sequence value for the given sequence using the SQLInterface object (returned as a string)
+        softstring getNextSequenceValue(string name) {
+            init();
+            return sqlif.getNextSequenceValue(name);
+        }
+
+        #! returns the next sequence value for the given sequence using the SQLInterface object (returned as an int)
+        int getNextSequenceValueInt(string name) {
+            init();
+            return sqlif.getNextSequenceValue(name);
+        }
+
+        #! tries to convert a string (such as an argument given from the command-line) to a Qore value
+        /** This method recognizes two special prefixes in the string:
+            - \c %STR= this prefix indicates that the rest of the string should be passed literally and not parsed
+            - \c %EVAL= this prefix indicates that the rest of the string should be taken as a Qore expression and executed and the value returned
+
+            @param arg a string to convert to a Qore value
+            @return the Qore value corresponding to the input string
+
+            @note reexported from the Util module
+        */
+        static auto parseToQoreValue(string arg) {
+            return parse_to_qore_value(arg);
+        }
+
+        #! takes a template string and performs substitutions
+        private string processSystemTemplate(string template) {
+            template = regex_subst(template, "\\$instance", options.qorus."instance-key");
+            template = regex_subst(template, "\\$pid", getpid().toString());
+            template = regex_subst(template, "\\$host", gethostname());
+            return template;
+        }
+
+        #! returns the system log file name prefix
+        string getQorusSystemLogFilePrefix() {
+            return options.qorus.logdir + processSystemTemplate(options.qorus."logfile-template");
+        }
+
+        #! returns a string giving the workflow log file name corresponding to the arguments
+        string getWorkflowLogFileName(string name, string version, softint wfid = 0) {
+            string template = processSystemTemplate(options.qorus."wf-logfile-template");
+
+            template = regex_subst(template, "\\$id", wfid.toString());
+            template = regex_subst(template, "\\$name", name);
+            template = regex_subst(template, "\\$version", version);
+
+            return options.qorus.logdir + "/" + template;
+        }
+
+        #! returns a string giving the service log file name corresponding to the arguments
+        string getServiceLogFileName(string type, string name, string version, softint svcid = 0) {
+            string template = processSystemTemplate(options.qorus."svc-logfile-template");
+
+            template = regex_subst(template, "\\$type", type);
+            template = regex_subst(template, "\\$id", svcid.toString());
+            template = regex_subst(template, "\\$name", name);
+            template = regex_subst(template, "\\$version", version);
+
+            return options.qorus.logdir + "/" + template;
+        }
+
+        #! returns a string giving the service log file name corresponding to the arguments
+        string getJobLogFileName(string name, string version, softint jobid = 0) {
+            string template = processSystemTemplate(options.qorus."job-logfile-template");
+
+            template = regex_subst(template, "\\$id", jobid.toString());
+            template = regex_subst(template, "\\$name", name);
+            template = regex_subst(template, "\\$version", version);
+
+            return options.qorus.logdir + "/" + template;
+        }
+
+        #! on-demand initialization
+        private:internal synchronized init() {
+            if (init_flag) {
+                return;
+            }
+            init_flag = True;
+
+            # open global datasources
+            initSystemDatasources();
+
+            initInternalDb();
+
+            # set encryption keys
+            try {
+                setupEncryption();
+            } catch (hash<ExceptionInfo> ex) {
+                if (ex.err != "QORUS-ENCRYPTION-ERROR") {
+                    rethrow;
+                }
+            }
+        }
+
+        #! initalizes the omqp and sqlif members
+        private:internal synchronized initInternalDb() {
+            if (omqp) {
+                return;
+            }
+            # open private:internal DB objects
+            omqp = new DatasourcePool(options.qorus.systemdb);
+            sqlif = getSQLIF(omqp);
+        }
+    }
+
+    namespace Priv {
+        *string sub try_get_qorus_core_address_intern() {
+            *string url;
+            try {
+                url = omq.selectRow("select queue_urls from cluster_processes where process_type = %v",
+                    QDP_NAME_QORUS_CORE).queue_urls;
+            } catch (hash<ExceptionInfo> ex) {
+                # ignore exceptions
+            }
+            if (!url || url == "-") {
+                return;
+            }
+            url =~ s/^tcp:\/\/(.+):[0-9]+(,.*)?$/$1/;
+            return url;
+        }
+
+        # fake mapper provider API for the client
+        sub qlog(int lvl, string fmt) { qlog_args(lvl, fmt, argv); }
+        sub qlog_args(int lvl, string fmt, auto args) {
+            string mstr = vsprintf(fmt, args);
+            printf(mstr + "\n");
+        }
+        sub qorus_internal_log(code func, int lvl, string fmt) {
+            func(lvl, "CLIENT: " + fmt, argv);
+        }
+        *list sub get_stack() { return (); }
+        *hash sub get_user_context_info() {}
+        auto sub get_global_config_item_value(string item) {}
+        hash sub get_system_info() {return {};}
+
+        # dummy APIs for mapper validation
+        *hash<auto> sub qorus_api_svc_try_get_wf_static_data() {}
+        *hash<auto> sub qorus_api_svc_try_get_wf_dynamic_data() {}
+        *hash<auto> sub qorus_api_svc_try_get_wf_temp_data() {}
+    }
+}

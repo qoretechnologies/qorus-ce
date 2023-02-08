@@ -1,0 +1,19 @@
+type: step
+steptype: NORMAL
+arraytype: SERIES
+name: issue3325step
+version: "1.0"
+desc: issue3325 array test step
+classes:
+  - issue3325class
+constants:
+  - issue3325constant
+functions:
+  - issue3325function
+mappers:
+  - issue3325mapper:1.0
+vmaps:
+  - issue3325vmap
+author:
+  - Qore Technologies, s.r.o.
+code: issue3325step.qstep

@@ -1,0 +1,29 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue3102job
+# class-name: issue3102Job
+# version: 1.0
+# desc: class-based test job
+# author: Qore Technologies, s.r.o.
+# single-instance: false
+# run-skipped: true
+# remote: true
+## schedule: once a year for 3 AM on Jan 1st
+## schedule: min hour day month dow
+# schedule: 0 3 1 1 *
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+# lang: qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class issue3102Job inherits QorusJob {
+    run() {
+        logInfo("job is run");
+    }
+}
+# END

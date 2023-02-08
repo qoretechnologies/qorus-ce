@@ -1,0 +1,35 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+# name: issue-3243
+# class-name: Issue3243
+# version: 1.0
+# desc: example job with configuration items
+# author: Qore Technologies, s.r.o.
+# schedule: * * * * *
+# active: false
+# define-group: test: test interfaces
+# define-group: regression: regression test group
+# groups: test, regression
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+class Issue3243 inherits QorusJob {
+    run() {
+        saveInfo({"val": getConfigItemValue("issue-3243-job-config-item-1")});
+    }
+
+    private *hash<string, hash<ConfigItemInfo>> getConfigItemsImpl() {
+        return {
+            "issue-3243-job-config-item-1": <ConfigItemInfo>{
+                "type": "int",
+                "default_value": "$local:job_instanceid",
+                "description": "an integer unique key; the default value uses the current job_instanceid",
+                "config_group": "Main",
+            },
+        };
+    }
+}
+# END

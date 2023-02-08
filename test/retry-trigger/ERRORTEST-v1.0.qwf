@@ -1,0 +1,31 @@
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$queues."errortest-async".desc = "asynchronous test queue for the ERRORTEST workflow";
+
+const errortest_async = 
+    ( "name"         : "errortest_async:1.0",
+      "endname"      : "errortest_async_end:1.0",
+      "valname"      : "errortest_async_validation:1.0",
+      "queue"        : "errortest-async" 
+      );
+
+$simple = ( "error_test_1:1.0", errortest_async );
+
+$options = ( "normal-retry" : "override normal retry period",
+	     "async-retry"  : "set async retry period" );
+
+$workflows."ERRORTEST"."1.0" = 
+    ( "desc"          : "simple error test workflow",
+      "author"        : "Qore Technologies, sro",
+      "steps"	      : $simple,
+      "errorfunction" : "errortest_errors:1.0",
+      "options"       : $options,
+      "groups"        : "test",
+      );
+

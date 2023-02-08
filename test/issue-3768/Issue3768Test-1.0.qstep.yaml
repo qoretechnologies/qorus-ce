@@ -1,0 +1,19 @@
+# This is a generated file, don't edit!
+type: step
+name: Issue3768Test
+desc: 'Test for issue #3768'
+lang: qore
+base-class-name: QorusNormalStep
+class-name: Issue3768Test
+version: '1.0'
+author:
+  - Qore Technologies, s.r.o.
+steptype: NORMAL
+code: Issue3768Test-1.0.qstep
+config-items:
+  - name: issue-3768-test
+    value:
+        "test"
+    description: test
+    config_group: Issue 3768 Test
+    strictly_local: true

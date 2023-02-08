@@ -1,0 +1,62 @@
+# service: test-debug_service
+# serviceversion: 1.0
+# servicetype: USER
+# servicedesc: Test debug service
+# functions: test-debug_func
+# constants: test-debug_const
+# classes: test-debug_class
+# ENDSERVICE
+
+
+# lock: none
+# name: init
+# desc: initializes the service
+%require-types
+
+sub init() {
+    UserApi::logDebug("Init service");
+}
+# END
+
+
+# name: about
+# desc: About
+
+%new-style
+string sub about() {
+    return "test service";
+}
+# END
+
+# name: hello
+# desc: Hello
+
+%new-style
+
+sub hello() {
+    UserApi::logInfo("%s", getHello());
+}
+# END
+
+
+# name: getClass
+# desc: Get class
+%new-style
+
+TestDebugClass sub getClass() {
+    return new TestDebugClass();
+}
+# END
+
+# name: createWorkflowOrder
+# desc: Create workflow order
+
+%new-style
+
+const WF = "TEST-DEBUG_WORKFLOW";
+
+any sub createWorkflowOrder() {
+    string uuid = UUID::get();
+    return UserApi::createOrder(WF, NOTHING, ( "staticdata": ( "test": "TEST" ), "orderkeys": ("id": uuid)));
+}
+# END

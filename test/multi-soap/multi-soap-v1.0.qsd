@@ -1,0 +1,61 @@
+# service: multi-soap
+# serviceversion: 1.0
+# servicedesc: multi-port multi-part SOAP regression test service
+# serviceauthor: Qore Technologies, sro
+# resource: multi-soap.wsdl
+# define-group: test: test interfaces
+# groups: test
+# ENDSERVICE
+
+# name: init
+# desc: initializes the service
+
+const DEFAULTS = (
+    "url": NOTHING,
+    "bind": 9999,
+    );
+
+*hash sub set_option($p) {
+    my hash $h;
+
+    my hash $def = DEFAULTS + (
+        "wsdl": ServiceApi::getResourceData("multi-soap.wsdl"),
+    );
+
+    foreach my string $k in ($def.keyIterator()) {
+        $h.$k = exists $p.$k ? $p.$k : $def.$k;
+        # remove key if no value is set
+        if (!exists $h.$k)
+            delete $h.$k;
+    }
+
+    return $h;
+}
+
+sub init() {
+    # get options for service
+    my *hash $props = UserApi::propGet("multi-soap");
+    our *hash $opt = set_option($props);
+    #registerSoapHandler(("wsdl" : $opt.wsdl));
+    my hash $h = (
+        "wsdl": $opt.wsdl,
+    );
+
+    ServiceApi::registerSoapListeners(($h,), $opt.bind, NOTHING, NOTHING, new PermissiveAuthenticator());
+}
+# END
+
+# desc: soap operation
+sub Send(hash $msg) {
+    #logInfo("SendToRCI() msg: %y", $msg);
+
+    return (
+        "OrderNumber": "16685422",
+        "Timestamp": now_us(),
+        "ReceiptAck": (
+            "OriginalTXID": UUID::get(),
+            "RequestStatus": "Success",
+        ),
+        );
+}
+# END

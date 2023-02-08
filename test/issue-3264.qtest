@@ -1,0 +1,78 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QorusClientBase
+
+%requires QUnit
+%requires FsUtil
+
+%exec-class QorusIssue3264
+
+class QorusIssue3264 inherits Test {
+    constructor() : Test("Issue3264Test", "1.0", \ARGV) {
+        QorusClient::initFast();
+        QorusClientServer::init();
+
+        addTestCase("test", \test());
+        set_return_value(main());
+    }
+
+    test() {
+        testReadLocation("$OMQ_DIR/version.txt", File::readTextFile(ENV.OMQ_DIR + "/version.txt"));
+
+        testReadLocation("resource://simple:simple.wsdl", UserApi::callRestApi("GET",
+                "services/simple/resource_files/simple.wsdl").data);
+
+        assertThrows("CONNECTION-ERROR", \UserApi::getTextFileFromLocation(),
+            "resource://xxx:issue-3250:index.qhtml");
+
+        data file_data = omqservice.user."issue-3250".getTextResource("resource://index.qhtml");
+        assertEq(Type::String, file_data.type());
+        int size = file_data.size();
+        file_data = omqservice.user."issue-3250".getBinaryResource("resource://index.qhtml");
+        assertEq(Type::Binary, file_data.type());
+        assertEq(size, file_data.size());
+
+        TmpFile tmp("qore-test-");
+        string d = get_random_string(512);
+        UserApi::writeFileToLocation(tmp.path, d);
+        data d0 = UserApi::getBinaryFileFromLocation(tmp.path);
+        assertEq(d.toBinary(), d0);
+        unlink(tmp.path);
+        OutputStreamWrapper os = UserApi::getOutputStreamForLocation(tmp.path);
+        os.write(d.toBinary());
+        os.close();
+        # wait for file to be written in the background
+        os.waitForIo();
+        d0 = UserApi::getBinaryFileFromLocation(tmp.path);
+        assertEq(d.toBinary(), d0);
+
+        assertThrows("RESOURCE-WRITE-ERROR", \UserApi::getOutputStreamForLocation(),
+            "resource://simple:simple.wsdl");
+    }
+
+    testReadLocation(string location, string file_data0) {
+        on_error printf("location: %y (size: %d)\n", location, file_data0.size());
+
+        data file_data1 = UserApi::getTextFileFromLocation(location);
+        assertEq(file_data0, file_data1);
+        StreamReader sr = UserApi::getStreamReaderFromLocation(location);
+        file_data1 = sr.readString();
+        assertEq(file_data0, file_data1);
+
+        file_data1 = UserApi::getBinaryFileFromLocation(location);
+        assertEq(file_data0.toBinary(), file_data1);
+        InputStream stream = FileLocationHandler::getBinaryStreamFromLocation(location);
+        file_data1 = stream.read(file_data0.size() * 2);
+        assertEq(file_data0.toBinary(), file_data1);
+    }
+}

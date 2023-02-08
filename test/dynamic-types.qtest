@@ -1,0 +1,218 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class DynamicTypesTest
+
+class DynamicTypesTest inherits Test {
+    private {
+        const Types = (
+            "qore/hash",
+            "qore/ftp/event",
+            "qore/sftp/event",
+            "qore/fsevents/event",
+            "qoretechnologies/qorus-api/workflows/create-order/request",
+            "qoretechnologies/qorus-api/workflows/create-order/response",
+        );
+
+        const ServiceName = "dynamic-types-test";
+
+        const HashType = {
+            "type": "type",
+            "name": "qore",
+            "path": "/hash",
+        };
+
+        const StringType = {
+            "type": "type",
+            "name": "qore",
+            "path": "/string",
+        };
+
+        const CompareTypes = {
+            "t1": {
+                "base_type": HashType,
+                "type": HashType,
+                "result": True,
+            },
+            "t2": {
+                "base_type": StringType,
+                "type": HashType,
+                "result": False,
+            },
+            "t3": {
+                "base_type": HashType,
+                "type": StringType,
+                "result": False,
+            },
+            "t4": {
+                "base_type": StringType,
+                "type": StringType,
+                "result": True,
+            },
+        };
+    }
+
+    constructor(): Test("DynamicTypesTest", "1.0", \ARGV, Opts) {
+        QorusClientServer::init();
+        addTestCase("compareTypes", \compareTypes());
+        addTestCase("mainTest", \mainTest());
+        set_return_value(main());
+    }
+
+    private compareTypes() {
+        map assertEq($1.value.result, qrest.put("dataprovider/compareTypes", $1.value - "result"), $1.key),
+            CompareTypes.pairIterator();
+
+        hash<auto> rv = map {$1.key: $1.value.result}, CompareTypes.pairIterator();
+        assertEq(rv, qrest.put("dataprovider/compareManyTypes",
+            {"types": (map {$1.key: $1.value - "result"}, CompareTypes.pairIterator())}));
+
+        assertTrue(qrest.put("dataprovider/compareTypes", {
+            "type": {
+                "type": "type",
+                "name": "qore",
+                "path": "string",
+            },
+            "base_type": {
+                "type": "factory",
+                "name": "qorus-api",
+                "path": "util/get-data",
+            },
+        }));
+    }
+
+    private mainTest() {
+        list actual_types = Types;
+        if ((ENV.MACHTYPE ?? "").find("alpine") > -1) {
+            actual_types = ();
+            foreach string type in (Types) {
+                if (type.find("fsevents") == -1) {
+                    push actual_types, type;
+                }
+            }
+        }
+
+        # ensure that builtin types are locked
+        map assertTrue(qrest.get("dataprovider/types/" + $1).locked, $1), actual_types;
+        map assertTrue(qrest.get("dataprovider/types/" + $1 + "?action=type").locked, $1), actual_types;
+        # ensure that builtin types cannot be overwritten
+        map assertEq(403, getResponseCode("POST", "dataprovider/types", {
+            "path": $1,
+            "type": {
+                "name": "string",
+            },
+        })), actual_types;
+        # ensure that builtin types cannot be deleted
+        map assertEq(403, getResponseCode("DELETE", "dataprovider/types/" + $1), $1), actual_types;
+
+        assertEq(400, getResponseCode("DELETE", "dataprovider/types/qore"));
+
+        # create a complex type
+        {
+            hash<auto> type_hash = {
+                "path": "test/type-a",
+                "type": {
+                    "name": "hash",
+                    "fields": {
+                        "a": {
+                            "type": {
+                                "name": "string",
+                            },
+                        },
+                    },
+                },
+            };
+            assertEq(200, getResponseCode("POST", "dataprovider/types", type_hash));
+            on_exit {
+                assertEq(200, getResponseCode("DELETE", "dataprovider/types/test/type-a"));
+            }
+
+            type_hash = {
+                "path": "test/type-b",
+                "type": {
+                    "name": "string",
+                },
+            };
+            assertEq(200, getResponseCode("POST", "dataprovider/types", type_hash));
+            on_exit {
+                assertEq(200, getResponseCode("DELETE", "dataprovider/types/test/type-b"));
+            }
+
+            hash<auto> h = qrest.get("dataprovider/types/test/type-a");
+            assertEq("type-a", h.name);
+            assertEq("/test/type-a", h.path);
+            assertTrue(h.has_type);
+            assertEq(("a",), h.children);
+
+            h = qrest.get("dataprovider/types/test/type-a/type");
+            assertEq("/test/type-a", h.typename);
+            assertEq("string", h.fields.a.type.name);
+            assertTrue(h.fields.a.type.mandatory);
+            assertFalse(h.can_manage_fields);
+
+            h = qrest.get("dataprovider/types/test/type-b");
+            assertEq("type-b", h.name);
+            assertEq("/test/type-b", h.path);
+            assertTrue(h.has_type);
+            assertNothing(h.children);
+
+            h = qrest.get("dataprovider/types/test/type-b/type");
+            assertEq("/test/type-b", h.typename);
+            assertEq("string", h.name);
+            assertFalse(h.or_nothing_type);
+            assertFalse(h.can_manage_fields);
+
+            if (qrest.get("services/" + ServiceName + "/remote")) {
+                qrest.put("services/" + ServiceName + "/setRemote", {"remote": False});
+            }
+            qrest.put("services/" + ServiceName + "/test/call");
+            qrest.put("services/" + ServiceName + "/setRemote", {"remote": True});
+            on_exit {
+                qrest.put("services/" + ServiceName + "/setRemote", {"remote": False});
+            }
+            qrest.put("services/" + ServiceName + "/test/call");
+        }
+
+        hash<auto> h = qrest.get("dataprovider/types/qoretechnologies/qorus/regression/issue-3445-hash");
+        assertEq("issue-3445-hash", h.name);
+        assertEq("/qoretechnologies/qorus/regression/issue-3445-hash", h.path);
+        assertTrue(h.has_type);
+        assertEq(("key", "subrec"), h.children);
+
+        h = qrest.get("dataprovider/types/qoretechnologies/qorus/regression/issue-3445-hash/type");
+        assertEq("/qoretechnologies/qorus/regression/issue-3445-hash", h.typename);
+        assertEq("hash<auto>", h.name);
+        assertFalse(h.or_nothing_type);
+        assertFalse(h.can_manage_fields);
+
+        h = qrest.get("dataprovider/types/qoretechnologies/qorus/regression/issue-3445-string");
+        assertEq("issue-3445-string", h.name);
+        assertEq("/qoretechnologies/qorus/regression/issue-3445-string", h.path);
+        assertTrue(h.has_type);
+        assertNothing(h.children);
+
+        h = qrest.get("dataprovider/types/qoretechnologies/qorus/regression/issue-3445-string/type");
+        assertEq("/qoretechnologies/qorus/regression/issue-3445-string", h.typename);
+        assertEq("string", h.name);
+        assertFalse(h.or_nothing_type);
+        assertFalse(h.can_manage_fields);
+    }
+
+    private int getResponseCode(string meth, string path, *hash<auto> args) {
+        hash<auto> info;
+        try {
+            qrest.doRequest(meth, path, args, \info);
+            assertTrue(False);
+        } catch (hash<ExceptionInfo> ex) {
+            return info."response-code";
+        }
+    }
+}

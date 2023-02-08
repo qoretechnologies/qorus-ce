@@ -1,0 +1,23 @@
+# -*- mode: qore; indent-tabs-mode: nil -*-
+# test workflow definition
+#
+# Qorus Integration Engine
+
+$format_version = "2.6";
+
+$groups.test.desc = "test interfaces";
+
+$steps = (
+    "retry_test:1.0",
+);
+
+$options = {
+    "retry-delay"     : "delay before step is automatically recovered",
+};
+
+$workflows."RETRY-TEST"."1.0" = {
+    "desc"          : "simple retry test workflow with 1 step",
+    "author"        : "Qore Technologies, s.r.o.",
+    "steps"	        : $steps,
+    "groups"        : "test",
+};

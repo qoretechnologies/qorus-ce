@@ -1,0 +1,20 @@
+# This is a generated file, don't edit!
+type: fsm
+name: lowcode-test-2
+desc: low code test 2
+groups:
+  - regression
+  - test
+states:
+    '1':
+        position:
+            x: 96
+            'y': 54
+        initial: false
+        name: Transform Data
+        desc: ''
+        type: state
+        id: L9Nw-bzVH
+        action:
+            type: mapper
+            value: 'lowcode-test-1:1.0'

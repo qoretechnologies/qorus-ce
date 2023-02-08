@@ -1,0 +1,34 @@
+# This is a generated file, don't edit!
+type: job
+name: Issue3485Job
+desc: issue 3485 test job
+lang: qore
+active: false
+author:
+  - Qore Technologies, s.r.o.
+base-class-name: QorusJob
+class-name: Issue3485Job
+classes:
+  - Issue3485Conditional
+fsm:
+    [
+        {
+            "name": "fsm1",
+            "triggers": [
+                {
+                    "method": "run"
+                }
+            ]
+        }
+    ]
+groups:
+  - regression
+  - test
+schedule:
+    minutes: "0"
+    hours: "0"
+    days: "1"
+    months: "1"
+    dow: "*"
+version: '1.0'
+code: Issue3485Job.qjob

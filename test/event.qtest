@@ -1,0 +1,282 @@
+#!/usr/bin/env qore
+# -*- mode: qore; indent-tabs-mode: nil -*-
+
+%new-style
+%enable-all-warnings
+%strict-args
+%require-types
+
+# here we add fallback paths to the QORE_MODULE_DIR search path,
+# in case QORE_MODULE_DIR is not set properly for Qorus
+%append-module-path /var/opt/qorus/qlib:$OMQ_DIR/qlib:/opt/qorus/qlib:$OMQ_DIR/user/modules
+
+%requires QUnit
+%requires QorusClientBase
+%requires uuid
+
+%exec-class QorusEventTest
+
+class QorusEventTest inherits Test {
+    public {
+        softstring stepid;
+        softint wfiid;
+
+        const PollInterval = 250ms;
+    }
+
+    constructor() : Test("EventTest", "1.0", \ARGV) {
+        QorusClient::initFast();
+        addTestCase("test", \test());
+        addTestCase("skip tests", \skipTests());
+        set_return_value(main());
+    }
+
+    test() {
+        # unload user.eventhelper service
+        qrest.put("services/eventhelper/unload");
+
+        # make sure all instances of EVENT-TEST are stopped
+        stopWorkflow("EVENT-TEST");
+
+        string key = UUID::get();
+        if (m_options.verbose > 2) {
+            printf("using event key %y\n", key);
+        }
+
+        # create an order with a scheduled time in the future
+        # test for bug 350: setting order keys with a key with a list of values while creating a workflow instance fails with an exception
+        hash<auto> h = {
+            "staticdata": {
+                "test": True
+            },
+            "scheduled": now() + 10s,
+            "orderkeys": {
+                "test-key": key,
+                "key-350": ("1", "2", "3"),
+            },
+        };
+
+        # create an EVENT-TEST order
+        wfiid = qrest.post("workflows/EVENT-TEST/createOrder", h).workflow_instanceid;
+        if (m_options.verbose > 2) {
+            printf("created EVENT-TEST wfiid: %d\n", wfiid);
+        }
+
+        # make sure the workflow has status SCHEDULED
+        h = omqservice.system.info.getWorkflowStatus2(wfiid);
+        assertEq(OMQ::StatScheduled, h.workflowstatus);
+        assertTrue(exists h.scheduled);
+
+        h = omqservice.system.info.getOrderInfo(wfiid);
+        assertEq(key, h.keys."test-key");
+        assertTrue(equalSets(h.keys."key-350", ("1", "2", "3")));
+
+        h = omqservice.system.info.getWFIAllInfo(wfiid);
+        assertEq(OMQ::StatScheduled, h.InstanceInfo.workflowstatus);
+        assertTrue(exists h.InstanceInfo.scheduled);
+        assertEq(key, h.OrderInfo.keys."test-key");
+
+        int id = omqapi.callAPI("omq.system.start-workflow", {
+            "name": "EVENT-TEST",
+            "options": {
+                "no-errors": True,
+                "event-key": key,
+            },
+        }).id;
+        assertTrue(id > 0);
+
+        # wait until order has status EVENT-WAITING
+        waitForStatus("event-waiting-1", wfiid, OMQ::StatEventWaiting);
+
+        # bug 1245: Inconsistent type returned by system.info.getOrderInfoFromKey()
+        h = omqservice.system.info.getOrderInfoFromKey("EVENT-TEST", h.InstanceInfo.version, "test-key", key)[0];
+        assertEq(wfiid.toInt(), h.workflow_instanceid);
+        assertEq(Type::Int, h.workflow_instanceid.type());
+
+        # issue #2191: make sure we can cancel and uncancel an order in EVENT-WAITING status
+        qrest.put("orders/" + wfiid + "/cancel");
+        assertEq(OMQ::StatCanceled, qrest.get("orders/" + wfiid + "/workflowstatus"));
+        # issue #2948: CANCELED orders can be updated to BLOCKED
+        assertEq(("unCancel", "block"), qrest.get("orders/" + wfiid + "/actions"));
+        qrest.put("orders/" + wfiid + "/uncancel");
+        assertEq(OMQ::StatEventWaiting, qrest.get("orders/" + wfiid + "/workflowstatus"));
+
+        # get stepid of event-test step and eventkey for step
+        h = omqservice.system.info.getWorkflowMetadataFromName2("EVENT-TEST", "1.0")."EVENT-TEST"."1.0";
+        stepid = h.segments."0"[0].stepid;
+
+        string eventtype;
+        # find step structure to get event type
+        foreach hash<auto> step in (h.steps) {
+            if (step.stepid == stepid) {
+                if (m_options.verbose > 2) {
+                    #UserApi::logDebug("step: %y", step);
+                }
+                eventtype = step.event.name;
+                break;
+            }
+        }
+        assertEq(exists eventtype, True, "eventtype search");
+
+        if (m_options.verbose > 2) {
+            printf("got event stepid: %d, eventtype: %y\n", stepid, eventtype);
+        }
+
+        # make sure the workflow has status EVENT-WAITING
+        h = omqservice.system.info.getWorkflowStatus2(wfiid);
+        assertEq(OMQ::StatEventWaiting, h.workflowstatus);
+        assertEq(key, h.step_instance{stepid}.event.key);
+        assertEq(eventtype, h.step_instance{stepid}.event.name);
+
+        h = omqservice.system.info.getOrderInfo(wfiid);
+        assertEq(key, h.keys."test-key");
+
+        h = omqservice.system.info.getWFIAllInfo(wfiid);
+        assertEq(OMQ::StatEventWaiting, h.InstanceInfo.workflowstatus);
+        assertEq(key, h.StepInstances[0].eventkey);
+        #if (m_options.verbose > 2) {
+            #printf("h: %N\n", h);
+        #}
+        assertEq("eventtest", h.StepInstances[0].stepname);
+
+        assertEq(key, h.OrderInfo.keys."test-key");
+
+        # stop workflow and check info again (not in cache)
+        stopWorkflow("EVENT-TEST");
+
+        # bug 1245: Inconsistent type returned by system.info.getOrderInfoFromKey()
+        h = omqservice.system.info.getOrderInfoFromKey("EVENT-TEST", h.InstanceInfo.version, "test-key", key)[0];
+        assertEq(wfiid.toInt(), h.workflow_instanceid);
+        assertEq(Type::Int, h.workflow_instanceid.type());
+
+        # make sure the workflow has status EVENT-WAITING
+        h = omqservice.system.info.getWorkflowStatus2(wfiid);
+        assertEq(OMQ::StatEventWaiting, h.workflowstatus);
+        assertEq(key, h.step_instance{stepid}.event.key);
+        assertEq(eventtype, h.step_instance{stepid}.event.name);
+
+        h = omqservice.system.info.getWFIAllInfo(wfiid);
+        assertEq(OMQ::StatEventWaiting, h.InstanceInfo.workflowstatus);
+        assertEq(key, h.StepInstances[0].eventkey);
+
+        omqapi.callAPI("omq.system.post-event", eventtype, key);
+
+        # start workflow again
+        id = omqapi.callAPI("omq.system.start-workflow", {
+            "name": "EVENT-TEST",
+            "options": {
+                "no-errors": True,
+                "event-key": key,
+            },
+        }).id;
+        assertEq(id > 0, True, "start-workflow-4");
+
+        # wait until order has status COMPLETE
+        waitForStatus("event-waiting-2", wfiid);
+
+        stopWorkflow("EVENT-TEST");
+    }
+
+    skipTests() {
+        # BUG 254: https://barney/bugzilla/show_bug.cgi?id=254
+        assertThrows("API-CALL-ERROR", "STEP-STATUS-ERROR", \omqapi.callAPI(),
+            ("omq.system.skip-step", wfiid, stepid));
+        assertThrows("API-CALL-ERROR", "STEP-STATUS-ERROR", \omqapi.callAPI(),
+            ("omq.system.skip-step-without-retry", wfiid, stepid));
+
+        # BUG 294: status.skipStep()
+        assertThrows("STEP-STATUS-ERROR", \qrest.put(), ("orders/" + wfiid + "/skipStep", {"stepid": stepid}));
+
+        # BUG 295: status.cancelWorkflow()
+        assertThrows("CANCEL-WORKFLOW-ERROR", \qrest.put(), ("orders/" + wfiid + "/cancel"));
+
+        # BUG 296: status.setError()
+        assertThrows("WORKFLOW-STATUS-ERROR", \qrest.put(), ("orders/" + wfiid + "/setError"));
+    }
+
+    waitForStatus(string testname, softstring wfiid, string status = OMQ::StatComplete, *softlist errors,
+            *string stepname) {
+        hash<auto> h;
+        while (True) {
+            h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            if (h.workflowstatus == status)
+                break;
+
+            if (exists errors && inlist(h.workflowstatus, errors))
+                break;
+
+            #if (m_options.verbose > 2) {
+            #    printf("%y wfiid %y status == %y (err: %y) h: %y\n", testname, wfiid, status, errors, h);
+            #}
+
+            # wait for status to change
+            usleep(PollInterval);
+        }
+
+        if (m_options.verbose > 2) {
+            printf("wfiid %d has status %y\n", wfiid, h.workflowstatus);
+        }
+
+        if (stepname) {
+            bool done;
+            while (!done) {
+                bool found;
+                foreach hash sh in (h.step_instance.iterator()) {
+                    if (sh.name == stepname) {
+                        if (sh.stepstatus == status) {
+                            if (m_options.verbose > 2) {
+                                printf("wfiid %d step %y has status %y\n", wfiid, stepname, status);
+                            }
+                            done = True;
+                            break;
+                        }
+                        if (sh.stepstatus != OMQ::StatInProgress)
+                            throw "STEP-STATUS-ERROR", sprintf("wfiid %d step %y expecting status %y; got %y", wfiid,
+                                stepname, status, sh.stepstatus);
+                        found = True;
+                    }
+                }
+
+                if (m_options.verbose > 2) {
+                    printf("wfiid %d step %y %sfound; sleeping %d us\n", wfiid, stepname, found ? "" : "not ",
+                        PollInterval);
+                }
+
+                # wait for status to change
+                usleep(PollInterval);
+                h = omqservice.system.info.getWorkflowStatus2(wfiid);
+            }
+        }
+
+        assertEq(h.workflowstatus, status, testname);
+    }
+
+    stopWorkflow(string name) {
+        qrest.put("workflows/" + name + "/stop");
+    }
+
+    static bool equalSets(list l1, list l2) {
+        if (elements l1 != elements l2) {
+            return False;
+        }
+
+        while (l1) {
+            auto e = shift l1;
+            int i = QorusEventTest::inListElement(e, l2);
+            if (i == -1) {
+                return False;
+            }
+            splice l2, i, 1;
+        }
+        return True;
+    }
+
+    static int inListElement(auto e, list<auto> l) {
+        for (int i = 0; i < elements l; ++i) {
+            if (l[i] === e) {
+                return i;
+            }
+        }
+        return -1;
+    }
+}

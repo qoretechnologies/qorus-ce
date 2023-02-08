@@ -1,0 +1,67 @@
+/* -*- mode: c++; indent-tabs-mode: nil -*- */
+/*
+  QC_PerformanceCache.cpp
+*/
+
+/*
+    Qorus Integration Engine(R) Community Edition
+
+    Copyright (C) 2003 - 2023 Qore Technologies, s.r.o., all rights reserved
+
+    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+
+    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+*/
+
+#include "QC_PerformanceCache.h"
+#include "QC_PerformanceCacheManager.h"
+
+//! The PerformanceCache class implements a performance cache object
+/**
+ */
+qclass PerformanceCache [arg=PerformanceCache* pc; ns=OMQ];
+
+//! Creates a new PerformanceCache object
+/**
+ */
+PerformanceCache::constructor(string name) {
+   ReferenceHolder<PerformanceCache> pc(new PerformanceCache(name), xsink);
+   self->setPrivate(CID_PERFORMANCECACHEMANAGER, pc.release());
+}
+
+//! throws an exception
+/**
+ */
+PerformanceCache::copy() {
+   xsink->raiseException("PERFORMANCECACHE-COPY-ERROR", "PerformanceCache::copy() is not implemented");
+}
+
+//! adds a listener Queue for a given cache
+/**
+ */
+int PerformanceCache::addListenerQueue(Queue[Queue] queue) {
+   ReferenceHolder<Queue> q(queue, xsink);
+   if (queue->getMax() != -1) {
+      xsink->raiseException("QUEUE-ERROR", "the Queue object passed as a maximum size of %d entr%s, which could cause internal I/O to freeze in the PerformanceCache object if used; use a Queue object with no maximum size for event monitoring", queue->getMax(), queue->getMax() == 1 ? "y" : "ies");
+      return 0;
+   }
+
+   // pass reference from QoreObject::getReferencedPrivateData() to function
+   PerformanceCache::iterator qi = pc->addListenerQueue(q.release());
+   return (size_t)qi.node;
+}
+
+//! removes a listener Queue for a given cache
+/**
+ */
+PerformanceCache::removeListenerQueue(int q) {
+   PerformanceCache::iterator qi((PerformanceCache::node_t*)(size_t)q);
+   pc->removeListenerQueue(qi, xsink);
+}
+
+//! posts performance data on the queue
+/**
+ */
+PerformanceCache::post(int v) {
+   pc->post(v);
+}

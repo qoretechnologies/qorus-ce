@@ -1,0 +1,57 @@
+#! /usr/bin/env qore
+
+%new-style
+%strict-args
+%require-types
+%enable-all-warnings
+
+%requires FsUtil
+%requires QUnit
+%requires QorusClientBase
+
+%exec-class Issue3625Test
+
+class Issue3625Test inherits QUnit::Test {
+    public {
+        const CsvInput = "id,name,description,activation_date
+1,test-1,desc 1,15.01.2020
+2,test-2,desc 2,20.12.2020
+";
+
+        const CsvData = (
+            {
+                "id": 1,
+                "name": "test-1",
+                "description": "desc 1",
+                "activation_date": 2020-01-15,
+            },
+            {
+                "id": 2,
+                "name": "test-2",
+                "description": "desc 2",
+                "activation_date": 2020-12-20,
+            },
+        );
+    }
+
+    constructor() : Test("issue 3625", "1.0", \ARGV, Opts) {
+        QorusClient::initFast();
+
+        addTestCase("main test", \mainTest());
+
+        set_return_value(main());
+    }
+
+    mainTest() {
+        # create input file
+        TmpFile tmp("csv-", ".csv");
+        tmp.file.write(CsvInput);
+
+        qrest.put("jobs/issue-3485-pipeline-test-2/config/csv-input-path", {"value": tmp.path});
+        hash<auto> info = qrest.put("jobs/issue-3485-pipeline-test-2/run");
+        on_error printf("%N\n", info);
+        assertEq(OMQ::StatComplete, info.status);
+        hash<auto> res = qrest.get("jobresults/" + info.job_instanceid);
+        assertEq(CsvData, res.info);
+    }
+}
