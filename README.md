@@ -12,9 +12,13 @@ IDE: The Qorus IDE extension can be installed directly in Microsoft VS Code: htt
 
 Qorus Integration Engine(R) is suitable for data integration scenarios as well as IT process orchestration and more.
 
+Qorus supports the full lifecycle management of IT integration and automation solutions as well as CI/CD through its support for testing and automated release packaging and installation.
+
 ## Programming Languages
 
 While Qorus is written in [Qore](https://github.com/qorelanguage/qore), it also supports Java and Python, as well as tight runtime integration between all three languages.  Qore provides the functionality of a "language bridge", which enables Python to dynamically import Qore and Java APIs and use them as if they were Python APIs, and Java as well can dynamically import Qore and Python APIs and use them as if they were Java APIs.
+
+Due to Qorus's support for both Python and Java, Qorus can be used to connect enterprise technologies and data based on Java with data science and AI solutions in Python.
 
 ## Building
 
@@ -94,6 +98,10 @@ Docker images can be built with the included Dockerfiles - ex:
 - `docker build . -f ./ubuntu.dockerfile`
 - `docker build . -f ./alpine.dockerfile`
 - `docker build . -f ./alpine-minimal.dockerfile`
+
+For more information on Docker images for Qorus, see:
+- https://github.com/qoretechnologies/qorus-docker
+- https://gallery.ecr.aws/qorus (note that `qorus-ce*` repositories are for the open-source Community Edition, `qorus-ee*` are for the closed-source Enterprise Edition)
 
 ## Platforms
 
