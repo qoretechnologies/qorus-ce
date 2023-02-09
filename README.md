@@ -6,7 +6,13 @@ Documentation: https://qoretechnologies.com/manual/qorus-ce/current/qorus/
 
 Discord: https://discord.gg/wz9qBxrh
 
-IDE: The Qorus IDE extension can be installed directly in Microsoft VS Code: https://marketplace.visualstudio.com/items?itemName=qoretechnologies.qorus-vscode - by using VS Code, Qorus supports coding as well as GUI-driven no-code integration functionality.
+## IDE
+
+The Qorus IDE can be installed directly in Microsoft VS Code: https://marketplace.visualstudio.com/items?itemName=qoretechnologies.qorus-vscode - by using VS Code, Qorus supports coding as well as GUI-driven no-code integration functionality.
+
+<img alt="Qorus IDE - API manager" src="doxygen/images/Qorus-IDE-4-API-Manager.png"/>
+<img alt="Qorus IDE - Mapper" src="doxygen/images/Qorus-IDE-4-Mapper.png"/>
+<img alt="Qorus IDE - Pipeline" src="doxygen/images/Qorus-IDE-4-Pipeline.png"/>
 
 ## Use Cases
 
@@ -69,6 +75,8 @@ unzip qorus-webapp-develop.zip
 mv develop/webapp .
 rmdir develop
 ```
+
+<img alt="Qorus UI" src="doxygen/images/Qorus-UI-Workflow-Order-Status.png"/>
 
 ## Options File
 
