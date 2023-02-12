@@ -5,9 +5,9 @@
 
     Copyright (C) 2003 - 2022 Qore Technologies, s.r.o., all rights reserved
 
-    LICENSE: Creative Commons Attribution-ShareAlike 4.0 International
+    LICENSE: GNU GPLv3
 
-    https://creativecommons.org/licenses/by-sa/4.0/legalcode
+    https://www.gnu.org/licenses/gpl-3.0.en.html
 */
 
 #! @file qorus-common-master-core-client.ql defines functions used in the client library
